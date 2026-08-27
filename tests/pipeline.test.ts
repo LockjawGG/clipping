@@ -79,6 +79,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       },
       cut: async () => {},
       reframe: async () => {},
+      reframeTracked: async () => {},
       thumbnail: async () => {},
     },
     storage: {
@@ -152,6 +153,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       setKey: async () => {},
     },
     captions: { renderCaptioned: async () => {} },
+    faces: { name: "none", detectTrack: async () => [] },
     queue: {
       enqueue: async (input) => {
         spy.enqueued.push(input);

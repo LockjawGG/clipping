@@ -1,5 +1,6 @@
 import type { Ffmpeg, MediaInfo } from "../ffmpeg/run.ts";
 import type { CaptionStyle } from "../captions/presets.ts";
+import type { FaceDetector } from "../faces/detector.ts";
 import type { CaptionRenderer } from "./remotion.ts";
 import type { JobKind } from "../jobs/types.ts";
 import type {
@@ -119,6 +120,7 @@ export interface PipelineDeps {
   renders: RenderRepo;
   thumbnails: ThumbnailRepo;
   captions: CaptionRenderer;
+  faces: FaceDetector;
   queue: JobQueue;
   /** POSIX-absolute scratch directory (env.TEMP_DIR). */
   tempDir: string;

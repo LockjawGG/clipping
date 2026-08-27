@@ -11,6 +11,7 @@ import {
 import {
   buildCutArgs,
   buildReframeArgs,
+  buildTrackedReframeArgs,
   buildExtractAudioArgs,
   buildProbeArgs,
   buildThumbnailArgs,
@@ -285,6 +286,32 @@ test("each aspect preset produces even dimensions for yuv420p", () => {
     assert.equal(Number(match![1]) % 2, 0);
     assert.equal(Number(match![2]) % 2, 0);
   }
+});
+
+test("buildTrackedReframeArgs escapes expression commas and keeps subtitles last", () => {
+  const args = buildTrackedReframeArgs({
+    inputPath: "/tmp/in.mp4",
+    outputPath: "/tmp/out.mp4",
+    aspect: "9:16",
+    cropX: "clip(in_w*0.6-540,0,in_w-1080)",
+    cropY: "clip(in_h*0.4-960,0,in_h-1920)",
+    subtitlePath: "/tmp/subs.srt",
+  });
+  const graph = args[args.indexOf("-filter_complex") + 1];
+  assert.ok(graph.includes("crop=1080:1920:")); // target box baked in
+  assert.ok(graph.includes("in_w*0.6-540\\,0\\,in_w-1080"), "expression commas were not escaped");
+  assert.ok(!graph.includes("in_w*0.6-540,0,in_w-1080"));
+  assert.ok(graph.indexOf("scale=") < graph.indexOf("crop="));
+  assert.ok(graph.indexOf("crop=") < graph.indexOf("subtitles="));
+});
+
+test("buildTrackedReframeArgs rejects an unsafe path or empty expressions", () => {
+  assert.throws(() =>
+    buildTrackedReframeArgs({ inputPath: "relative.mp4", outputPath: "/tmp/o.mp4", aspect: "9:16", cropX: "x", cropY: "y" }),
+  );
+  assert.throws(() =>
+    buildTrackedReframeArgs({ inputPath: "/tmp/i.mp4", outputPath: "/tmp/o.mp4", aspect: "9:16", cropX: "", cropY: "y" }),
+  );
 });
 
 test("probe args request json output with format and stream details", () => {
