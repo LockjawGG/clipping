@@ -20,18 +20,23 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 | `src/lib/transcription/` | `TranscriptionProvider` implementations: `whisper-local` (CLI), OpenAI, Deepgram, behind a `getTranscription()` factory. Pure `parseX` functions normalise each provider's response to integer-ms segments + words |
 | `src/lib/analysis/` | `AnalysisProvider` implementations: Anthropic (official SDK), OpenAI, and a no-LLM `heuristic` baseline, behind `getAnalysis()`. `refineSuggestions()` runs raw picks through `snapToSentences → dedupeOverlapping → capTotalRuntime` |
 | `src/lib/jobs/` | Job worker runtime: `JobWorker` polls `Job(status, runAfter)`, claims rows with a compare-and-swap, dispatches to a per-`kind` handler map, retries with exponential backoff + jitter. `createPrismaJobStore` / `enqueueJob` bind it to the DB |
+| `src/lib/ffmpeg/run.ts` | `FfmpegRunner` — runs the `args.ts` argv through the real binaries (`shell: false`); `parseProbeOutput` normalises ffprobe JSON to `MediaInfo` |
+| `src/lib/pipeline/` | The ingest chain `PROBE → EXTRACT_AUDIO → TRANSCRIBE → ANALYZE`, each handler doing one step and enqueuing the next. Handlers depend on narrow repo interfaces (`deps.ts`); Prisma-backed impls + `buildPipelineDeps()` in `repos.ts` |
+| `scripts/worker.ts` | `npm run worker` — the long-running ingest worker |
 | `src/app/` | Next.js App Router — landing page, root layout, Tailwind |
 | `tests/core.test.ts` | 33 unit tests |
 | `tests/storage.test.ts` | 10 unit tests — key safety, URL signing, local round-trip |
 | `tests/transcription.test.ts` | 10 unit tests — response parsing for each provider, ms normalisation |
 | `tests/analysis.test.ts` | 10 unit tests — prompt/tool parsing, the refine pipeline, the heuristic scorer |
 | `tests/jobs.test.ts` | 9 unit tests — backoff, claim/retry/fail state machine, concurrency, graceful stop |
+| `tests/ffmpeg-run.test.ts` | 4 unit tests — ffprobe JSON → `MediaInfo` |
+| `tests/pipeline.test.ts` | 7 unit tests — each ingest handler + the full chain, against fake deps |
 | `tests/ffmpeg.integration.ts` | 6 checks against the real ffmpeg binary |
 | `.env.example` | Provider configuration |
 
 ## What is not here yet
 
-The per-`kind` job handlers, API routes, the upload pipeline, auth, the
+The `RENDER` / `THUMBNAIL` handlers, API routes, the upload flow, auth, the
 dashboard, the transcript and clip editors, Remotion animated captions, and
 face detection. See "Continuing the build" below.
 
@@ -43,6 +48,7 @@ cp .env.example .env        # DATABASE_URL is required; NEXTAUTH_SECRET too if
                             # STORAGE_PROVIDER=local (it signs the file URLs)
 npm run prisma:migrate      # create the schema in your database
 npm run dev                 # http://localhost:3000
+npm run worker              # in a second terminal: the ingest job worker
 ```
 
 `npm run build` runs `prisma generate` then `next build`. `npm run typecheck`
@@ -103,9 +109,9 @@ Order that avoids rework:
    analysis~~ done. The analysis output goes through `refineSuggestions`
    (`snapToSentences` → `dedupeOverlapping` → `capTotalRuntime`) — never trust
    raw model timestamps.
-3. ~~Job worker polling `Job` on `(status, runAfter)` with backoff~~ done —
-   register per-`kind` handlers next
-4. Upload → probe → extract audio → transcribe pipeline, wired to the providers
+3. ~~Job worker polling `Job` on `(status, runAfter)` with backoff~~ done
+4. ~~probe → extract audio → transcribe → analyze pipeline, wired to the
+   providers~~ done (`src/lib/pipeline/`). Upload flow + `RENDER` next.
 5. API routes + the dashboard
 6. UI, then Remotion for animated captions
 
