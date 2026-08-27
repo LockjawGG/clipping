@@ -36,6 +36,8 @@ export function ClipEditor({ clip }: { clip: ClipData }) {
   const [busy, setBusy] = useState<"save" | "render" | "delete" | "thumb" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const rendering = clip.render?.status === "QUEUED" || clip.render?.status === "PROCESSING";
+
   const dirty =
     draft.title !== clip.title ||
     draft.startMs !== clip.startMs ||
@@ -179,10 +181,14 @@ export function ClipEditor({ clip }: { clip: ClipData }) {
         </button>
         <button
           onClick={render}
-          disabled={busy !== null}
+          disabled={busy !== null || rendering}
           className="rounded border border-neutral-300 px-3 py-1 disabled:opacity-40 dark:border-neutral-700"
         >
-          {busy === "render" ? "…" : clip.render ? "Re-render" : "Render"}
+          {busy === "render" || rendering
+            ? "Rendering…"
+            : clip.render
+              ? "Re-render"
+              : "Render"}
         </button>
         <button
           onClick={remove}

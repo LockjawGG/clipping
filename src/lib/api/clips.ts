@@ -113,7 +113,12 @@ export interface ClipDb {
       where: { transcript: { videoId: string } };
     }): Promise<Array<{ startMs: number; endMs: number }>>;
   };
-  render: { create(args: { data: Record<string, unknown> }): Promise<{ id: string }> };
+  render: {
+    create(args: { data: Record<string, unknown> }): Promise<{ id: string }>;
+    findFirst(args: {
+      where: { clipId: string; status: { in: string[] } };
+    }): Promise<{ id: string; status: string } | null>;
+  };
   subtitleConfig: {
     upsert(args: {
       where: { clipId: string };
@@ -152,6 +157,15 @@ async function ownedClip(deps: ClipServiceDeps, clipId: string): Promise<ClipRow
 export async function requestRender(deps: ClipServiceDeps, clipId: string, input: unknown) {
   const { quality, aspectRatio } = renderRequestSchema.parse(input);
   const clip = await ownedClip(deps, clipId);
+
+  // One render at a time per clip — return the in-flight one rather than
+  // stacking duplicates.
+  const inFlight = await deps.db.render.findFirst({
+    where: { clipId, status: { in: ["QUEUED", "PROCESSING"] } },
+  });
+  if (inFlight) {
+    return { renderId: inFlight.id, jobId: null, status: inFlight.status, alreadyRunning: true };
+  }
 
   if (aspectRatio) {
     await deps.db.clip.update({ where: { id: clipId }, data: { aspectRatio } });

@@ -35,7 +35,10 @@ interface ClipStore {
   aspectRatio: string;
 }
 
-function makeDeps(over: Partial<ClipServiceDeps> = {}) {
+function makeDeps(
+  over: Partial<ClipServiceDeps> = {},
+  inFlightRender: { id: string; status: string } | null = null,
+) {
   const clips = new Map<string, ClipStore>([
     ["clip1", { id: "clip1", videoId: "vidA", startMs: 5_000, endMs: 25_000, aspectRatio: "VERTICAL_9_16" }],
     ["clipX", { id: "clipX", videoId: "vidZ", startMs: 0, endMs: 1_000, aspectRatio: "VERTICAL_9_16" }],
@@ -106,6 +109,7 @@ function makeDeps(over: Partial<ClipServiceDeps> = {}) {
     video: { findUnique: async ({ where }) => videos.get(where.id) ?? null },
     transcriptSegment: { findMany: async () => segments },
     render: {
+      findFirst: async () => inFlightRender,
       create: async ({ data }) => {
         renders.push(data);
         return { id: `render-${renders.length}` };
@@ -148,6 +152,19 @@ test("requestRender creates a QUEUED render and enqueues a RENDER job carrying r
   assert.deepEqual(out, { renderId: "render-1", jobId: "job-1", status: "QUEUED" });
   assert.equal(renders[0].quality, "P1080");
   assert.deepEqual(enqueued, [{ videoId: "vidA", kind: "RENDER", payload: { renderId: "render-1" } }]);
+});
+
+test("requestRender returns the in-flight render instead of stacking a duplicate", async () => {
+  const { deps, renders, enqueued } = makeDeps({}, { id: "existing", status: "PROCESSING" });
+  const out = await requestRender(deps, "clip1", {});
+  assert.deepEqual(out, {
+    renderId: "existing",
+    jobId: null,
+    status: "PROCESSING",
+    alreadyRunning: true,
+  });
+  assert.equal(renders.length, 0);
+  assert.equal(enqueued.length, 0);
 });
 
 test("requestRender 404s for an unknown clip or one in another project", async () => {

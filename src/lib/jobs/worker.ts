@@ -10,6 +10,12 @@ export interface WorkerConfig<Deps> {
   concurrency?: number;
   /** Idle poll interval when there is nothing to do. */
   pollIntervalMs?: number;
+  /** A PROCESSING job untouched for this long is considered abandoned. */
+  leaseMs?: number;
+  /** How often an in-flight job touches its row to keep the lease. */
+  heartbeatMs?: number;
+  /** Called after a job finishes (success or failure) — e.g. to wipe scratch. */
+  cleanup?: (job: JobRecord) => Promise<void>;
   backoff?: BackoffConfig;
   /** Clock seam for tests. */
   now?: () => number;
@@ -34,13 +40,18 @@ const sleep = (ms: number, signal?: AbortSignal) =>
  *   until `attempts` reaches `maxAttempts`, then FAILED.
  * - `stop()` aborts in-flight handlers and returns the current job to the queue
  *   without spending an attempt.
+ * - A running job heartbeats its row; a job stuck in PROCESSING past its lease
+ *   (its worker crashed) is requeued by `reclaimStale`.
  */
 export class JobWorker<Deps> {
-  private readonly cfg: Required<Omit<WorkerConfig<Deps>, "backoff" | "onError">> &
-    Pick<WorkerConfig<Deps>, "backoff" | "onError">;
+  private readonly cfg: Required<
+    Omit<WorkerConfig<Deps>, "backoff" | "onError" | "cleanup">
+  > &
+    Pick<WorkerConfig<Deps>, "backoff" | "onError" | "cleanup">;
   private controller = new AbortController();
   private running = false;
   private loopDone: Promise<void> = Promise.resolve();
+  private lastReclaim = 0;
 
   constructor(config: WorkerConfig<Deps>) {
     this.cfg = {
@@ -49,15 +60,32 @@ export class JobWorker<Deps> {
       handlers: config.handlers,
       concurrency: config.concurrency ?? 2,
       pollIntervalMs: config.pollIntervalMs ?? 1_000,
+      leaseMs: config.leaseMs ?? 120_000,
+      heartbeatMs: config.heartbeatMs ?? 30_000,
       now: config.now ?? Date.now,
       backoff: config.backoff,
       onError: config.onError,
+      cleanup: config.cleanup,
     };
+  }
+
+  /** Requeue jobs whose worker died mid-flight. */
+  async reclaimStale(): Promise<number> {
+    this.lastReclaim = this.cfg.now();
+    const staleBefore = new Date(this.cfg.now() - this.cfg.leaseMs);
+    const n = await this.cfg.store.reclaimStale(staleBefore);
+    if (n > 0) this.cfg.onError?.({ id: "-", kind: "PROBE" } as JobRecord, `reclaimed ${n} stale job(s)`);
+    return n;
   }
 
   /** Claim and process one batch (up to `concurrency`). Returns jobs handled. */
   async runOnce(): Promise<number> {
     const { store, concurrency, now } = this.cfg;
+
+    if (now() - this.lastReclaim >= this.cfg.leaseMs) {
+      await this.reclaimStale();
+    }
+
     const pending = await store.claimable(new Date(now()), concurrency);
     if (pending.length === 0) return 0;
 
@@ -72,20 +100,26 @@ export class JobWorker<Deps> {
   }
 
   private async process(job: JobRecord): Promise<void> {
-    const { store, handlers, deps, backoff, onError } = this.cfg;
+    const { store, handlers, deps, backoff, onError, cleanup } = this.cfg;
     const handler = handlers[job.kind];
 
     if (!handler) {
       await store.fail(job.id, `no handler registered for job kind ${job.kind}`);
+      await cleanup?.(job).catch(() => {});
       return;
     }
+
+    // Keep the lease alive through long, silent steps (a 1GB download).
+    const beat = setInterval(() => {
+      void store.heartbeat(job.id).catch(() => {});
+    }, this.cfg.heartbeatMs);
+    (beat as unknown as { unref?: () => void }).unref?.();
 
     const ctx: JobContext<Deps> = {
       job,
       deps,
       signal: this.controller.signal,
-      setProgress: (fraction) =>
-        store.setProgress(job.id, Math.max(0, Math.min(1, fraction))),
+      setProgress: (fraction) => store.setProgress(job.id, Math.max(0, Math.min(1, fraction))),
     };
 
     try {
@@ -104,6 +138,9 @@ export class JobWorker<Deps> {
       } else {
         await store.retry(job.id, nextRunAfter(job.attempts, backoff));
       }
+    } finally {
+      clearInterval(beat);
+      await cleanup?.(job).catch(() => {});
     }
   }
 
@@ -112,6 +149,7 @@ export class JobWorker<Deps> {
     if (this.running) return;
     this.running = true;
     this.controller = new AbortController();
+    this.lastReclaim = 0; // force a reclaim on the first tick
     this.loopDone = this.loop();
   }
 

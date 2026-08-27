@@ -21,11 +21,11 @@ animated captions, editable in a dashboard before rendering.
 | `src/lib/storage/` | `StorageProvider` implementations: local disk + S3-compatible (AWS / R2 / MinIO), with a `getStorage()` factory and HMAC-signed URLs for the local backend |
 | `src/lib/transcription/` | `TranscriptionProvider` implementations: `whisper-local` (CLI), OpenAI, Deepgram, behind a `getTranscription()` factory. Pure `parseX` functions normalise each provider's response to integer-ms segments + words |
 | `src/lib/analysis/` | `AnalysisProvider` implementations: Anthropic (official SDK), OpenAI, and a no-LLM `heuristic` baseline, behind `getAnalysis()`. `refineSuggestions()` runs raw picks through `snapToSentences → dedupeOverlapping → capTotalRuntime` |
-| `src/lib/jobs/` | Job worker runtime: `JobWorker` polls `Job(status, runAfter)`, claims rows with a compare-and-swap, dispatches to a per-`kind` handler map, retries with exponential backoff + jitter. `createPrismaJobStore` / `enqueueJob` bind it to the DB |
+| `src/lib/jobs/` | Job worker runtime: `JobWorker` polls `Job(status, runAfter)`, claims rows with a compare-and-swap, dispatches to a per-`kind` handler map, retries with exponential backoff + jitter. A running job heartbeats its row; `reclaimStale` requeues jobs left in `PROCESSING` past the lease by a crashed worker; a `cleanup(job)` hook fires when each job settles. `createPrismaJobStore` / `enqueueJob` bind it to the DB |
 | `src/lib/ffmpeg/run.ts` | `FfmpegRunner` — runs the `args.ts` argv through the real binaries (`shell: false`): `probe` / `extractAudio` / `cut` / `reframe` / `reframeTracked` / `thumbnail`. `parseProbeOutput` normalises ffprobe JSON to `MediaInfo` |
 | `src/lib/faces/` | `FaceDetector` interface + `NullFaceDetector` (the default — no detection); `track.ts` smooths / resamples / interpolates a focal-point track. Plug a real detector into `buildPipelineDeps` |
 | `src/lib/ffmpeg/track-crop.ts` | `focalTrackToCropExpr` — turns a focal track into piecewise-`lerp` ffmpeg `crop` x/y expressions so the crop window pans to follow the subject |
-| `src/lib/pipeline/` | `[FETCH →] PROBE → EXTRACT_AUDIO → TRANSCRIBE → ANALYZE → THUMBNAIL` (each step enqueues the next) plus `RENDER` (cut → reframe to aspect → captions: static presets burn an SRT with ffmpeg, animated ones composite via Remotion → upload). `FETCH` downloads a link with `yt-dlp`; `THUMBNAIL` grabs a poster frame at each clip's midpoint. Narrow repo interfaces in `deps.ts`; Prisma impls + `buildPipelineDeps()` in `repos.ts` |
+| `src/lib/pipeline/` | `[FETCH →] PROBE → EXTRACT_AUDIO → TRANSCRIBE → ANALYZE → THUMBNAIL` (each step enqueues the next) plus `RENDER` (cut → reframe to aspect → captions: static presets burn an SRT with ffmpeg, animated ones composite via Remotion → upload). `FETCH` downloads a link with `yt-dlp`; `THUMBNAIL` grabs a poster frame at each clip's midpoint. `FsSourceCache` (`source-cache.ts`) keeps one `<TEMP_DIR>/videos/<id>/source` copy that every step reuses and the last ingest step evicts; per-job scratch lives under `<TEMP_DIR>/work/<jobId>/` and the worker deletes it when the job ends. Narrow repo interfaces in `deps.ts`; Prisma impls + `buildPipelineDeps()` in `repos.ts` |
 | `src/lib/captions/presets.ts` | `CaptionAnimation` presets — `isAnimatedPreset` decides ffmpeg-burn vs Remotion; `remotionPreset` maps to the composition string |
 | `remotion/` | Remotion project (`CaptionedClip` composition) — word-timed caption presets (word-by-word / pop / scale / bounce / fade / karaoke) over the reframed clip. `src/lib/pipeline/remotion.ts` drives it via `@remotion/{bundler,renderer}` (dynamic `import()`, so it never enters the Next bundle) |
 | `scripts/worker.ts` | `npm run worker` — the long-running ingest worker |
@@ -37,16 +37,17 @@ animated captions, editable in a dashboard before rendering.
 | `tests/storage.test.ts` | 10 unit tests — key safety, URL signing, local round-trip |
 | `tests/transcription.test.ts` | 10 unit tests — response parsing for each provider, ms normalisation |
 | `tests/analysis.test.ts` | 10 unit tests — prompt/tool parsing, the refine pipeline, the heuristic scorer |
-| `tests/jobs.test.ts` | 9 unit tests — backoff, claim/retry/fail state machine, concurrency, graceful stop |
+| `tests/jobs.test.ts` | 12 unit tests — backoff, claim/retry/fail state machine, concurrency, graceful stop, stale-job reclaim, heartbeat, cleanup hook |
 | `tests/ffmpeg-run.test.ts` | 4 unit tests — ffprobe JSON → `MediaInfo` |
 | `tests/pipeline.test.ts` | 9 unit tests — each ingest handler (incl. `FETCH`) + the full chain, against fake deps |
 | `tests/render.test.ts` | 10 unit tests — the RENDER handler: cut/reframe/probe/upload, static SRT vs Remotion composite, panning vs static reframe, no-words fallback, failure → `Render` FAILED |
 | `tests/thumbnail.test.ts` | 3 unit tests — the THUMBNAIL handler: single clip, whole video (one download), no-op |
+| `tests/source-cache.test.ts` | 3 unit tests — `FsSourceCache`: download-once/cache-hit, re-fetch when the copy is gone, `evict` clears the dir |
 | `tests/faces.test.ts` | 7 unit tests — focal-track smoothing / interpolation / resampling, `NullFaceDetector` |
 | `tests/track-crop.test.ts` | 4 unit tests — `focalTrackToCropExpr` (static, single, nested lerp, sort) |
 | `tests/presets.test.ts` | 2 unit tests — `isAnimatedPreset` / `remotionPreset` |
 | `tests/api.test.ts` | 13 unit tests — upload + from-url schema, the video service (incl. cross-project 404), local-route token auth |
-| `tests/clips-api.test.ts` | 18 unit tests — `requestRender`, `requestClipThumbnail`, `updateClip`, `deleteClip`, `createManualClip`, `upsertCaptionConfig` / `deleteCaptionConfig`, `listVideoClips`; all with ownership 404s |
+| `tests/clips-api.test.ts` | 19 unit tests — `requestRender` (incl. returning the in-flight render instead of stacking a duplicate), `requestClipThumbnail`, `updateClip`, `deleteClip`, `createManualClip`, `upsertCaptionConfig` / `deleteCaptionConfig`, `listVideoClips`; all with ownership 404s |
 | `tests/auth.test.ts` | 6 unit tests — bcrypt hash/verify, the credential + register schemas |
 | `tests/ffmpeg.integration.ts` | 6 checks against the real ffmpeg binary |
 | `.env.example` | Provider configuration |
@@ -160,6 +161,11 @@ Order that avoids rework:
     against Neon Postgres, Neon Object Storage, and ffmpeg 9.x on Windows.
     Still unexercised: real transcription (needs a provider key) and Remotion
     (needs headless Chromium).
+14. ~~Worker robustness~~ done — one cached source copy per video reused across
+    steps (was re-downloading the full file every step), per-job scratch dir
+    deleted when the job settles (was leaking GBs of temp copies), `reclaimStale`
+    requeues jobs orphaned in `PROCESSING` by a killed worker, and a duplicate
+    render request returns the in-flight `Render` instead of stacking a job.
 
 Remotion replaces the `subtitles=` burn for animated presets — `buildCues` output
 feeds Remotion directly, since cues carry word arrays. Keep the ffmpeg path for

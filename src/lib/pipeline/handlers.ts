@@ -8,7 +8,7 @@ import { DEFAULT_CAPTION_STYLE, isAnimatedPreset, remotionPreset } from "../capt
 import { ASPECT_DIMENSIONS } from "../ffmpeg/args.ts";
 import { type FocalPoint, resampleTrack } from "../faces/track.ts";
 import type { JobHandler } from "../jobs/types.ts";
-import { type PipelineDeps, scratchPath, toAspectPreset } from "./deps.ts";
+import { jobWorkDir, type PipelineDeps, scratchPath, toAspectPreset } from "./deps.ts";
 
 /**
  * The processing chain. Each handler does one step and enqueues the next, so a
@@ -16,6 +16,9 @@ import { type PipelineDeps, scratchPath, toAspectPreset } from "./deps.ts";
  * carries step-specific options.
  *
  *   (FETCH) → PROBE → EXTRACT_AUDIO → TRANSCRIBE → ANALYZE → THUMBNAIL
+ *
+ * The source video is downloaded once (`deps.source`) and reused across steps;
+ * transient outputs go under a per-job dir the worker wipes afterwards.
  */
 
 const AUDIO_MIME = "audio/wav";
@@ -28,7 +31,7 @@ interface FetchPayload {
   url?: string;
 }
 
-/** FETCH: download a URL to a file, put it in storage, then start PROBE. */
+/** FETCH: download a URL, put it in storage (and prime the source cache), start PROBE. */
 export const fetchHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal, setProgress }) => {
   const { url } = (job.payload ?? {}) as FetchPayload;
   if (!url) throw new Error("FETCH job payload is missing url");
@@ -36,7 +39,7 @@ export const fetchHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal
   const video = await deps.videos.get(job.videoId);
   if (!video) throw new Error(`video ${job.videoId} not found`);
 
-  const local = scratchPath(deps.tempDir, "fetch", job.videoId, "source.mp4");
+  const local = deps.source.localPath(job.videoId);
   const result = await deps.fetcher.fetch(url, local, signal);
   await setProgress(0.7);
 
@@ -54,8 +57,7 @@ export const probeHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal
   if (!video) throw new Error(`video ${job.videoId} not found`);
 
   await deps.videos.setStatus(job.videoId, "PROBING");
-  const source = scratchPath(deps.tempDir, job.videoId, "source");
-  await deps.storage.getToFile(video.storageKey, source);
+  const source = await deps.source.ensureLocal(job.videoId, video.storageKey, signal);
   await setProgress(0.5);
 
   const info = await deps.ffmpeg.probe(source, signal);
@@ -70,9 +72,8 @@ export const extractAudioHandler: JobHandler<PipelineDeps> = async ({ job, deps,
   const video = await deps.videos.get(job.videoId);
   if (!video) throw new Error(`video ${job.videoId} not found`);
 
-  const source = scratchPath(deps.tempDir, job.videoId, "source");
-  const wav = scratchPath(deps.tempDir, job.videoId, "audio.wav");
-  await deps.storage.getToFile(video.storageKey, source);
+  const source = await deps.source.ensureLocal(job.videoId, video.storageKey, signal);
+  const wav = scratchPath(jobWorkDir(deps.tempDir, job.id), "audio.wav");
   await setProgress(0.3);
 
   await deps.ffmpeg.extractAudio(source, wav, signal);
@@ -95,7 +96,7 @@ interface TranscribePayload {
 export const transcribeHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal, setProgress }) => {
   const payload = (job.payload ?? {}) as TranscribePayload;
   const audioKey = payload.audioKey ?? audioKeyFor(job.videoId);
-  const wav = scratchPath(deps.tempDir, job.videoId, "audio.wav");
+  const wav = scratchPath(jobWorkDir(deps.tempDir, job.id), "audio.wav");
   await deps.storage.getToFile(audioKey, wav);
 
   await deps.videos.setStatus(job.videoId, "TRANSCRIBING");
@@ -160,7 +161,7 @@ interface ThumbnailPayload {
   clipId?: string;
 }
 
-/** THUMBNAIL: grab a poster frame at each clip's midpoint. */
+/** THUMBNAIL: grab a poster frame at each clip's midpoint. Last ingest step. */
 export const thumbnailHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal, setProgress }) => {
   const { clipId } = (job.payload ?? {}) as ThumbnailPayload;
 
@@ -170,22 +171,27 @@ export const thumbnailHandler: JobHandler<PipelineDeps> = async ({ job, deps, si
 
   if (targets.length === 0) return { generated: 0 };
 
-  // One download of the source, N frame grabs.
-  const source = scratchPath(deps.tempDir, "thumb", job.videoId, "source");
-  await deps.storage.getToFile(targets[0].sourceKey, source);
+  const source = await deps.source.ensureLocal(job.videoId, targets[0].sourceKey, signal);
+  const work = jobWorkDir(deps.tempDir, job.id);
 
   let generated = 0;
-  for (const t of targets) {
-    const atMs = t.startMs + Math.floor((t.endMs - t.startMs) / 2);
-    const out = scratchPath(deps.tempDir, "thumb", job.videoId, `${t.clipId}.jpg`);
-    await deps.ffmpeg.thumbnail(source, out, { atMs, width: 640 }, signal);
+  try {
+    for (const t of targets) {
+      const atMs = t.startMs + Math.floor((t.endMs - t.startMs) / 2);
+      const out = scratchPath(work, `${t.clipId}.jpg`);
+      await deps.ffmpeg.thumbnail(source, out, { atMs, width: 640 }, signal);
 
-    const key = `clips/${t.clipId}/thumb.jpg`;
-    await deps.storage.putFile(key, out, "image/jpeg");
-    await deps.thumbnails.setKey(t.clipId, key);
+      const key = `clips/${t.clipId}/thumb.jpg`;
+      await deps.storage.putFile(key, out, "image/jpeg");
+      await deps.thumbnails.setKey(t.clipId, key);
 
-    generated++;
-    await setProgress(generated / targets.length);
+      generated++;
+      await setProgress(generated / targets.length);
+    }
+  } finally {
+    // Ingest is done — drop the cached source unless one clip was targeted
+    // (a re-thumbnail, likely mid-editing, with a render probably next).
+    if (!clipId) await deps.source.evict(job.videoId);
   }
   return { generated };
 };
@@ -206,13 +212,12 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
 
   await deps.renders.begin(renderId);
 
+  const work = jobWorkDir(deps.tempDir, job.id);
   try {
-    const source = scratchPath(deps.tempDir, "render", renderId, "source");
-    const cut = scratchPath(deps.tempDir, "render", renderId, "cut.mp4");
-    const reframed = scratchPath(deps.tempDir, "render", renderId, "reframed.mp4");
-    const captioned = scratchPath(deps.tempDir, "render", renderId, "captioned.mp4");
-
-    await deps.storage.getToFile(target.sourceKey, source);
+    const source = await deps.source.ensureLocal(target.videoId, target.sourceKey, signal);
+    const cut = scratchPath(work, "cut.mp4");
+    const reframed = scratchPath(work, "reframed.mp4");
+    const captioned = scratchPath(work, "captioned.mp4");
     await setProgress(0.2);
 
     await deps.ffmpeg.cut(
@@ -238,7 +243,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     // Remotion afterwards, so the reframe gets no subtitle path.
     let subtitlePath: string | undefined;
     if (staticBurn) {
-      subtitlePath = scratchPath(deps.tempDir, "render", renderId, "captions.srt");
+      subtitlePath = scratchPath(work, "captions.srt");
       await mkdir(dirname(subtitlePath), { recursive: true });
       await writeFile(subtitlePath, toSrt(buildCues(words), target.startMs), "utf8");
     }
@@ -311,5 +316,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
   } catch (err) {
     await deps.renders.fail(renderId, err instanceof Error ? err.message : String(err));
     throw err;
+  } finally {
+    await deps.source.evict(target.videoId);
   }
 };

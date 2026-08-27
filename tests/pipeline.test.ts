@@ -54,7 +54,10 @@ interface Spy {
   savedTranscript: TranscriptResult | null;
   savedClips: unknown[] | null;
   fetched: string | null;
+  fetchedTo: string | null;
   filename: string | null;
+  sourceEnsured: string[];
+  evicted: string[];
 }
 
 function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: Spy } {
@@ -68,7 +71,10 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
     savedTranscript: null,
     savedClips: null,
     fetched: null,
+    fetchedTo: null,
     filename: null,
+    sourceEnsured: [],
+    evicted: [],
   };
   const video = { id: "vid1", storageKey: "videos/vid1/source.mp4", durationMs: null as number | null, status: "UPLOADED" };
 
@@ -99,6 +105,16 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       createDownloadUrl: async () => "",
       delete: async () => {},
       exists: async () => false,
+    },
+    source: {
+      localPath: (videoId) => `/tmp/clipper-test/videos/${videoId}/source`,
+      ensureLocal: async (videoId, storageKey) => {
+        spy.sourceEnsured.push(storageKey);
+        return `/tmp/clipper-test/videos/${videoId}/source`;
+      },
+      evict: async (videoId) => {
+        spy.evicted.push(videoId);
+      },
     },
     transcription: {
       name: "fake",
@@ -164,8 +180,9 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
     faces: { name: "none", detectTrack: async () => [] },
     fetcher: {
       name: "fake",
-      fetch: async (url: string) => {
+      fetch: async (url: string, out: string) => {
         spy.fetched = url;
+        spy.fetchedTo = out;
         return { title: "Fetched Title" };
       },
     },
@@ -203,6 +220,7 @@ test("FETCH downloads the URL, stores it, sets the title, queues PROBE", async (
 
   assert.equal(spy.fetched, "https://youtu.be/abc123");
   assert.equal(spy.puts[0], "videos/vid1/source.mp4");
+  assert.equal(spy.fetchedTo, "/tmp/clipper-test/videos/vid1/source"); // primes the cache
   assert.equal(spy.filename, "Fetched Title");
   assert.equal(spy.statuses.includes("UPLOADED"), true);
   assert.deepEqual(spy.enqueued, [{ videoId: "vid1", kind: "PROBE" }]);
@@ -218,7 +236,7 @@ test("PROBE stores media info and queues EXTRACT_AUDIO", async () => {
   const { deps, spy } = makeDeps();
   const result = await probeHandler(ctx(deps, "PROBE"));
 
-  assert.equal(spy.gets[0], "videos/vid1/source.mp4");
+  assert.equal(spy.sourceEnsured[0], "videos/vid1/source.mp4");
   assert.equal(spy.statuses.includes("PROBING"), true);
   assert.equal(spy.probed?.durationMs, 120_000);
   assert.deepEqual(spy.enqueued, [{ videoId: "vid1", kind: "EXTRACT_AUDIO" }]);
@@ -230,6 +248,7 @@ test("EXTRACT_AUDIO runs ffmpeg, uploads the wav, queues TRANSCRIBE", async () =
   const result = await extractAudioHandler(ctx(deps, "EXTRACT_AUDIO"));
 
   assert.equal(spy.extracted.length, 1);
+  assert.equal(spy.sourceEnsured[0], "videos/vid1/source.mp4");
   assert.equal(spy.puts[0], "videos/vid1/audio.wav");
   assert.deepEqual(spy.enqueued[0], {
     videoId: "vid1",

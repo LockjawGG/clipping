@@ -32,6 +32,7 @@ test("nextRunAfter returns a Date offset from the injected clock", () => {
 interface Row extends JobRecord {
   result?: unknown;
   errorMessage?: string | null;
+  updatedAt?: Date;
 }
 
 class MemoryStore implements JobStore {
@@ -64,6 +65,7 @@ class MemoryStore implements JobStore {
     r.status = "PROCESSING";
     r.attempts += 1;
     r.progress = 0;
+    r.updatedAt = new Date(this.clock());
     return { ...r };
   }
 
@@ -89,6 +91,26 @@ class MemoryStore implements JobStore {
 
   async setProgress(id: string, fraction: number): Promise<void> {
     this.rows.get(id)!.progress = fraction;
+  }
+
+  heartbeats: string[] = [];
+  async heartbeat(id: string): Promise<void> {
+    this.heartbeats.push(id);
+    const r = this.rows.get(id);
+    if (r && r.status === "PROCESSING") r.updatedAt = new Date(this.clock());
+  }
+
+  clock: () => number = () => Date.now();
+  async reclaimStale(staleBefore: Date): Promise<number> {
+    let n = 0;
+    for (const r of this.rows.values()) {
+      if (r.status === "PROCESSING" && (r.updatedAt?.getTime() ?? 0) < staleBefore.getTime()) {
+        r.status = "QUEUED";
+        r.runAfter = new Date(this.clock());
+        n++;
+      }
+    }
+    return n;
   }
 }
 
@@ -224,4 +246,67 @@ test("a job aborted by shutdown is requeued without spending an attempt", async 
   assert.equal(row.status, "QUEUED");
   assert.equal(row.attempts, 1); // the claim bumped it once; the abort didn't add another
   assert.equal(row.runAfter.getTime(), 50_000);
+});
+
+test("reclaimStale requeues a job whose worker died mid-flight", async () => {
+  const store = new MemoryStore();
+  let t = 1_000_000;
+  store.clock = () => t;
+  store.add({ id: "j1", kind: "PROBE" });
+  await store.claim("j1"); // PROCESSING, updatedAt = t
+
+  const worker = new JobWorker({ store, deps, handlers: {}, leaseMs: 60_000, now: () => t });
+
+  t += 30_000; // still within lease
+  assert.equal(await worker.reclaimStale(), 0);
+  assert.equal(store.rows.get("j1")!.status, "PROCESSING");
+
+  t += 40_000; // now past the lease
+  assert.equal(await worker.reclaimStale(), 1);
+  assert.equal(store.rows.get("j1")!.status, "QUEUED");
+});
+
+test("a running job heartbeats to keep its lease", async () => {
+  const store = new MemoryStore();
+  store.add({ id: "j1", kind: "PROBE" });
+
+  let release: () => void = () => {};
+  const worker = new JobWorker({
+    store,
+    deps,
+    heartbeatMs: 5,
+    handlers: { PROBE: () => new Promise<void>((r) => (release = r)) },
+  });
+
+  worker.start();
+  await new Promise((r) => setTimeout(r, 40)); // let a few heartbeats fire
+  release();
+  await worker.stop();
+
+  assert.ok(store.heartbeats.length >= 2, `heartbeats: ${store.heartbeats.length}`);
+  assert.equal(store.rows.get("j1")!.status, "COMPLETED");
+});
+
+test("cleanup runs after every job, success or failure", async () => {
+  const store = new MemoryStore();
+  store.add({ id: "ok", kind: "PROBE" });
+  store.add({ id: "boom", kind: "RENDER", maxAttempts: 1 });
+  const cleaned: string[] = [];
+
+  const worker = new JobWorker({
+    store,
+    deps,
+    handlers: {
+      PROBE: async () => ({}),
+      RENDER: async () => {
+        throw new Error("nope");
+      },
+    },
+    cleanup: async (job) => {
+      cleaned.push(job.id);
+    },
+  });
+
+  await worker.runOnce();
+  assert.deepEqual(cleaned.sort(), ["boom", "ok"]);
 });
