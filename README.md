@@ -19,19 +19,21 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 | `src/lib/storage/` | `StorageProvider` implementations: local disk + S3-compatible (AWS / R2 / MinIO), with a `getStorage()` factory and HMAC-signed URLs for the local backend |
 | `src/lib/transcription/` | `TranscriptionProvider` implementations: `whisper-local` (CLI), OpenAI, Deepgram, behind a `getTranscription()` factory. Pure `parseX` functions normalise each provider's response to integer-ms segments + words |
 | `src/lib/analysis/` | `AnalysisProvider` implementations: Anthropic (official SDK), OpenAI, and a no-LLM `heuristic` baseline, behind `getAnalysis()`. `refineSuggestions()` runs raw picks through `snapToSentences → dedupeOverlapping → capTotalRuntime` |
+| `src/lib/jobs/` | Job worker runtime: `JobWorker` polls `Job(status, runAfter)`, claims rows with a compare-and-swap, dispatches to a per-`kind` handler map, retries with exponential backoff + jitter. `createPrismaJobStore` / `enqueueJob` bind it to the DB |
 | `src/app/` | Next.js App Router — landing page, root layout, Tailwind |
 | `tests/core.test.ts` | 33 unit tests |
 | `tests/storage.test.ts` | 10 unit tests — key safety, URL signing, local round-trip |
 | `tests/transcription.test.ts` | 10 unit tests — response parsing for each provider, ms normalisation |
 | `tests/analysis.test.ts` | 10 unit tests — prompt/tool parsing, the refine pipeline, the heuristic scorer |
+| `tests/jobs.test.ts` | 9 unit tests — backoff, claim/retry/fail state machine, concurrency, graceful stop |
 | `tests/ffmpeg.integration.ts` | 6 checks against the real ffmpeg binary |
 | `.env.example` | Provider configuration |
 
 ## What is not here yet
 
-Queue workers, API routes, the upload pipeline, auth, the dashboard, the
-transcript and clip editors, Remotion animated captions, and face detection.
-See "Continuing the build" below.
+The per-`kind` job handlers, API routes, the upload pipeline, auth, the
+dashboard, the transcript and clip editors, Remotion animated captions, and
+face detection. See "Continuing the build" below.
 
 ## Setup
 
@@ -101,7 +103,8 @@ Order that avoids rework:
    analysis~~ done. The analysis output goes through `refineSuggestions`
    (`snapToSentences` → `dedupeOverlapping` → `capTotalRuntime`) — never trust
    raw model timestamps.
-3. Job worker polling `Job` on `(status, runAfter)` with backoff
+3. ~~Job worker polling `Job` on `(status, runAfter)` with backoff~~ done —
+   register per-`kind` handlers next
 4. Upload → probe → extract audio → transcribe pipeline, wired to the providers
 5. API routes + the dashboard
 6. UI, then Remotion for animated captions
