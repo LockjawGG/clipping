@@ -155,7 +155,11 @@ Order that avoids rework:
     `focalTrackToCropExpr`) — still needs a real `FaceDetector` implementation
 12. ~~Ingest from a link~~ done (`FETCH` handler, `yt-dlp`,
     `POST /api/videos/from-url`, dashboard link form)
-13. An end-to-end run against real Postgres + ffmpeg + Chromium
+13. ~~End-to-end run against real Postgres + ffmpeg~~ done — the ingest chain
+    (`PROBE → EXTRACT_AUDIO → ANALYZE → THUMBNAIL`) and `RENDER` all verified
+    against Neon Postgres, Neon Object Storage, and ffmpeg 9.x on Windows.
+    Still unexercised: real transcription (needs a provider key) and Remotion
+    (needs headless Chromium).
 
 Remotion replaces the `subtitles=` burn for animated presets — `buildCues` output
 feeds Remotion directly, since cues carry word arrays. Keep the ffmpeg path for

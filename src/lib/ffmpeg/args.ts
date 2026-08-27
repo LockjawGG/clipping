@@ -24,13 +24,21 @@ export const ASPECT_DIMENSIONS: Record<AspectRatio, { width: number; height: num
  * never client filenames. This asserts that invariant rather than trying to
  * sanitise a hostile path into a safe one.
  */
+const POSIX_ABSOLUTE = /^\//;
+// `C:\`, `C:/`, or a UNC `\\host\share`.
+const WINDOWS_ABSOLUTE = /^(?:[A-Za-z]:[\\/]|\\\\)/;
+
 export function assertSafePath(path: string): void {
   if (path.length === 0) throw new Error("empty path");
   if (path.includes("\0")) throw new Error("path contains a null byte");
-  if (!path.startsWith("/")) throw new Error(`path must be absolute: ${path}`);
-  if (path.includes("..")) throw new Error(`path contains a traversal segment: ${path}`);
-  // A leading dash would be parsed as an option, not a filename.
-  if (/(^|\/)-/.test(path)) throw new Error(`path segment starts with a dash: ${path}`);
+  if (!POSIX_ABSOLUTE.test(path) && !WINDOWS_ABSOLUTE.test(path)) {
+    throw new Error(`path must be absolute: ${path}`);
+  }
+  if (/(^|[\\/])\.\.([\\/]|$)/.test(path)) {
+    throw new Error(`path contains a traversal segment: ${path}`);
+  }
+  // A leading dash on any segment would be parsed as an option, not a filename.
+  if (/(^|[\\/])-/.test(path)) throw new Error(`path segment starts with a dash: ${path}`);
 }
 
 /**
