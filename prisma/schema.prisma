@@ -1,0 +1,341 @@
+// Data model for the clipping app.
+//
+// Design notes that matter:
+// - Timestamps are stored as integer milliseconds, never floats. Float seconds
+//   accumulate rounding error once you slice, re-cut, and re-render, and cue
+//   boundaries start drifting off the audio.
+// - Words are a separate table from segments. Karaoke/highlight captions need
+//   word-level timing; sentence-level rows alone can't drive them.
+// - Every long-running operation is a Job row. The API never blocks on ffmpeg.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  name      String?
+  imageUrl  String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  projects  Project[]
+
+  @@map("users")
+}
+
+model Project {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videos Video[]
+
+  // Every list query is scoped by owner. Index accordingly.
+  @@index([userId, updatedAt])
+  @@map("projects")
+}
+
+enum VideoStatus {
+  UPLOADING
+  UPLOADED
+  PROBING
+  TRANSCRIBING
+  READY
+  FAILED
+}
+
+model Video {
+  id        String      @id @default(cuid())
+  projectId String
+  status    VideoStatus @default(UPLOADING)
+
+  // Client-supplied name is display-only. storageKey is server-generated and is
+  // the only value ever passed to ffmpeg or the storage SDK.
+  originalFilename String
+  storageKey       String  @unique
+  thumbnailKey     String?
+
+  sizeBytes    BigInt?
+  durationMs   Int?
+  width        Int?
+  height       Int?
+  fps          Float?
+  videoCodec   String?
+  audioCodec   String?
+  audioChannels Int?
+  sampleRate   Int?
+  hasAudio     Boolean @default(true)
+
+  errorMessage String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  project    Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  transcript Transcript?
+  clips      Clip[]
+  jobs       Job[]
+
+  @@index([projectId, createdAt])
+  @@map("videos")
+}
+
+model Transcript {
+  id        String   @id @default(cuid())
+  videoId   String   @unique
+  provider  String
+  model     String?
+  language  String
+  // Mean segment confidence, used as a render-time quality gate.
+  confidence Float?
+  createdAt DateTime @default(now())
+
+  video    Video               @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  segments TranscriptSegment[]
+
+  @@map("transcripts")
+}
+
+model TranscriptSegment {
+  id           String @id @default(cuid())
+  transcriptId String
+  index        Int
+  startMs      Int
+  endMs        Int
+  text         String
+  speaker      String?
+  confidence   Float?
+
+  transcript Transcript       @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+  words      TranscriptWord[]
+
+  // Range scans over a window of the timeline are the hot path for the editor.
+  @@unique([transcriptId, index])
+  @@index([transcriptId, startMs])
+  @@map("transcript_segments")
+}
+
+model TranscriptWord {
+  id         String @id @default(cuid())
+  segmentId  String
+  index      Int
+  startMs    Int
+  endMs      Int
+  text       String
+  confidence Float?
+
+  segment TranscriptSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+
+  @@unique([segmentId, index])
+  @@index([segmentId, startMs])
+  @@map("transcript_words")
+}
+
+enum ClipOrigin {
+  AI_SUGGESTED
+  USER_CREATED
+}
+
+enum AspectRatio {
+  VERTICAL_9_16
+  SQUARE_1_1
+  LANDSCAPE_16_9
+  PORTRAIT_4_5
+}
+
+model Clip {
+  id      String     @id @default(cuid())
+  videoId String
+  origin  ClipOrigin @default(AI_SUGGESTED)
+
+  startMs Int
+  endMs   Int
+
+  title       String
+  hook        String?
+  description String?
+  // Why the model picked this window. Shown in the UI so the suggestion is
+  // auditable rather than a black box.
+  reason         String?
+  caption        String?
+  socialTitle    String?
+  hashtags       String[] @default([])
+  score          Float?
+
+  aspectRatio AspectRatio @default(VERTICAL_9_16)
+  // Normalised 0..1 crop centre. Null means "auto / face-tracked".
+  focalX      Float?
+  focalY      Float?
+  muted       Boolean @default(false)
+  volume      Float   @default(1.0)
+  playbackRate Float  @default(1.0)
+
+  // Word ids the user struck out in the transcript editor; the renderer cuts
+  // these spans and concatenates the remainder.
+  removedWordIds String[] @default([])
+
+  accepted  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  video          Video           @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  subtitleConfig SubtitleConfig?
+  overlays       Overlay[]
+  renders        Render[]
+
+  @@index([videoId, startMs])
+  @@map("clips")
+}
+
+enum SubtitlePreset {
+  CLASSIC
+  BOLD
+  VIRAL
+  MINIMAL
+  KARAOKE
+}
+
+enum CaptionAnimation {
+  NONE
+  WORD_BY_WORD
+  POP
+  SCALE
+  BOUNCE
+  FADE
+  KARAOKE
+}
+
+model SubtitleConfig {
+  id     String         @id @default(cuid())
+  clipId String         @unique
+  preset SubtitlePreset @default(CLASSIC)
+
+  fontFamily     String  @default("Inter")
+  fontSizePx     Int     @default(64)
+  fontWeight     Int     @default(700)
+  textColor      String  @default("#FFFFFF")
+  highlightColor String  @default("#FFE600")
+  outlineColor   String  @default("#000000")
+  outlineWidthPx Int     @default(6)
+  shadowOpacity  Float   @default(0.5)
+  backgroundColor String?
+  // 0..1 from the top of the frame.
+  positionY      Float   @default(0.78)
+  alignment      String  @default("center")
+  animation      CaptionAnimation @default(NONE)
+
+  maxCharsPerLine Int @default(38)
+  maxLines        Int @default(2)
+  maxWordsPerCue  Int @default(7)
+  minCueMs        Int @default(800)
+  maxCueMs        Int @default(5000)
+
+  uppercase Boolean @default(false)
+
+  clip Clip @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@map("subtitle_configs")
+}
+
+enum OverlayKind {
+  TEXT
+  EMOJI
+  IMAGE
+}
+
+model Overlay {
+  id      String      @id @default(cuid())
+  clipId  String
+  kind    OverlayKind
+  content String
+  // Normalised layout so overlays survive an aspect-ratio change.
+  x       Float
+  y       Float
+  scale   Float @default(1.0)
+  rotation Float @default(0)
+  startMs Int?
+  endMs   Int?
+  zIndex  Int   @default(0)
+
+  clip Clip @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@index([clipId])
+  @@map("overlays")
+}
+
+enum RenderQuality {
+  P720
+  P1080
+  ORIGINAL
+}
+
+enum JobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model Render {
+  id      String        @id @default(cuid())
+  clipId  String
+  quality RenderQuality @default(P1080)
+  status  JobStatus     @default(QUEUED)
+
+  outputKey    String?
+  sizeBytes    BigInt?
+  durationMs   Int?
+  progress     Float     @default(0)
+  errorMessage String?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  clip Clip @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@index([clipId, createdAt])
+  @@map("renders")
+}
+
+enum JobKind {
+  PROBE
+  EXTRACT_AUDIO
+  TRANSCRIBE
+  ANALYZE
+  RENDER
+  THUMBNAIL
+}
+
+model Job {
+  id      String    @id @default(cuid())
+  videoId String
+  kind    JobKind
+  status  JobStatus @default(QUEUED)
+
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(3)
+  progress    Float    @default(0)
+  payload     Json?
+  result      Json?
+  errorMessage String?
+  // Set on retry with exponential backoff; workers skip rows not yet due.
+  runAfter    DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([status, runAfter])
+  @@index([videoId, kind])
+  @@map("jobs")
+}
