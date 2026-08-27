@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    env:
+      # `next build` never connects to anything; skip the zod env parse.
+      SKIP_ENV_VALIDATION: "1"
+      NEXTAUTH_SECRET: ci-placeholder-secret
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Build first: it runs `prisma generate` (produces @prisma/client types)
+      # and creates next-env.d.ts, both of which `typecheck` needs.
+      - run: npm run build
+
+      - run: npm run typecheck
+
+      - run: npm run lint
+
+      - run: npm test
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Synthesise a test source
+        run: |
+          mkdir -p /tmp/vt
+          ffmpeg -y \
+            -f lavfi -i testsrc=size=1280x720:rate=30 \
+            -f lavfi -i sine=frequency=440 \
+            -t 12 -pix_fmt yuv420p /tmp/vt/src.mp4
+
+      - run: npm run test:integration

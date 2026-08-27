@@ -1,14 +1,16 @@
 # Clipper
 
-An AI video clipping app, built up in stages. The data model, the provider
-boundary, and the three algorithms that everything downstream depends on being
-correct came first and are covered by tests. A Next.js scaffold is now wired on
-top; the upload flow, editors, and render pipeline land in later PRs.
+[![CI](https://github.com/LockjawGG/clipping/actions/workflows/ci.yml/badge.svg)](https://github.com/LockjawGG/clipping/actions/workflows/ci.yml)
+
+An AI video clipping app, built up in stages: upload a long video, it gets
+probed, transcribed, and analysed into short vertical clips with burned-in or
+animated captions, editable in a dashboard before rendering.
 
 ## What is here
 
 | Path | Status |
 | --- | --- |
+| `.github/workflows/ci.yml` | GitHub Actions — `build → typecheck → lint → test`, plus a job running `test:integration` against apt-installed ffmpeg on a synthesised source |
 | `prisma/schema.prisma` | Complete schema — users, projects, videos, transcripts, segments, words, clips, subtitle configs, overlays, renders, jobs |
 | `src/lib/providers/types.ts` | Provider interfaces for transcription, storage, and clip analysis |
 | `src/lib/captions/layout.ts` | Word timings → non-overlapping cues, line breaking, SRT output |
@@ -71,7 +73,9 @@ and `Clip.thumbnailKey`.
 
 `npm run build` runs `prisma generate` then `next build`. `npm run typecheck`
 expects a prior `npm run build` (or `npm run dev`) so Next's generated types
-exist.
+exist — CI (`.github/workflows/ci.yml`) runs the steps in that order:
+`build → typecheck → lint → test`, with a separate job for
+`test:integration` against a real ffmpeg.
 
 ## Running the tests
 
