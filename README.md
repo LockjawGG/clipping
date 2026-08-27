@@ -25,10 +25,10 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 | `src/lib/captions/presets.ts` | `CaptionAnimation` presets — `isAnimatedPreset` decides ffmpeg-burn vs Remotion; `remotionPreset` maps to the composition string |
 | `remotion/` | Remotion project (`CaptionedClip` composition) — word-timed caption presets (word-by-word / pop / scale / bounce / fade / karaoke) over the reframed clip. `src/lib/pipeline/remotion.ts` drives it via `@remotion/{bundler,renderer}` (dynamic `import()`, so it never enters the Next bundle) |
 | `scripts/worker.ts` | `npm run worker` — the long-running ingest worker |
-| `src/lib/api/` | Upload flow (`createVideoUpload` → presigned PUT, `confirmUpload` → enqueue `PROBE`, `getVideoStatus`), clip actions (`requestRender`, `listVideoClips`, `updateClip`, `deleteClip`, `createManualClip` — snapped via `snapToSentences`), an `ApiError`/Zod → JSON `route()` wrapper, and the token-guarded local-storage file route |
-| `src/app/api/` | `videos` + `/videos/:id/{ingest,clips}`, `PATCH`/`DELETE /api/clips/:id`, `POST /api/clips/:id/render`, `GET`/`PUT /api/storage/local/[...key]`, `/api/auth/{register,[...nextauth]}` — thin shells over `src/lib` |
+| `src/lib/api/` | Upload flow (`createVideoUpload` → presigned PUT, `confirmUpload` → enqueue `PROBE`, `getVideoStatus`), clip actions (`requestRender`, `listVideoClips`, `updateClip`, `deleteClip`, `createManualClip` — snapped via `snapToSentences`, `upsertCaptionConfig` / `deleteCaptionConfig`), an `ApiError`/Zod → JSON `route()` wrapper, and the token-guarded local-storage file route |
+| `src/app/api/` | `videos` + `/videos/:id/{ingest,clips}`, `PATCH`/`DELETE /api/clips/:id`, `PUT`/`DELETE /api/clips/:id/captions`, `POST /api/clips/:id/render`, `GET`/`PUT /api/storage/local/[...key]`, `/api/auth/{register,[...nextauth]}` — thin shells over `src/lib` |
 | `src/lib/auth/` | NextAuth v5, Credentials + JWT sessions. `config.edge.ts` (db-free, for `middleware.ts`) is spread into the full config in `index.ts`. `password.ts` (bcrypt), `session.ts` (`requireUserId`, `getOrCreateProject`) |
-| `src/app/` | App Router — landing, `/login`, `/register`, `/dashboard` (video list + upload), `/dashboard/[videoId]` (per-clip editor: boundaries, aspect, focal point, accept, render, delete; add-a-clip form; read-only transcript), root layout, Tailwind. `middleware.ts` gates `/dashboard` |
+| `src/app/` | App Router — landing, `/login`, `/register`, `/dashboard` (video list + upload), `/dashboard/[videoId]` (per-clip editor: boundaries, aspect, focal point, accept, caption preset/animation/colours, render, delete; add-a-clip form; read-only transcript), root layout, Tailwind. `middleware.ts` gates `/dashboard` |
 | `tests/core.test.ts` | 33 unit tests |
 | `tests/storage.test.ts` | 10 unit tests — key safety, URL signing, local round-trip |
 | `tests/transcription.test.ts` | 10 unit tests — response parsing for each provider, ms normalisation |
@@ -39,7 +39,7 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 | `tests/render.test.ts` | 8 unit tests — the RENDER handler: cut/reframe/probe/upload, static SRT burn vs Remotion composite, no-words fallback, failure → `Render` FAILED |
 | `tests/presets.test.ts` | 2 unit tests — `isAnimatedPreset` / `remotionPreset` |
 | `tests/api.test.ts` | 11 unit tests — upload schema, the video service (incl. cross-project 404), local-route token auth |
-| `tests/clips-api.test.ts` | 11 unit tests — `requestRender`, `updateClip` (merge + validation), `deleteClip`, `createManualClip` (snapping), `listVideoClips`; all with ownership 404s |
+| `tests/clips-api.test.ts` | 16 unit tests — `requestRender`, `updateClip`, `deleteClip`, `createManualClip` (snapping), `upsertCaptionConfig` / `deleteCaptionConfig`, `listVideoClips`; all with ownership 404s |
 | `tests/auth.test.ts` | 6 unit tests — bcrypt hash/verify, the credential + register schemas |
 | `tests/ffmpeg.integration.ts` | 6 checks against the real ffmpeg binary |
 | `.env.example` | Provider configuration |
@@ -47,9 +47,8 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 ## What is not here yet
 
 The `THUMBNAIL` handler, transcript-text editing (the view is read-only —
-editing would have to keep the word timings in sync), a UI to pick a caption
-preset per clip (the `RENDER` path reads `SubtitleConfig.animation` but nothing
-writes it yet), and face detection. See "Continuing the build" below.
+editing would have to keep the word timings in sync), and face detection. See
+"Continuing the build" below.
 
 The Remotion render path (`bundle()` + `renderMedia()`) type-checks and its
 wiring is unit-tested, but it needs a headless Chromium (`@remotion/renderer`
@@ -134,9 +133,10 @@ Order that avoids rework:
 6. ~~Auth (NextAuth) + the dashboard~~ done
 7. ~~`RENDER` handler + clip-render UI~~ done
 8. ~~Clip editor (boundaries / aspect / focal point / manual clips)~~ done
-9. ~~Remotion for animated captions~~ done (`remotion/`,
-   `src/lib/pipeline/remotion.ts`). Still needs a caption-preset picker in the
-   editor and an end-to-end run. Then a `THUMBNAIL` handler and face detection.
+9. ~~Remotion for animated captions~~ + ~~caption-preset picker~~ done
+   (`remotion/`, `PUT /api/clips/:id/captions`, `CaptionControls`)
+10. A `THUMBNAIL` handler, face detection, and an end-to-end run against real
+    Postgres + ffmpeg + Chromium
 
 Remotion replaces the `subtitles=` burn for animated presets — `buildCues` output
 feeds Remotion directly, since cues carry word arrays. Keep the ffmpeg path for

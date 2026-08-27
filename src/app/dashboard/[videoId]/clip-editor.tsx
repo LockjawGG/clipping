@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { CaptionControls, type CaptionConfig } from "./caption-controls";
+
 const ASPECTS = [
   ["VERTICAL_9_16", "9:16"],
   ["SQUARE_1_1", "1:1"],
@@ -21,6 +23,7 @@ export interface ClipData {
   focalX: number | null;
   focalY: number | null;
   accepted: boolean;
+  captions: CaptionConfig | null;
   render: { id: string; status: string; progress: number; downloadUrl: string | null } | null;
 }
 
@@ -145,6 +148,8 @@ export function ClipEditor({ clip }: { clip: ClipData }) {
           </label>
         ))}
       </div>
+
+      <CaptionControls clipId={clip.id} current={clip.captions} />
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 

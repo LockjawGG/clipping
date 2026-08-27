@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { Segment, StorageProvider } from "../providers/types.ts";
 import { DEFAULT_SNAP_CONFIG, snapToSentences } from "../clips/boundaries.ts";
+import { CAPTION_ANIMATIONS } from "../captions/presets.ts";
 import { ApiError } from "./http.ts";
 
 /**
@@ -40,6 +41,25 @@ export const manualClipSchema = z.object({
   title: z.string().min(1).max(200).optional(),
 });
 
+const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "expected a #rrggbb hex colour");
+
+export const captionConfigSchema = z
+  .object({
+    preset: z.enum(["CLASSIC", "BOLD", "VIRAL", "MINIMAL", "KARAOKE"]),
+    animation: z.enum(CAPTION_ANIMATIONS as unknown as [string, ...string[]]),
+    fontFamily: z.string().min(1).max(100),
+    fontSizePx: z.number().int().min(12).max(200),
+    fontWeight: z.number().int().min(100).max(900),
+    textColor: hexColor,
+    highlightColor: hexColor,
+    outlineColor: hexColor,
+    outlineWidthPx: z.number().int().min(0).max(30),
+    positionY: z.number().min(0).max(1),
+    uppercase: z.boolean(),
+  })
+  .partial()
+  .strict();
+
 interface ClipRow {
   id: string;
   videoId: string;
@@ -59,6 +79,14 @@ interface ClipListRow {
   focalY: number | null;
   accepted: boolean;
   caption: string | null;
+  subtitleConfig: {
+    preset: string;
+    animation: string;
+    textColor: string;
+    highlightColor: string;
+    positionY: number;
+    uppercase: boolean;
+  } | null;
   renders: Array<{ id: string; status: string; progress: number; outputKey: string | null }>;
 }
 
@@ -68,7 +96,11 @@ export interface ClipDb {
     update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<unknown>;
     create(args: { data: Record<string, unknown> }): Promise<{ id: string }>;
     delete(args: { where: { id: string } }): Promise<unknown>;
-    findMany(args: { where: { videoId: string } }): Promise<ClipListRow[]>;
+    findMany(args: {
+      where: { videoId: string };
+      orderBy?: unknown;
+      include?: unknown;
+    }): Promise<ClipListRow[]>;
   };
   video: {
     findUnique(args: {
@@ -81,6 +113,14 @@ export interface ClipDb {
     }): Promise<Array<{ startMs: number; endMs: number }>>;
   };
   render: { create(args: { data: Record<string, unknown> }): Promise<{ id: string }> };
+  subtitleConfig: {
+    upsert(args: {
+      where: { clipId: string };
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    }): Promise<Record<string, unknown>>;
+    deleteMany(args: { where: { clipId: string } }): Promise<{ count: number }>;
+  };
 }
 
 export interface ClipServiceDeps {
@@ -178,7 +218,27 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
   const video = await deps.db.video.findUnique({ where: { id: videoId } });
   await assertOwnsProject(deps, video?.projectId);
 
-  const clips = await deps.db.clip.findMany({ where: { videoId } });
+  const clips = await deps.db.clip.findMany({
+    where: { videoId },
+    orderBy: { startMs: "asc" },
+    include: {
+      subtitleConfig: {
+        select: {
+          preset: true,
+          animation: true,
+          textColor: true,
+          highlightColor: true,
+          positionY: true,
+          uppercase: true,
+        },
+      },
+      renders: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { id: true, status: true, progress: true, outputKey: true },
+      },
+    },
+  });
   return Promise.all(
     clips.map(async (c) => {
       const latest = c.renders[0];
@@ -198,10 +258,28 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
         focalY: c.focalY,
         accepted: c.accepted,
         caption: c.caption,
+        captions: c.subtitleConfig,
         render: latest
           ? { id: latest.id, status: latest.status, progress: latest.progress, downloadUrl }
           : null,
       };
     }),
   );
+}
+
+export async function upsertCaptionConfig(deps: ClipServiceDeps, clipId: string, input: unknown) {
+  const patch = captionConfigSchema.parse(input);
+  await ownedClip(deps, clipId);
+  const saved = await deps.db.subtitleConfig.upsert({
+    where: { clipId },
+    create: { clipId, ...patch },
+    update: patch,
+  });
+  return saved;
+}
+
+export async function deleteCaptionConfig(deps: ClipServiceDeps, clipId: string) {
+  await ownedClip(deps, clipId);
+  const res = await deps.db.subtitleConfig.deleteMany({ where: { clipId } });
+  return { clipId, removed: res.count > 0 };
 }
