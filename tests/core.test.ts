@@ -250,6 +250,15 @@ test("paths that would be parsed as options are rejected", () => {
   assert.throws(() => assertSafePath("/tmp/a\0b.mp4"));
 });
 
+test("assertSafePath accepts Windows-absolute paths, still rejecting traversal and dashes", () => {
+  assert.doesNotThrow(() => assertSafePath("C:\\Users\\me\\AppData\\Local\\Temp\\clip\\source.mp4"));
+  assert.doesNotThrow(() => assertSafePath("C:/Users/me/Temp/clip/source.mp4"));
+  assert.doesNotThrow(() => assertSafePath("\\\\nas\\media\\clip.mp4"));
+  assert.throws(() => assertSafePath("C:\\Users\\..\\Windows\\x.mp4"));
+  assert.throws(() => assertSafePath("C:\\Temp\\-i.mp4"));
+  assert.throws(() => assertSafePath("Temp\\clip.mp4")); // still not absolute
+});
+
 test("colons in a subtitle path are escaped for the filtergraph", () => {
   const escaped = escapeFilterPath("/tmp/a:b/subs.srt");
   assert.ok(!/(?<!\\):/.test(escaped), escaped);

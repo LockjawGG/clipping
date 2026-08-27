@@ -116,6 +116,24 @@ test("refineSuggestions caps total runtime as a share of the source", () => {
   assert.ok(out.length >= 1);
 });
 
+test("refineSuggestions keeps the best clip even when it alone exceeds the runtime budget", () => {
+  // Overlapping picks collapse to one clip that spans most of the video;
+  // a 20% budget can't hold it, but returning nothing would be worse.
+  const raw = [
+    suggestion({ startMs: 2_000, endMs: 115_000, title: "whole", score: 0.7 }),
+    suggestion({ startMs: 5_000, endMs: 110_000, title: "also whole", score: 0.6 }),
+  ];
+  const out = refineSuggestions(raw, TRANSCRIPT, DURATION, {
+    minClipMs: 15_000,
+    maxClipMs: 200_000,
+    maxClips: 5,
+    maxTotalRatio: 0.2,
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].title, "whole");
+  assert.ok(out[0].endMs - out[0].startMs > 0.2 * DURATION);
+});
+
 test("refineSuggestions returns nothing for empty input", () => {
   assert.deepEqual(refineSuggestions([], TRANSCRIPT, DURATION, { minClipMs: 1, maxClipMs: 9e9, maxClips: 5 }), []);
   assert.deepEqual(

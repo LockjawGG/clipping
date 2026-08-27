@@ -56,7 +56,14 @@ export function refineSuggestions(
 
   // 2. Drop overlaps, keeping the higher-scoring clip. 3. Cap total runtime.
   const deduped = dedupeOverlapping(snapped);
-  const capped = capTotalRuntime(deduped, videoDurationMs, options.maxTotalRatio ?? 0.2);
+  let capped = capTotalRuntime(deduped, videoDurationMs, options.maxTotalRatio ?? 0.2);
+
+  // The cap is a budget, not a gate: a single strong clip that spans most of a
+  // short video can blow the budget on its own — still return the best one
+  // rather than nothing.
+  if (capped.length === 0 && deduped.length > 0) {
+    capped = [[...deduped].sort((a, b) => b.score - a.score)[0]];
+  }
 
   // 4. Keep the best `maxClips`, then return in timeline order.
   return [...capped]
