@@ -1,4 +1,6 @@
 import type { Ffmpeg, MediaInfo } from "../ffmpeg/run.ts";
+import type { CaptionStyle } from "../captions/presets.ts";
+import type { CaptionRenderer } from "./remotion.ts";
 import type { JobKind } from "../jobs/types.ts";
 import type {
   AnalysisProvider,
@@ -55,6 +57,9 @@ export interface RenderTarget {
   focalY: number | null;
   quality: "P720" | "P1080" | "ORIGINAL";
   burnCaptions: boolean;
+  /** Prisma CaptionAnimation enum value; "NONE" means a static ffmpeg burn. */
+  captionAnimation: string;
+  captionStyle: CaptionStyle | null;
 }
 
 export interface RenderResult {
@@ -97,6 +102,7 @@ export interface PipelineDeps {
   transcripts: TranscriptRepo;
   clips: ClipRepo;
   renders: RenderRepo;
+  captions: CaptionRenderer;
   queue: JobQueue;
   /** POSIX-absolute scratch directory (env.TEMP_DIR). */
   tempDir: string;

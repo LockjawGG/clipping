@@ -45,10 +45,20 @@ interface Spy {
   reframes: ReframeOptions[];
   probed: string[];
   puts: string[];
+  captioned: Array<{ preset: string; videoPath: string; cueCount: number }>;
 }
 
 function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {}) {
-  const spy: Spy = { began: [], completed: [], failed: [], cuts: [], reframes: [], probed: [], puts: [] };
+  const spy: Spy = {
+    began: [],
+    completed: [],
+    failed: [],
+    cuts: [],
+    reframes: [],
+    probed: [],
+    puts: [],
+    captioned: [],
+  };
   const deps = {
     tempDir: "/tmp/render-test",
     ffmpeg: {
@@ -88,6 +98,11 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
       loadSegments: async () => WORDS,
     },
     clips: { replaceSuggested: async () => 0 },
+    captions: {
+      renderCaptioned: async (input: { preset: string; videoPath: string; cues: unknown[] }) => {
+        spy.captioned.push({ preset: input.preset, videoPath: input.videoPath, cueCount: input.cues.length });
+      },
+    },
     renders: {
       loadTarget: async () => target,
       begin: async (id: string) => {
@@ -133,6 +148,8 @@ function target(over: Partial<RenderTarget> = {}): RenderTarget {
     focalY: 0.4,
     quality: "P1080",
     burnCaptions: false,
+    captionAnimation: "NONE",
+    captionStyle: null,
     ...over,
   };
 }
@@ -166,7 +183,7 @@ test("quality maps to the cut crf", async () => {
   assert.equal(spy.cuts[0].crf, 24);
 });
 
-test("captions are burned: an SRT of the in-range words is passed to reframe", async () => {
+test("static captions (NONE): an SRT is burned during reframe, Remotion is not used", async () => {
   const dir = await mkdtemp(join(tmpdir(), "render-caps-"));
   try {
     const { deps, spy } = makeDeps(target({ burnCaptions: true }), { tempDir: dir } as Partial<PipelineDeps>);
@@ -179,9 +196,36 @@ test("captions are burned: an SRT of the in-range words is passed to reframe", a
     assert.match(srt, /00:00:00,\d{3} --> /); // rebased onto the clip timeline
     assert.match(srt, /one two three/i);
     assert.doesNotMatch(srt, /\bfour\b/i); // the 39s word is outside the 10..38s clip
+    assert.equal(spy.captioned.length, 0);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("animated captions: Remotion composites over the reframed clip, no SRT burn", async () => {
+  const { deps, spy } = makeDeps(
+    target({ burnCaptions: true, captionAnimation: "POP" }),
+  );
+  await renderHandler(ctx(deps, { renderId: "r6" }));
+
+  assert.equal(spy.reframes.length, 1);
+  assert.equal(spy.reframes[0].subtitlePath, undefined); // not burned by ffmpeg
+  assert.equal(spy.captioned.length, 1);
+  assert.equal(spy.captioned[0].preset, "pop");
+  assert.ok(spy.captioned[0].cueCount > 0);
+  assert.ok(spy.captioned[0].videoPath.endsWith("reframed.mp4"));
+  assert.equal(spy.puts[0], "renders/r6/output.mp4");
+  assert.deepEqual(spy.completed, [{ id: "r6", outputKey: "renders/r6/output.mp4" }]);
+});
+
+test("animated captions with no words in range fall back to a plain render", async () => {
+  const { deps, spy } = makeDeps(target({ burnCaptions: true, captionAnimation: "KARAOKE" }), {
+    transcripts: { save: async () => ({ segmentCount: 0 }), loadSegments: async () => [] },
+  } as unknown as Partial<PipelineDeps>);
+  await renderHandler(ctx(deps, { renderId: "r7" }));
+
+  assert.equal(spy.captioned.length, 0);
+  assert.equal(spy.reframes[0].subtitlePath, undefined);
 });
 
 test("a failing ffmpeg step marks the render FAILED and rethrows", async () => {

@@ -145,6 +145,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       complete: async () => {},
       fail: async () => {},
     },
+    captions: { renderCaptioned: async () => {} },
     queue: {
       enqueue: async (input) => {
         spy.enqueued.push(input);

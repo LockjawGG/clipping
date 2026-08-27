@@ -25,11 +25,14 @@
     "@aws-sdk/lib-storage": "^3.1119.0",
     "@aws-sdk/s3-request-presigner": "^3.1119.0",
     "@prisma/client": "^6.2.1",
+    "@remotion/bundler": "^4.0.518",
+    "@remotion/renderer": "^4.0.518",
     "bcryptjs": "^2.4.3",
     "next": "^15.1.4",
     "next-auth": "^5.0.0-beta.32",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "remotion": "^4.0.518",
     "zod": "^3.24.1"
   },
   "devDependencies": {
