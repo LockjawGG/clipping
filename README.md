@@ -16,14 +16,16 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 | `src/lib/ffmpeg/args.ts` | argv construction for probe, audio extract, cut, reframe, thumbnail |
 | `src/lib/env.ts` | Lazily-validated runtime configuration (zod) |
 | `src/lib/db.ts` | PrismaClient singleton |
+| `src/lib/storage/` | `StorageProvider` implementations: local disk + S3-compatible (AWS / R2 / MinIO), with a `getStorage()` factory and HMAC-signed URLs for the local backend |
 | `src/app/` | Next.js App Router — landing page, root layout, Tailwind |
 | `tests/core.test.ts` | 33 unit tests |
+| `tests/storage.test.ts` | 10 unit tests — key safety, URL signing, local round-trip |
 | `tests/ffmpeg.integration.ts` | 6 checks against the real ffmpeg binary |
 | `.env.example` | Provider configuration |
 
 ## What is not here yet
 
-Concrete provider implementations, queue workers, API routes, the upload
+Transcription and analysis providers, queue workers, API routes, the upload
 pipeline, auth, the dashboard, the transcript and clip editors, Remotion
 animated captions, and face detection. See "Continuing the build" below.
 
@@ -31,7 +33,8 @@ animated captions, and face detection. See "Continuing the build" below.
 
 ```bash
 npm install                 # also runs `prisma generate`
-cp .env.example .env        # then fill in DATABASE_URL at minimum
+cp .env.example .env        # DATABASE_URL is required; NEXTAUTH_SECRET too if
+                            # STORAGE_PROVIDER=local (it signs the file URLs)
 npm run prisma:migrate      # create the schema in your database
 npm run dev                 # http://localhost:3000
 ```
@@ -42,14 +45,16 @@ exist.
 
 ## Running the tests
 
-The core suites have no dependencies and run straight from Node 22+:
+The unit suites run straight from Node 22+ with no build step:
 
 ```bash
-node --experimental-strip-types --test tests/core.test.ts
+npm test                                                      # tests/*.test.ts
 node --experimental-strip-types tests/ffmpeg.integration.ts   # needs ffmpeg on PATH
 ```
 
-Both pass with no dependencies installed. Node 22+.
+`src/lib` stays free of TypeScript constructs the strip-only loader can't handle
+(no parameter properties, enums, or namespaces) so the suites keep working
+without a transform step.
 
 Integration results on a synthetic 1280x720 source: cut accurate to 17ms,
 9:16 reframe with burned captions produces 1080x1920, shell metacharacters in
@@ -88,7 +93,8 @@ escaping rules independent of the shell — colons, commas, brackets, backslashe
 Order that avoids rework:
 
 1. ~~`npm install` the stack, `prisma migrate dev`~~ &mdash; Next.js scaffold done
-2. Storage + transcription providers against the interfaces in `types.ts`
+2. Providers against the interfaces in `types.ts`: ~~storage~~ done, then
+   transcription (Whisper / Deepgram / OpenAI), then analysis (Anthropic)
 3. Job worker polling `Job` on `(status, runAfter)` with backoff
 4. Upload → probe → extract audio → transcribe pipeline
 5. Analysis provider; feed output through `snapToSentences` → `dedupeOverlapping`
