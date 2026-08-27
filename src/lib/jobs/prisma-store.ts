@@ -78,6 +78,19 @@ export function createPrismaJobStore(db: PrismaClient): JobStore {
     async setProgress(id, fraction) {
       await db.job.update({ where: { id }, data: { progress: fraction } });
     },
+
+    async heartbeat(id) {
+      // `@updatedAt` bumps on any write; touch a cheap column.
+      await db.job.updateMany({ where: { id, status: "PROCESSING" }, data: { progress: { increment: 0 } } });
+    },
+
+    async reclaimStale(staleBefore) {
+      const res = await db.job.updateMany({
+        where: { status: "PROCESSING", updatedAt: { lt: staleBefore } },
+        data: { status: "QUEUED", runAfter: new Date() },
+      });
+      return res.count;
+    },
   };
 }
 

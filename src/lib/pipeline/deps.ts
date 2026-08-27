@@ -112,9 +112,22 @@ export interface JobQueue {
   enqueue(input: { videoId: string; kind: JobKind; payload?: unknown }): Promise<string>;
 }
 
+/**
+ * Downloads a video's source to disk once and hands the same path back to every
+ * step, instead of re-fetching the (often GB-sized) file per job. `evict` is
+ * called by the last ingest step.
+ */
+export interface SourceCache {
+  /** Where this video's source lives (or would live) on disk. */
+  localPath(videoId: string): string;
+  ensureLocal(videoId: string, storageKey: string, signal?: AbortSignal): Promise<string>;
+  evict(videoId: string): Promise<void>;
+}
+
 export interface PipelineDeps {
   ffmpeg: Ffmpeg;
   storage: StorageProvider;
+  source: SourceCache;
   transcription: TranscriptionProvider;
   analysis: AnalysisProvider;
   videos: VideoRepo;
@@ -126,11 +139,16 @@ export interface PipelineDeps {
   faces: FaceDetector;
   fetcher: MediaFetcher;
   queue: JobQueue;
-  /** POSIX-absolute scratch directory (env.TEMP_DIR). */
+  /** Absolute scratch directory (env.TEMP_DIR). */
   tempDir: string;
 }
 
 /** Join scratch-path parts with "/" so `assertSafePath` accepts the result. */
 export function scratchPath(tempDir: string, ...parts: string[]): string {
-  return [tempDir.replace(/\/+$/, ""), ...parts].join("/");
+  return [tempDir.replace(/[\\/]+$/, ""), ...parts.map((p) => String(p))].join("/");
+}
+
+/** Per-job scratch directory — the worker wipes this after each job. */
+export function jobWorkDir(tempDir: string, jobId: string): string {
+  return scratchPath(tempDir, "work", jobId);
 }

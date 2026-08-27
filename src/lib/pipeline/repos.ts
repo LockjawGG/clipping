@@ -5,6 +5,7 @@ import { db } from "../db.ts";
 import { FfmpegRunner } from "../ffmpeg/run.ts";
 import { NullFaceDetector } from "../faces/detector.ts";
 import { YtDlpFetcher } from "./fetcher.ts";
+import { FsSourceCache } from "./source-cache.ts";
 import { RemotionCaptionRenderer } from "./remotion.ts";
 import { getStorage } from "../storage/index.ts";
 import { getTranscription } from "../transcription/index.ts";
@@ -282,6 +283,7 @@ export function buildPipelineDeps(): PipelineDeps {
   return {
     ffmpeg: new FfmpegRunner({ ffmpegPath: env.FFMPEG_PATH, ffprobePath: env.FFPROBE_PATH }),
     storage: getStorage(),
+    source: new FsSourceCache({ storage: getStorage(), tempDir: env.TEMP_DIR }),
     transcription: getTranscription(),
     analysis: getAnalysis(),
     videos: prismaVideoRepo(db),

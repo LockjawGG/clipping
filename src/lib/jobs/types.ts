@@ -52,6 +52,13 @@ export interface JobStore {
   /** Return the job to QUEUED with a future `runAfter`. */
   retry(id: string, runAfter: Date): Promise<void>;
   setProgress(id: string, fraction: number): Promise<void>;
+  /** Touch the row so a live job keeps its lease (see `reclaimStale`). */
+  heartbeat(id: string): Promise<void>;
+  /**
+   * Requeue jobs stuck in PROCESSING since before `staleBefore` — a worker that
+   * claimed them died without finishing. Returns how many were reclaimed.
+   */
+  reclaimStale(staleBefore: Date): Promise<number>;
 }
 
 export interface JobContext<Deps> {

@@ -47,9 +47,11 @@ interface Spy {
   probed: string[];
   puts: string[];
   captioned: Array<{ preset: string; videoPath: string; cueCount: number }>;
+  evicted: string[];
 }
 
 function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {}) {
+  const tempDir = (over.tempDir as string | undefined) ?? "/tmp/render-test";
   const spy: Spy = {
     began: [],
     completed: [],
@@ -60,9 +62,10 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
     probed: [],
     puts: [],
     captioned: [],
+    evicted: [],
   };
   const deps = {
-    tempDir: "/tmp/render-test",
+    tempDir,
     ffmpeg: {
       probe: async (p: string) => {
         spy.probed.push(p);
@@ -90,6 +93,13 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
       createDownloadUrl: async () => "",
       delete: async () => {},
       exists: async () => true,
+    },
+    source: {
+      localPath: (videoId: string) => `${tempDir}/videos/${videoId}/source`,
+      ensureLocal: async (videoId: string) => `${tempDir}/videos/${videoId}/source`,
+      evict: async (videoId: string) => {
+        spy.evicted.push(videoId);
+      },
     },
     transcription: { name: "fake", transcribe: async () => ({ provider: "x", language: "en", segments: [] }) },
     analysis: { name: "fake", suggestClips: async () => [] },

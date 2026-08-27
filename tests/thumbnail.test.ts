@@ -10,13 +10,14 @@ interface Spy {
   thumbs: Array<{ atMs: number; width?: number }>;
   puts: string[];
   keyed: Array<[string, string]>;
+  evicted: string[];
 }
 
 function makeDeps(opts: {
   target?: ThumbnailTarget | null;
   forVideo?: ThumbnailTarget[];
 }) {
-  const spy: Spy = { gets: [], thumbs: [], puts: [], keyed: [] };
+  const spy: Spy = { gets: [], thumbs: [], puts: [], keyed: [], evicted: [] };
   const deps = {
     tempDir: "/tmp/thumb-test",
     ffmpeg: {
@@ -40,6 +41,16 @@ function makeDeps(opts: {
       createDownloadUrl: async () => "",
       delete: async () => {},
       exists: async () => true,
+    },
+    source: {
+      localPath: (videoId: string) => `/tmp/thumb-test/videos/${videoId}/source`,
+      ensureLocal: async (videoId: string, key: string) => {
+        spy.gets.push(key);
+        return `/tmp/thumb-test/videos/${videoId}/source`;
+      },
+      evict: async (videoId: string) => {
+        spy.evicted.push(videoId);
+      },
     },
     thumbnails: {
       target: async () => opts.target ?? null,

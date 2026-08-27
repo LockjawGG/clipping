@@ -1,8 +1,10 @@
+import { rm } from "node:fs/promises";
+
 import { env } from "../env.ts";
 import { db } from "../db.ts";
 import { JobWorker } from "../jobs/worker.ts";
 import { createPrismaJobStore } from "../jobs/prisma-store.ts";
-import type { PipelineDeps } from "./deps.ts";
+import { jobWorkDir, type PipelineDeps } from "./deps.ts";
 import { PIPELINE_HANDLERS } from "./index.ts";
 import { buildPipelineDeps } from "./repos.ts";
 
@@ -13,8 +15,10 @@ export function createPipelineWorker(): JobWorker<PipelineDeps> {
     deps: buildPipelineDeps(),
     handlers: PIPELINE_HANDLERS,
     concurrency: env.WORKER_CONCURRENCY,
+    // Wipe the job's scratch dir once it's done, whatever the outcome.
+    cleanup: (job) => rm(jobWorkDir(env.TEMP_DIR, job.id), { recursive: true, force: true }),
     onError: (job, err) => {
-      console.error(`[worker] job ${job.id} (${job.kind}) failed:`, err);
+      console.error(`[worker] ${job.id === "-" ? "" : `job ${job.id} (${job.kind}) `}${err}`);
     },
   });
 }
