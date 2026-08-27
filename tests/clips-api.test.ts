@@ -5,10 +5,12 @@ import type { StorageProvider } from "../src/lib/providers/types.ts";
 import type { ClipDb, ClipServiceDeps } from "../src/lib/api/clips.ts";
 import {
   createManualClip,
+  deleteCaptionConfig,
   deleteClip,
   listVideoClips,
   requestRender,
   updateClip,
+  upsertCaptionConfig,
 } from "../src/lib/api/clips.ts";
 import { ApiError } from "../src/lib/api/http.ts";
 
@@ -51,6 +53,8 @@ function makeDeps(over: Partial<ClipServiceDeps> = {}) {
   const updates: Array<{ id: string; data: Record<string, unknown> }> = [];
   const created: Array<Record<string, unknown>> = [];
   const deleted: string[] = [];
+  const captionConfigs = new Map<string, Record<string, unknown>>();
+  const captionOps: Array<{ op: "upsert" | "deleteMany"; clipId: string }> = [];
 
   const db: ClipDb = {
     clip: {
@@ -84,6 +88,14 @@ function makeDeps(over: Partial<ClipServiceDeps> = {}) {
             focalY: 0.4,
             accepted: false,
             caption: null,
+            subtitleConfig: {
+              preset: "CLASSIC",
+              animation: "POP",
+              textColor: "#FFFFFF",
+              highlightColor: "#FFE600",
+              positionY: 0.78,
+              uppercase: false,
+            },
             renders: [{ id: "r1", status: "COMPLETED", progress: 1, outputKey: "renders/r1/output.mp4" }],
           },
         ];
@@ -95,6 +107,20 @@ function makeDeps(over: Partial<ClipServiceDeps> = {}) {
       create: async ({ data }) => {
         renders.push(data);
         return { id: `render-${renders.length}` };
+      },
+    },
+    subtitleConfig: {
+      upsert: async ({ where, create, update }) => {
+        captionOps.push({ op: "upsert", clipId: where.clipId });
+        const existing = captionConfigs.get(where.clipId);
+        const next = existing ? { ...existing, ...update } : { ...create };
+        captionConfigs.set(where.clipId, next);
+        return next;
+      },
+      deleteMany: async ({ where }) => {
+        captionOps.push({ op: "deleteMany", clipId: where.clipId });
+        const had = captionConfigs.delete(where.clipId);
+        return { count: had ? 1 : 0 };
       },
     },
   };
@@ -109,7 +135,7 @@ function makeDeps(over: Partial<ClipServiceDeps> = {}) {
     },
     ...over,
   };
-  return { deps, renders, enqueued, updates, created, deleted, clips };
+  return { deps, renders, enqueued, updates, created, deleted, clips, captionConfigs, captionOps };
 }
 
 // --- requestRender ------------------------------------------------
@@ -206,12 +232,49 @@ test("createManualClip rejects an inverted range and non-owned videos", async ()
 
 // --- listVideoClips -----------------------------------------
 
-test("listVideoClips returns editable fields + a download URL only when COMPLETED", async () => {
+test("listVideoClips returns editable fields, the caption config, and a download URL only when COMPLETED", async () => {
   const { deps } = makeDeps();
   const list = await listVideoClips(deps, "vidA");
   assert.equal(list.length, 1);
   assert.equal(list[0].origin, "AI_SUGGESTED");
   assert.equal(list[0].focalX, 0.5);
   assert.equal(list[0].accepted, false);
+  assert.equal(list[0].captions?.animation, "POP");
   assert.equal(list[0].render?.downloadUrl, "https://dl.example/renders/r1/output.mp4");
+});
+
+// --- caption config -----------------------------------------
+
+test("upsertCaptionConfig writes only the provided fields for an owned clip", async () => {
+  const { deps, captionConfigs, captionOps } = makeDeps();
+  const saved = await upsertCaptionConfig(deps, "clip1", { animation: "KARAOKE", uppercase: true });
+  assert.deepEqual(captionOps, [{ op: "upsert", clipId: "clip1" }]);
+  assert.equal(captionConfigs.get("clip1")?.clipId, "clip1");
+  assert.equal((saved as { animation: string }).animation, "KARAOKE");
+});
+
+test("upsertCaptionConfig rejects a bad hex colour, an unknown animation, and unknown fields", async () => {
+  const { deps } = makeDeps();
+  await assert.rejects(() => upsertCaptionConfig(deps, "clip1", { textColor: "red" }));
+  await assert.rejects(() => upsertCaptionConfig(deps, "clip1", { animation: "SPARKLE" }));
+  await assert.rejects(() => upsertCaptionConfig(deps, "clip1", { bogus: 1 }));
+});
+
+test("caption config actions 404 for a clip in another project", async () => {
+  const { deps } = makeDeps();
+  await assert.rejects(
+    () => upsertCaptionConfig(deps, "clipX", { animation: "POP" }),
+    (e: unknown) => e instanceof ApiError && e.status === 404,
+  );
+  await assert.rejects(
+    () => deleteCaptionConfig(deps, "clipX"),
+    (e: unknown) => e instanceof ApiError && e.status === 404,
+  );
+});
+
+test("deleteCaptionConfig reports whether a config was removed", async () => {
+  const { deps } = makeDeps();
+  assert.deepEqual(await deleteCaptionConfig(deps, "clip1"), { clipId: "clip1", removed: false });
+  await upsertCaptionConfig(deps, "clip1", { animation: "POP" });
+  assert.deepEqual(await deleteCaptionConfig(deps, "clip1"), { clipId: "clip1", removed: true });
 });
