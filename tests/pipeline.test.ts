@@ -79,6 +79,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       },
       cut: async () => {},
       reframe: async () => {},
+      thumbnail: async () => {},
     },
     storage: {
       name: "fake",
@@ -144,6 +145,11 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       begin: async () => {},
       complete: async () => {},
       fail: async () => {},
+    },
+    thumbnails: {
+      target: async () => null,
+      targetsForVideo: async () => [],
+      setKey: async () => {},
     },
     captions: { renderCaptioned: async () => {} },
     queue: {
@@ -225,6 +231,14 @@ test("ANALYZE refines suggestions and writes them as clips", async () => {
   assert.equal(clip.startMs, 30_000 - 250);
   assert.equal(clip.endMs, 62_000 + 400);
   assert.equal(clip.title, "The twist");
+  assert.deepEqual(spy.enqueued, [{ videoId: "vid1", kind: "THUMBNAIL" }]);
+});
+
+test("ANALYZE does not queue thumbnails when it produced no clips", async () => {
+  const { deps, spy } = makeDeps({ analysis: { name: "fake", suggestClips: async () => [] } });
+  spy.savedTranscript = TRANSCRIPT;
+  await analyzeHandler(ctx(deps, "ANALYZE"));
+  assert.equal(spy.enqueued.length, 0);
 });
 
 test("ANALYZE throws when there is no transcript", async () => {
@@ -243,7 +257,7 @@ test("PROBE throws for an unknown video", async () => {
 
 // --- the whole chain, one handler feeding the next ---------------
 
-test("the ingest chain runs PROBE -> EXTRACT_AUDIO -> TRANSCRIBE -> ANALYZE", async () => {
+test("the ingest chain runs PROBE -> EXTRACT_AUDIO -> TRANSCRIBE -> ANALYZE -> THUMBNAIL", async () => {
   const { deps, spy } = makeDeps();
 
   const queue: Array<{ kind: JobKind; payload?: unknown }> = [{ kind: "PROBE" }];
@@ -257,7 +271,7 @@ test("the ingest chain runs PROBE -> EXTRACT_AUDIO -> TRANSCRIBE -> ANALYZE", as
 
   assert.deepEqual(
     spy.enqueued.map((e) => e.kind),
-    ["EXTRACT_AUDIO", "TRANSCRIBE", "ANALYZE"],
+    ["EXTRACT_AUDIO", "TRANSCRIBE", "ANALYZE", "THUMBNAIL"],
   );
   assert.equal(spy.statuses.at(-1), "READY");
   assert.equal(spy.savedClips?.length, 1);

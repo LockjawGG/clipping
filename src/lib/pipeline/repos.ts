@@ -14,6 +14,7 @@ import type {
   DbAspectRatio,
   PipelineDeps,
   RenderRepo,
+  ThumbnailRepo,
   TranscriptRepo,
   VideoRepo,
 } from "./deps.ts";
@@ -242,6 +243,35 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
   };
 }
 
+export function prismaThumbnailRepo(client: PrismaClient): ThumbnailRepo {
+  const shape = {
+    startMs: true,
+    endMs: true,
+    video: { select: { storageKey: true } },
+  } as const;
+  return {
+    async target(clipId) {
+      const c = await client.clip.findUnique({ where: { id: clipId }, select: shape });
+      return c ? { clipId, sourceKey: c.video.storageKey, startMs: c.startMs, endMs: c.endMs } : null;
+    },
+    async targetsForVideo(videoId) {
+      const rows = await client.clip.findMany({
+        where: { videoId, thumbnailKey: null },
+        select: { id: true, ...shape },
+      });
+      return rows.map((c) => ({
+        clipId: c.id,
+        sourceKey: c.video.storageKey,
+        startMs: c.startMs,
+        endMs: c.endMs,
+      }));
+    },
+    async setKey(clipId, thumbnailKey) {
+      await client.clip.update({ where: { id: clipId }, data: { thumbnailKey } });
+    },
+  };
+}
+
 /** Assemble the live dependency bag for the worker. */
 export function buildPipelineDeps(): PipelineDeps {
   return {
@@ -253,6 +283,7 @@ export function buildPipelineDeps(): PipelineDeps {
     transcripts: prismaTranscriptRepo(db),
     clips: prismaClipRepo(db),
     renders: prismaRenderRepo(db),
+    thumbnails: prismaThumbnailRepo(db),
     captions: new RemotionCaptionRenderer(),
     queue: { enqueue: (input) => enqueueJob(db, input) },
     tempDir: env.TEMP_DIR,

@@ -75,6 +75,21 @@ export interface RenderRepo {
   fail(renderId: string, message: string): Promise<void>;
 }
 
+export interface ThumbnailTarget {
+  clipId: string;
+  sourceKey: string;
+  startMs: number;
+  endMs: number;
+}
+
+export interface ThumbnailRepo {
+  /** One clip. Returns null if it doesn't exist. */
+  target(clipId: string): Promise<ThumbnailTarget | null>;
+  /** Every clip of the video that has no thumbnail yet. */
+  targetsForVideo(videoId: string): Promise<ThumbnailTarget[]>;
+  setKey(clipId: string, thumbnailKey: string): Promise<void>;
+}
+
 /** Map the Prisma aspect enum to the `args.ts` preset string. */
 export function toAspectPreset(a: DbAspectRatio): "9:16" | "1:1" | "16:9" | "4:5" {
   switch (a) {
@@ -102,6 +117,7 @@ export interface PipelineDeps {
   transcripts: TranscriptRepo;
   clips: ClipRepo;
   renders: RenderRepo;
+  thumbnails: ThumbnailRepo;
   captions: CaptionRenderer;
   queue: JobQueue;
   /** POSIX-absolute scratch directory (env.TEMP_DIR). */

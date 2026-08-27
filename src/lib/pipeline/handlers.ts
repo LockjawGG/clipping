@@ -125,7 +125,44 @@ export const analyzeHandler: JobHandler<PipelineDeps> = async ({ job, deps, sign
   });
 
   const clipCount = await deps.clips.replaceSuggested(job.videoId, refined);
+  if (clipCount > 0) {
+    await deps.queue.enqueue({ videoId: job.videoId, kind: "THUMBNAIL" });
+  }
   return { clipCount, consideredSegments: segments.length };
+};
+
+interface ThumbnailPayload {
+  clipId?: string;
+}
+
+/** THUMBNAIL: grab a poster frame at each clip's midpoint. */
+export const thumbnailHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal, setProgress }) => {
+  const { clipId } = (job.payload ?? {}) as ThumbnailPayload;
+
+  const targets = clipId
+    ? [await deps.thumbnails.target(clipId)].filter((t): t is NonNullable<typeof t> => t !== null)
+    : await deps.thumbnails.targetsForVideo(job.videoId);
+
+  if (targets.length === 0) return { generated: 0 };
+
+  // One download of the source, N frame grabs.
+  const source = scratchPath(deps.tempDir, "thumb", job.videoId, "source");
+  await deps.storage.getToFile(targets[0].sourceKey, source);
+
+  let generated = 0;
+  for (const t of targets) {
+    const atMs = t.startMs + Math.floor((t.endMs - t.startMs) / 2);
+    const out = scratchPath(deps.tempDir, "thumb", job.videoId, `${t.clipId}.jpg`);
+    await deps.ffmpeg.thumbnail(source, out, { atMs, width: 640 }, signal);
+
+    const key = `clips/${t.clipId}/thumb.jpg`;
+    await deps.storage.putFile(key, out, "image/jpeg");
+    await deps.thumbnails.setKey(t.clipId, key);
+
+    generated++;
+    await setProgress(generated / targets.length);
+  }
+  return { generated };
 };
 
 interface RenderPayload {

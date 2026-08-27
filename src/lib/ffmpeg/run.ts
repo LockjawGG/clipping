@@ -9,6 +9,7 @@ import {
   buildExtractAudioArgs,
   buildProbeArgs,
   buildReframeArgs,
+  buildThumbnailArgs,
 } from "./args.ts";
 
 const execFileAsync = promisify(execFile);
@@ -97,6 +98,11 @@ export interface ReframeOptions {
   blurredBackground?: boolean;
 }
 
+export interface ThumbnailOptions {
+  atMs: number;
+  width?: number;
+}
+
 /** The ffmpeg operations the pipeline needs. Fakeable in tests. */
 export interface Ffmpeg {
   probe(inputPath: string, signal?: AbortSignal): Promise<MediaInfo>;
@@ -105,6 +111,8 @@ export interface Ffmpeg {
   cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void>;
   /** Scale/crop to an aspect preset, optionally burning subtitles. */
   reframe(inputPath: string, outputPath: string, opts: ReframeOptions, signal?: AbortSignal): Promise<void>;
+  /** Grab a single frame as a JPEG. */
+  thumbnail(inputPath: string, outputPath: string, opts: ThumbnailOptions, signal?: AbortSignal): Promise<void>;
 }
 
 export interface FfmpegRunnerOptions {
@@ -155,6 +163,20 @@ export class FfmpegRunner implements Ffmpeg {
   ): Promise<void> {
     await mkdir(dirname(outputPath), { recursive: true });
     await this.exec(this.ffmpegPath, buildReframeArgs({ inputPath, outputPath, ...opts }), signal);
+  }
+
+  async thumbnail(
+    inputPath: string,
+    outputPath: string,
+    opts: ThumbnailOptions,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await this.exec(
+      this.ffmpegPath,
+      buildThumbnailArgs({ inputPath, outputPath, atMs: opts.atMs, width: opts.width }),
+      signal,
+    );
   }
 
   private async exec(bin: string, args: string[], signal?: AbortSignal) {

@@ -5,6 +5,7 @@ import {
   extractAudioHandler,
   probeHandler,
   renderHandler,
+  thumbnailHandler,
   transcribeHandler,
 } from "./handlers.ts";
 
@@ -15,13 +16,15 @@ export {
   transcribeHandler,
   analyzeHandler,
   renderHandler,
+  thumbnailHandler,
 } from "./handlers.ts";
 
-/** The handler map. THUMBNAIL lands with the thumbnail feature. */
+/** The full pipeline handler map. */
 export const PIPELINE_HANDLERS: JobHandlerMap<PipelineDeps> = {
   PROBE: probeHandler,
   EXTRACT_AUDIO: extractAudioHandler,
   TRANSCRIBE: transcribeHandler,
   ANALYZE: analyzeHandler,
   RENDER: renderHandler,
+  THUMBNAIL: thumbnailHandler,
 };
