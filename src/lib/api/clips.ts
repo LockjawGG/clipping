@@ -1,32 +1,64 @@
 import { z } from "zod";
 
-import type { StorageProvider } from "../providers/types.ts";
+import type { Segment, StorageProvider } from "../providers/types.ts";
+import { DEFAULT_SNAP_CONFIG, snapToSentences } from "../clips/boundaries.ts";
 import { ApiError } from "./http.ts";
 
 /**
- * Clip actions: kick off a render, and list a video's clips (with their latest
- * render) for the detail page. Same injectable-deps shape as the video service.
+ * Clip actions behind injectable deps (same shape as the video service):
+ * request a render, list a video's clips, edit a clip, delete one, and add a
+ * manual clip snapped to sentence boundaries.
  */
+
+const ASPECTS = ["VERTICAL_9_16", "SQUARE_1_1", "LANDSCAPE_16_9", "PORTRAIT_4_5"] as const;
 
 export const renderRequestSchema = z.object({
   quality: z.enum(["P720", "P1080", "ORIGINAL"]).default("P1080"),
-  aspectRatio: z
-    .enum(["VERTICAL_9_16", "SQUARE_1_1", "LANDSCAPE_16_9", "PORTRAIT_4_5"])
-    .optional(),
+  aspectRatio: z.enum(ASPECTS).optional(),
+});
+
+export const updateClipSchema = z
+  .object({
+    title: z.string().min(1).max(200),
+    caption: z.string().max(500),
+    startMs: z.number().int().nonnegative(),
+    endMs: z.number().int().positive(),
+    aspectRatio: z.enum(ASPECTS),
+    focalX: z.number().min(0).max(1).nullable(),
+    focalY: z.number().min(0).max(1).nullable(),
+    muted: z.boolean(),
+    volume: z.number().min(0).max(2),
+    playbackRate: z.number().min(0.25).max(4),
+    accepted: z.boolean(),
+  })
+  .partial()
+  .strict();
+
+export const manualClipSchema = z.object({
+  startMs: z.number().int().nonnegative(),
+  endMs: z.number().int().positive(),
+  title: z.string().min(1).max(200).optional(),
 });
 
 interface ClipRow {
   id: string;
   videoId: string;
+  startMs: number;
+  endMs: number;
 }
 
 interface ClipListRow {
   id: string;
+  origin: string;
   title: string;
   startMs: number;
   endMs: number;
   score: number | null;
   aspectRatio: string;
+  focalX: number | null;
+  focalY: number | null;
+  accepted: boolean;
+  caption: string | null;
   renders: Array<{ id: string; status: string; progress: number; outputKey: string | null }>;
 }
 
@@ -34,10 +66,19 @@ export interface ClipDb {
   clip: {
     findUnique(args: { where: { id: string } }): Promise<ClipRow | null>;
     update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<unknown>;
+    create(args: { data: Record<string, unknown> }): Promise<{ id: string }>;
+    delete(args: { where: { id: string } }): Promise<unknown>;
     findMany(args: { where: { videoId: string } }): Promise<ClipListRow[]>;
   };
   video: {
-    findUnique(args: { where: { id: string } }): Promise<{ projectId: string } | null>;
+    findUnique(args: {
+      where: { id: string };
+    }): Promise<{ projectId: string; durationMs: number | null } | null>;
+  };
+  transcriptSegment: {
+    findMany(args: {
+      where: { transcript: { videoId: string } };
+    }): Promise<Array<{ startMs: number; endMs: number }>>;
   };
   render: { create(args: { data: Record<string, unknown> }): Promise<{ id: string }> };
 }
@@ -49,14 +90,17 @@ export interface ClipServiceDeps {
   enqueue: (input: { videoId: string; kind: "RENDER"; payload?: unknown }) => Promise<string>;
 }
 
+async function assertOwnsProject(deps: ClipServiceDeps, projectId: string | undefined | null): Promise<void> {
+  if (!projectId || projectId !== (await deps.ensureProject())) {
+    throw new ApiError(404, "not found");
+  }
+}
+
 async function ownedClip(deps: ClipServiceDeps, clipId: string): Promise<ClipRow> {
   const clip = await deps.db.clip.findUnique({ where: { id: clipId } });
   if (!clip) throw new ApiError(404, "clip not found");
-  const [video, projectId] = await Promise.all([
-    deps.db.video.findUnique({ where: { id: clip.videoId } }),
-    deps.ensureProject(),
-  ]);
-  if (!video || video.projectId !== projectId) throw new ApiError(404, "clip not found");
+  const video = await deps.db.video.findUnique({ where: { id: clip.videoId } });
+  await assertOwnsProject(deps, video?.projectId);
   return clip;
 }
 
@@ -71,7 +115,6 @@ export async function requestRender(deps: ClipServiceDeps, clipId: string, input
   const render = await deps.db.render.create({
     data: { clipId, quality, status: "QUEUED", progress: 0 },
   });
-  // The RENDER handler keys off renderId.
   const jobId = await deps.enqueue({
     videoId: clip.videoId,
     kind: "RENDER",
@@ -81,12 +124,59 @@ export async function requestRender(deps: ClipServiceDeps, clipId: string, input
   return { renderId: render.id, jobId, status: "QUEUED" as const };
 }
 
+export async function updateClip(deps: ClipServiceDeps, clipId: string, input: unknown) {
+  const patch = updateClipSchema.parse(input);
+  const clip = await ownedClip(deps, clipId);
+
+  const startMs = patch.startMs ?? clip.startMs;
+  const endMs = patch.endMs ?? clip.endMs;
+  if (endMs <= startMs) throw new ApiError(400, "endMs must be after startMs");
+
+  await deps.db.clip.update({ where: { id: clipId }, data: patch });
+  return { id: clipId, ...patch, startMs, endMs };
+}
+
+export async function deleteClip(deps: ClipServiceDeps, clipId: string) {
+  await ownedClip(deps, clipId);
+  await deps.db.clip.delete({ where: { id: clipId } });
+  return { id: clipId, deleted: true };
+}
+
+export async function createManualClip(deps: ClipServiceDeps, videoId: string, input: unknown) {
+  const { startMs, endMs, title } = manualClipSchema.parse(input);
+  if (endMs <= startMs) throw new ApiError(400, "endMs must be after startMs");
+
+  const video = await deps.db.video.findUnique({ where: { id: videoId } });
+  await assertOwnsProject(deps, video?.projectId);
+
+  const rows = await deps.db.transcriptSegment.findMany({ where: { transcript: { videoId } } });
+  const durationMs = video?.durationMs ?? (rows.at(-1)?.endMs ?? endMs);
+
+  let snappedStart = startMs;
+  let snappedEnd = endMs;
+  if (rows.length > 0) {
+    const segments: Segment[] = rows.map((r) => ({ ...r, text: "", words: [] }));
+    const snap = snapToSentences({ startMs, endMs }, segments, durationMs, DEFAULT_SNAP_CONFIG);
+    snappedStart = snap.startMs;
+    snappedEnd = snap.endMs;
+  }
+
+  const clip = await deps.db.clip.create({
+    data: {
+      videoId,
+      origin: "USER_CREATED",
+      startMs: snappedStart,
+      endMs: snappedEnd,
+      title: title ?? "Untitled clip",
+      hashtags: [],
+    },
+  });
+  return { id: clip.id, startMs: snappedStart, endMs: snappedEnd };
+}
+
 export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
-  const [video, projectId] = await Promise.all([
-    deps.db.video.findUnique({ where: { id: videoId } }),
-    deps.ensureProject(),
-  ]);
-  if (!video || video.projectId !== projectId) throw new ApiError(404, "video not found");
+  const video = await deps.db.video.findUnique({ where: { id: videoId } });
+  await assertOwnsProject(deps, video?.projectId);
 
   const clips = await deps.db.clip.findMany({ where: { videoId } });
   return Promise.all(
@@ -98,12 +188,19 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
           : null;
       return {
         id: c.id,
+        origin: c.origin,
         title: c.title,
         startMs: c.startMs,
         endMs: c.endMs,
         score: c.score,
         aspectRatio: c.aspectRatio,
-        render: latest ? { id: latest.id, status: latest.status, progress: latest.progress, downloadUrl } : null,
+        focalX: c.focalX,
+        focalY: c.focalY,
+        accepted: c.accepted,
+        caption: c.caption,
+        render: latest
+          ? { id: latest.id, status: latest.status, progress: latest.progress, downloadUrl }
+          : null,
       };
     }),
   );
