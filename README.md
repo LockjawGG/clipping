@@ -14,7 +14,7 @@ three algorithms that everything downstream depends on being correct.
 | `src/lib/captions/layout.ts` | Word timings → non-overlapping cues, line breaking, SRT output |
 | `src/lib/clips/boundaries.ts` | Sentence snapping, overlap dedupe, runtime cap |
 | `src/lib/ffmpeg/args.ts` | argv construction for probe, audio extract, cut, reframe, thumbnail |
-| `tests/core.test.ts` | 29 unit tests |
+| `tests/core.test.ts` | 33 unit tests |
 | `tests/ffmpeg.integration.ts` | 6 checks against the real ffmpeg binary |
 | `.env.example` | Provider configuration |
 
