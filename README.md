@@ -1,9 +1,9 @@
-# Clipper — core foundation
+# Clipper
 
-Partial implementation of an AI video clipping app. This is **not** the finished
-application described in the spec. It is the subset that could be built and
-verified without network access: the data model, the provider boundary, and the
-three algorithms that everything downstream depends on being correct.
+An AI video clipping app, built up in stages. The data model, the provider
+boundary, and the three algorithms that everything downstream depends on being
+correct came first and are covered by tests. A Next.js scaffold is now wired on
+top; the upload flow, editors, and render pipeline land in later PRs.
 
 ## What is here
 
@@ -14,17 +14,35 @@ three algorithms that everything downstream depends on being correct.
 | `src/lib/captions/layout.ts` | Word timings → non-overlapping cues, line breaking, SRT output |
 | `src/lib/clips/boundaries.ts` | Sentence snapping, overlap dedupe, runtime cap |
 | `src/lib/ffmpeg/args.ts` | argv construction for probe, audio extract, cut, reframe, thumbnail |
+| `src/lib/env.ts` | Lazily-validated runtime configuration (zod) |
+| `src/lib/db.ts` | PrismaClient singleton |
+| `src/app/` | Next.js App Router — landing page, root layout, Tailwind |
 | `tests/core.test.ts` | 33 unit tests |
 | `tests/ffmpeg.integration.ts` | 6 checks against the real ffmpeg binary |
 | `.env.example` | Provider configuration |
 
-## What is not here
+## What is not here yet
 
-Everything else in the spec: Next.js app, React UI, dashboard, landing page,
-auth, upload flow, transcript UI, clip editor, Remotion animated captions, face
-detection, queue workers, API routes, concrete provider implementations.
+Concrete provider implementations, queue workers, API routes, the upload
+pipeline, auth, the dashboard, the transcript and clip editors, Remotion
+animated captions, and face detection. See "Continuing the build" below.
+
+## Setup
+
+```bash
+npm install                 # also runs `prisma generate`
+cp .env.example .env        # then fill in DATABASE_URL at minimum
+npm run prisma:migrate      # create the schema in your database
+npm run dev                 # http://localhost:3000
+```
+
+`npm run build` runs `prisma generate` then `next build`. `npm run typecheck`
+expects a prior `npm run build` (or `npm run dev`) so Next's generated types
+exist.
 
 ## Running the tests
+
+The core suites have no dependencies and run straight from Node 22+:
 
 ```bash
 node --experimental-strip-types --test tests/core.test.ts
@@ -69,7 +87,7 @@ escaping rules independent of the shell — colons, commas, brackets, backslashe
 
 Order that avoids rework:
 
-1. `npm install` the stack, `prisma migrate dev`
+1. ~~`npm install` the stack, `prisma migrate dev`~~ &mdash; Next.js scaffold done
 2. Storage + transcription providers against the interfaces in `types.ts`
 3. Job worker polling `Job` on `(status, runAfter)` with backoff
 4. Upload → probe → extract audio → transcribe pipeline
