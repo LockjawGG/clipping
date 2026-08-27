@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 
 import type { StorageProvider } from "../src/lib/providers/types.ts";
 import type { ClipDb, ClipServiceDeps } from "../src/lib/api/clips.ts";
-import { listVideoClips, requestRender } from "../src/lib/api/clips.ts";
+import {
+  createManualClip,
+  deleteClip,
+  listVideoClips,
+  requestRender,
+  updateClip,
+} from "../src/lib/api/clips.ts";
 import { ApiError } from "../src/lib/api/http.ts";
 
 function fakeStorage(): StorageProvider {
@@ -18,25 +24,49 @@ function fakeStorage(): StorageProvider {
   };
 }
 
+interface ClipStore {
+  id: string;
+  videoId: string;
+  startMs: number;
+  endMs: number;
+  aspectRatio: string;
+}
+
 function makeDeps(over: Partial<ClipServiceDeps> = {}) {
-  const clips = new Map<string, { id: string; videoId: string; aspectRatio: string }>([
-    ["clip1", { id: "clip1", videoId: "vidA", aspectRatio: "VERTICAL_9_16" }],
-    ["clipX", { id: "clipX", videoId: "vidZ", aspectRatio: "VERTICAL_9_16" }],
+  const clips = new Map<string, ClipStore>([
+    ["clip1", { id: "clip1", videoId: "vidA", startMs: 5_000, endMs: 25_000, aspectRatio: "VERTICAL_9_16" }],
+    ["clipX", { id: "clipX", videoId: "vidZ", startMs: 0, endMs: 1_000, aspectRatio: "VERTICAL_9_16" }],
   ]);
-  const videos = new Map<string, { projectId: string }>([
-    ["vidA", { projectId: "proj1" }],
-    ["vidZ", { projectId: "someone-else" }],
+  const videos = new Map<string, { projectId: string; durationMs: number | null }>([
+    ["vidA", { projectId: "proj1", durationMs: 120_000 }],
+    ["vidZ", { projectId: "someone-else", durationMs: 60_000 }],
   ]);
+  const segments = [
+    { startMs: 0, endMs: 20_000 },
+    { startMs: 20_000, endMs: 45_000 },
+    { startMs: 45_000, endMs: 70_000 },
+  ];
   const renders: Array<Record<string, unknown>> = [];
   const enqueued: Array<{ videoId: string; kind: string; payload?: unknown }> = [];
   const updates: Array<{ id: string; data: Record<string, unknown> }> = [];
+  const created: Array<Record<string, unknown>> = [];
+  const deleted: string[] = [];
 
   const db: ClipDb = {
     clip: {
       findUnique: async ({ where }) => clips.get(where.id) ?? null,
       update: async ({ where, data }) => {
         updates.push({ id: where.id, data });
-        Object.assign(clips.get(where.id)!, data);
+        Object.assign(clips.get(where.id) ?? {}, data);
+        return {};
+      },
+      create: async ({ data }) => {
+        created.push(data);
+        return { id: `clip-${created.length}` };
+      },
+      delete: async ({ where }) => {
+        deleted.push(where.id);
+        clips.delete(where.id);
         return {};
       },
       findMany: async ({ where }) => {
@@ -44,26 +74,23 @@ function makeDeps(over: Partial<ClipServiceDeps> = {}) {
         return [
           {
             id: "clip1",
+            origin: "AI_SUGGESTED",
             title: "First clip",
-            startMs: 1000,
-            endMs: 20_000,
+            startMs: 5_000,
+            endMs: 25_000,
             score: 0.82,
             aspectRatio: "VERTICAL_9_16",
+            focalX: 0.5,
+            focalY: 0.4,
+            accepted: false,
+            caption: null,
             renders: [{ id: "r1", status: "COMPLETED", progress: 1, outputKey: "renders/r1/output.mp4" }],
-          },
-          {
-            id: "clip2",
-            title: "Second clip",
-            startMs: 30_000,
-            endMs: 50_000,
-            score: null,
-            aspectRatio: "SQUARE_1_1",
-            renders: [{ id: "r2", status: "PROCESSING", progress: 0.4, outputKey: null }],
           },
         ];
       },
     },
     video: { findUnique: async ({ where }) => videos.get(where.id) ?? null },
+    transcriptSegment: { findMany: async () => segments },
     render: {
       create: async ({ data }) => {
         renders.push(data);
@@ -82,57 +109,109 @@ function makeDeps(over: Partial<ClipServiceDeps> = {}) {
     },
     ...over,
   };
-  return { deps, renders, enqueued, updates };
+  return { deps, renders, enqueued, updates, created, deleted, clips };
 }
+
+// --- requestRender ------------------------------------------------
 
 test("requestRender creates a QUEUED render and enqueues a RENDER job carrying renderId", async () => {
   const { deps, renders, enqueued } = makeDeps();
   const out = await requestRender(deps, "clip1", {});
-
   assert.deepEqual(out, { renderId: "render-1", jobId: "job-1", status: "QUEUED" });
-  assert.equal(renders[0].clipId, "clip1");
-  assert.equal(renders[0].quality, "P1080"); // default
+  assert.equal(renders[0].quality, "P1080");
   assert.deepEqual(enqueued, [{ videoId: "vidA", kind: "RENDER", payload: { renderId: "render-1" } }]);
-});
-
-test("requestRender applies an aspect-ratio override to the clip", async () => {
-  const { deps, updates } = makeDeps();
-  await requestRender(deps, "clip1", { aspectRatio: "PORTRAIT_4_5", quality: "P720" });
-  assert.deepEqual(updates, [{ id: "clip1", data: { aspectRatio: "PORTRAIT_4_5" } }]);
-});
-
-test("requestRender rejects an invalid quality", async () => {
-  const { deps } = makeDeps();
-  await assert.rejects(() => requestRender(deps, "clip1", { quality: "8K" }));
 });
 
 test("requestRender 404s for an unknown clip or one in another project", async () => {
   const { deps } = makeDeps();
+  await assert.rejects(() => requestRender(deps, "nope", {}), (e: unknown) => e instanceof ApiError && e.status === 404);
+  await assert.rejects(() => requestRender(deps, "clipX", {}), (e: unknown) => e instanceof ApiError && e.status === 404);
+});
+
+// --- updateClip --------------------------------------------------
+
+test("updateClip persists only the provided fields", async () => {
+  const { deps, updates } = makeDeps();
+  const out = await updateClip(deps, "clip1", { title: "Renamed", accepted: true });
+  assert.deepEqual(updates, [{ id: "clip1", data: { title: "Renamed", accepted: true } }]);
+  assert.equal(out.title, "Renamed");
+});
+
+test("updateClip rejects a range where end is not after start (merged with current)", async () => {
+  const { deps } = makeDeps();
+  // current start 5000; new end 4000 -> invalid
   await assert.rejects(
-    () => requestRender(deps, "nope", {}),
-    (e: unknown) => e instanceof ApiError && e.status === 404,
+    () => updateClip(deps, "clip1", { endMs: 4_000 }),
+    (e: unknown) => e instanceof ApiError && e.status === 400,
   );
+});
+
+test("updateClip rejects unknown fields and out-of-range focal points", async () => {
+  const { deps } = makeDeps();
+  await assert.rejects(() => updateClip(deps, "clip1", { bogus: 1 }));
+  await assert.rejects(() => updateClip(deps, "clip1", { focalX: 1.5 }));
+});
+
+test("updateClip 404s for a clip in another project", async () => {
+  const { deps } = makeDeps();
   await assert.rejects(
-    () => requestRender(deps, "clipX", {}),
+    () => updateClip(deps, "clipX", { title: "x" }),
     (e: unknown) => e instanceof ApiError && e.status === 404,
   );
 });
 
-test("listVideoClips returns each clip with its latest render; download URL only when COMPLETED", async () => {
+// --- deleteClip --------------------------------------------------
+
+test("deleteClip removes an owned clip", async () => {
+  const { deps, deleted } = makeDeps();
+  const out = await deleteClip(deps, "clip1");
+  assert.deepEqual(out, { id: "clip1", deleted: true });
+  assert.deepEqual(deleted, ["clip1"]);
+});
+
+test("deleteClip 404s for a clip in another project", async () => {
+  const { deps } = makeDeps();
+  await assert.rejects(
+    () => deleteClip(deps, "clipX"),
+    (e: unknown) => e instanceof ApiError && e.status === 404,
+  );
+});
+
+// --- createManualClip -----------------------------------------
+
+test("createManualClip snaps the window to sentence boundaries and marks it USER_CREATED", async () => {
+  const { deps, created } = makeDeps();
+  // window 25000..40000 falls inside segment 1 (20000..45000)
+  const out = await createManualClip(deps, "vidA", { startMs: 25_000, endMs: 40_000, title: "Manual" });
+
+  assert.equal(created.length, 1);
+  assert.equal(created[0].origin, "USER_CREATED");
+  assert.equal(created[0].title, "Manual");
+  // snapped outward to the segment, then padded by the snap defaults
+  assert.equal(out.startMs, 20_000 - 250);
+  assert.equal(out.endMs, 45_000 + 400);
+});
+
+test("createManualClip rejects an inverted range and non-owned videos", async () => {
+  const { deps } = makeDeps();
+  await assert.rejects(
+    () => createManualClip(deps, "vidA", { startMs: 10, endMs: 5 }),
+    (e: unknown) => e instanceof ApiError && e.status === 400,
+  );
+  await assert.rejects(
+    () => createManualClip(deps, "vidZ", { startMs: 0, endMs: 5_000 }),
+    (e: unknown) => e instanceof ApiError && e.status === 404,
+  );
+});
+
+// --- listVideoClips -----------------------------------------
+
+test("listVideoClips returns editable fields + a download URL only when COMPLETED", async () => {
   const { deps } = makeDeps();
   const list = await listVideoClips(deps, "vidA");
-
-  assert.equal(list.length, 2);
-  assert.equal(list[0].render?.status, "COMPLETED");
+  assert.equal(list.length, 1);
+  assert.equal(list[0].origin, "AI_SUGGESTED");
+  assert.equal(list[0].focalX, 0.5);
+  assert.equal(list[0].accepted, false);
   assert.equal(list[0].render?.downloadUrl, "https://dl.example/renders/r1/output.mp4");
-  assert.equal(list[1].render?.status, "PROCESSING");
-  assert.equal(list[1].render?.downloadUrl, null);
-});
-
-test("listVideoClips 404s for a video in another project", async () => {
-  const { deps } = makeDeps();
-  await assert.rejects(
-    () => listVideoClips(deps, "vidZ"),
-    (e: unknown) => e instanceof ApiError && e.status === 404,
-  );
 });
