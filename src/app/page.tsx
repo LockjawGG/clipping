@@ -13,8 +13,14 @@ export default function HomePage() {
       </p>
       <p className="text-sm text-neutral-500">
         This scaffold wires up Next.js, Tailwind, and the Prisma client. The
-        upload flow, transcript editor, and render pipeline land in later PRs.
+        transcript editor and render pipeline land in later PRs.
       </p>
+      <a
+        href="/dashboard"
+        className="w-fit rounded bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
+      >
+        Go to the dashboard
+      </a>
     </main>
   );
 }

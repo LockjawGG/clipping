@@ -24,8 +24,9 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 | `src/lib/pipeline/` | The ingest chain `PROBE → EXTRACT_AUDIO → TRANSCRIBE → ANALYZE`, each handler doing one step and enqueuing the next. Handlers depend on narrow repo interfaces (`deps.ts`); Prisma-backed impls + `buildPipelineDeps()` in `repos.ts` |
 | `scripts/worker.ts` | `npm run worker` — the long-running ingest worker |
 | `src/lib/api/` | The upload flow as injectable functions (`createVideoUpload` → presigned PUT, `confirmUpload` → enqueue `PROBE`, `getVideoStatus`), an `ApiError`/Zod → JSON `route()` wrapper, and the token-guarded local-storage file route |
-| `src/app/api/` | `POST /api/videos`, `GET /api/videos/:id`, `POST /api/videos/:id/ingest`, and `GET`/`PUT /api/storage/local/[...key]` — thin shells over `src/lib/api` |
-| `src/app/` | Next.js App Router — landing page, root layout, Tailwind |
+| `src/app/api/` | `POST /api/videos`, `GET /api/videos/:id`, `POST /api/videos/:id/ingest`, `GET`/`PUT /api/storage/local/[...key]`, `POST /api/auth/register`, `/api/auth/[...nextauth]` — thin shells over `src/lib` |
+| `src/lib/auth/` | NextAuth v5, Credentials + JWT sessions. `config.edge.ts` (db-free, for `middleware.ts`) is spread into the full config in `index.ts`. `password.ts` (bcrypt), `session.ts` (`requireUserId`, `getOrCreateProject` — replaces the dev stopgap) |
+| `src/app/` | App Router — landing, `/login`, `/register`, `/dashboard` (video list + upload button), root layout, Tailwind. `middleware.ts` gates `/dashboard` |
 | `tests/core.test.ts` | 33 unit tests |
 | `tests/storage.test.ts` | 10 unit tests — key safety, URL signing, local round-trip |
 | `tests/transcription.test.ts` | 10 unit tests — response parsing for each provider, ms normalisation |
@@ -33,14 +34,14 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 | `tests/jobs.test.ts` | 9 unit tests — backoff, claim/retry/fail state machine, concurrency, graceful stop |
 | `tests/ffmpeg-run.test.ts` | 4 unit tests — ffprobe JSON → `MediaInfo` |
 | `tests/pipeline.test.ts` | 7 unit tests — each ingest handler + the full chain, against fake deps |
-| `tests/api.test.ts` | 10 unit tests — upload schema, `createVideoUpload` / `confirmUpload` / `getVideoStatus`, local-route token auth |
+| `tests/api.test.ts` | 11 unit tests — upload schema, the video service (incl. cross-project 404), local-route token auth |
+| `tests/auth.test.ts` | 6 unit tests — bcrypt hash/verify, the credential + register schemas |
 | `tests/ffmpeg.integration.ts` | 6 checks against the real ffmpeg binary |
 | `.env.example` | Provider configuration |
 
 ## What is not here yet
 
-The `RENDER` / `THUMBNAIL` handlers, auth (every video currently hangs off one
-dev user + project), the dashboard, the transcript and clip editors, Remotion
+The `RENDER` / `THUMBNAIL` handlers, the transcript and clip editors, Remotion
 animated captions, and face detection. See "Continuing the build" below.
 
 ## Setup
@@ -49,10 +50,13 @@ animated captions, and face detection. See "Continuing the build" below.
 npm install                 # also runs `prisma generate`
 cp .env.example .env        # DATABASE_URL is required; NEXTAUTH_SECRET too if
                             # STORAGE_PROVIDER=local (it signs the file URLs)
-npm run prisma:migrate      # create the schema in your database
+npm run prisma:migrate      # create / update the schema in your database
 npm run dev                 # http://localhost:3000
 npm run worker              # in a second terminal: the ingest job worker
 ```
+
+Register at `/register`, then upload from `/dashboard`. `npm run prisma:migrate`
+must be re-run after pulling this change — it adds `User.passwordHash`.
 
 `npm run build` runs `prisma generate` then `next build`. `npm run typecheck`
 expects a prior `npm run build` (or `npm run dev`) so Next's generated types
@@ -115,9 +119,10 @@ Order that avoids rework:
 3. ~~Job worker polling `Job` on `(status, runAfter)` with backoff~~ done
 4. ~~probe → extract audio → transcribe → analyze pipeline~~ done
    (`src/lib/pipeline/`)
-5. ~~Upload API + the local-storage file route~~ done (`src/lib/api/`,
-   `src/app/api/`). Auth + the dashboard next; then the `RENDER` handler.
-6. UI, then Remotion for animated captions
+5. ~~Upload API + the local-storage file route~~ done
+6. ~~Auth (NextAuth) + the dashboard~~ done (`src/lib/auth/`, `/dashboard`).
+   The `RENDER` handler + a clip-render UI next.
+7. Transcript / clip editors, then Remotion for animated captions
 
 Remotion replaces the `subtitles=` burn for animated presets — `buildCues` output
 feeds Remotion directly, since cues carry word arrays. Keep the ffmpeg path for

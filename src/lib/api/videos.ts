@@ -44,6 +44,7 @@ export interface VideoDb {
 
 export interface VideoRecord {
   id: string;
+  projectId: string;
   status: string;
   storageKey: string;
   originalFilename: string;
@@ -95,9 +96,16 @@ export async function createVideoUpload(deps: VideoServiceDeps, input: unknown) 
   };
 }
 
-export async function confirmUpload(deps: VideoServiceDeps, videoId: string) {
+/** 404 (not 403) for a video the caller's project doesn't own — don't leak ids. */
+async function ownedVideo(deps: VideoServiceDeps, videoId: string): Promise<VideoRecord> {
   const video = await deps.db.video.findUnique({ where: { id: videoId } });
-  if (!video) throw new ApiError(404, "video not found");
+  const projectId = await deps.ensureProject();
+  if (!video || video.projectId !== projectId) throw new ApiError(404, "video not found");
+  return video;
+}
+
+export async function confirmUpload(deps: VideoServiceDeps, videoId: string) {
+  const video = await ownedVideo(deps, videoId);
 
   if (video.status !== "UPLOADING") {
     // Idempotent: a second ingest call after PROBE was already queued is fine.
@@ -115,8 +123,7 @@ export async function confirmUpload(deps: VideoServiceDeps, videoId: string) {
 }
 
 export async function getVideoStatus(deps: VideoServiceDeps, videoId: string) {
-  const video = await deps.db.video.findUnique({ where: { id: videoId } });
-  if (!video) throw new ApiError(404, "video not found");
+  const video = await ownedVideo(deps, videoId);
 
   const [clipCount, transcript] = await Promise.all([
     deps.db.clip.count({ where: { videoId } }),
