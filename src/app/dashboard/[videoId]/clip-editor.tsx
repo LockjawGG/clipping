@@ -24,6 +24,7 @@ export interface ClipData {
   focalY: number | null;
   accepted: boolean;
   captions: CaptionConfig | null;
+  thumbnailUrl: string | null;
   render: { id: string; status: string; progress: number; downloadUrl: string | null } | null;
 }
 
@@ -32,7 +33,7 @@ const s = (ms: number) => (ms / 1000).toFixed(1);
 export function ClipEditor({ clip }: { clip: ClipData }) {
   const router = useRouter();
   const [draft, setDraft] = useState(clip);
-  const [busy, setBusy] = useState<"save" | "render" | "delete" | null>(null);
+  const [busy, setBusy] = useState<"save" | "render" | "delete" | "thumb" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const dirty =
@@ -44,7 +45,7 @@ export function ClipEditor({ clip }: { clip: ClipData }) {
     draft.focalY !== clip.focalY ||
     draft.accepted !== clip.accepted;
 
-  async function call(kind: "save" | "render" | "delete", req: () => Promise<Response>) {
+  async function call(kind: "save" | "render" | "delete" | "thumb", req: () => Promise<Response>) {
     setBusy(kind);
     setError(null);
     try {
@@ -77,13 +78,28 @@ export function ClipEditor({ clip }: { clip: ClipData }) {
 
   const render = () => call("render", () => fetch(`/api/clips/${clip.id}/render`, { method: "POST" }));
   const remove = () => call("delete", () => fetch(`/api/clips/${clip.id}`, { method: "DELETE" }));
+  const thumbnail = () =>
+    call("thumb", () => fetch(`/api/clips/${clip.id}/thumbnail`, { method: "POST" }));
 
   const nudge = (field: "startMs" | "endMs", deltaMs: number) =>
     setDraft((d) => ({ ...d, [field]: Math.max(0, d[field] + deltaMs) }));
 
   return (
     <div className="flex flex-col gap-3 rounded border border-neutral-200 p-4 dark:border-neutral-800">
-      <div className="flex items-center gap-2">
+      <div className="flex items-start gap-3">
+        {/* eslint-disable-next-line @next/next/no-img-element -- signed storage URL, not a static asset */}
+        <img
+          src={clip.thumbnailUrl ?? undefined}
+          alt=""
+          className="h-16 w-28 shrink-0 rounded bg-neutral-100 object-cover dark:bg-neutral-800"
+        />
+        <button
+          onClick={thumbnail}
+          disabled={busy !== null}
+          className="mt-1 shrink-0 rounded border border-neutral-300 px-2 py-1 text-xs disabled:opacity-40 dark:border-neutral-700"
+        >
+          {busy === "thumb" ? "…" : clip.thumbnailUrl ? "↻ thumb" : "Thumbnail"}
+        </button>
         <input
           value={draft.title}
           onChange={(e) => setDraft({ ...draft, title: e.target.value })}

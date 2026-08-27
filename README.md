@@ -21,12 +21,12 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 | `src/lib/analysis/` | `AnalysisProvider` implementations: Anthropic (official SDK), OpenAI, and a no-LLM `heuristic` baseline, behind `getAnalysis()`. `refineSuggestions()` runs raw picks through `snapToSentences → dedupeOverlapping → capTotalRuntime` |
 | `src/lib/jobs/` | Job worker runtime: `JobWorker` polls `Job(status, runAfter)`, claims rows with a compare-and-swap, dispatches to a per-`kind` handler map, retries with exponential backoff + jitter. `createPrismaJobStore` / `enqueueJob` bind it to the DB |
 | `src/lib/ffmpeg/run.ts` | `FfmpegRunner` — runs the `args.ts` argv through the real binaries (`shell: false`): `probe` / `extractAudio` / `cut` / `reframe`. `parseProbeOutput` normalises ffprobe JSON to `MediaInfo` |
-| `src/lib/pipeline/` | `PROBE → EXTRACT_AUDIO → TRANSCRIBE → ANALYZE` (each step enqueues the next) plus `RENDER` (cut → reframe to aspect → captions: static presets burn an SRT with ffmpeg, animated ones composite via Remotion → upload). Narrow repo interfaces in `deps.ts`; Prisma impls + `buildPipelineDeps()` in `repos.ts` |
+| `src/lib/pipeline/` | `PROBE → EXTRACT_AUDIO → TRANSCRIBE → ANALYZE → THUMBNAIL` (each step enqueues the next) plus `RENDER` (cut → reframe to aspect → captions: static presets burn an SRT with ffmpeg, animated ones composite via Remotion → upload). `THUMBNAIL` grabs a poster frame at each clip's midpoint. Narrow repo interfaces in `deps.ts`; Prisma impls + `buildPipelineDeps()` in `repos.ts` |
 | `src/lib/captions/presets.ts` | `CaptionAnimation` presets — `isAnimatedPreset` decides ffmpeg-burn vs Remotion; `remotionPreset` maps to the composition string |
 | `remotion/` | Remotion project (`CaptionedClip` composition) — word-timed caption presets (word-by-word / pop / scale / bounce / fade / karaoke) over the reframed clip. `src/lib/pipeline/remotion.ts` drives it via `@remotion/{bundler,renderer}` (dynamic `import()`, so it never enters the Next bundle) |
 | `scripts/worker.ts` | `npm run worker` — the long-running ingest worker |
 | `src/lib/api/` | Upload flow (`createVideoUpload` → presigned PUT, `confirmUpload` → enqueue `PROBE`, `getVideoStatus`), clip actions (`requestRender`, `listVideoClips`, `updateClip`, `deleteClip`, `createManualClip` — snapped via `snapToSentences`, `upsertCaptionConfig` / `deleteCaptionConfig`), an `ApiError`/Zod → JSON `route()` wrapper, and the token-guarded local-storage file route |
-| `src/app/api/` | `videos` + `/videos/:id/{ingest,clips}`, `PATCH`/`DELETE /api/clips/:id`, `PUT`/`DELETE /api/clips/:id/captions`, `POST /api/clips/:id/render`, `GET`/`PUT /api/storage/local/[...key]`, `/api/auth/{register,[...nextauth]}` — thin shells over `src/lib` |
+| `src/app/api/` | `videos` + `/videos/:id/{ingest,clips}`, `PATCH`/`DELETE /api/clips/:id`, `PUT`/`DELETE /api/clips/:id/captions`, `POST /api/clips/:id/{render,thumbnail}`, `GET`/`PUT /api/storage/local/[...key]`, `/api/auth/{register,[...nextauth]}` — thin shells over `src/lib` |
 | `src/lib/auth/` | NextAuth v5, Credentials + JWT sessions. `config.edge.ts` (db-free, for `middleware.ts`) is spread into the full config in `index.ts`. `password.ts` (bcrypt), `session.ts` (`requireUserId`, `getOrCreateProject`) |
 | `src/app/` | App Router — landing, `/login`, `/register`, `/dashboard` (video list + upload), `/dashboard/[videoId]` (per-clip editor: boundaries, aspect, focal point, accept, caption preset/animation/colours, render, delete; add-a-clip form; read-only transcript), root layout, Tailwind. `middleware.ts` gates `/dashboard` |
 | `tests/core.test.ts` | 33 unit tests |
@@ -37,18 +37,18 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 | `tests/ffmpeg-run.test.ts` | 4 unit tests — ffprobe JSON → `MediaInfo` |
 | `tests/pipeline.test.ts` | 7 unit tests — each ingest handler + the full chain, against fake deps |
 | `tests/render.test.ts` | 8 unit tests — the RENDER handler: cut/reframe/probe/upload, static SRT burn vs Remotion composite, no-words fallback, failure → `Render` FAILED |
+| `tests/thumbnail.test.ts` | 3 unit tests — the THUMBNAIL handler: single clip, whole video (one download), no-op |
 | `tests/presets.test.ts` | 2 unit tests — `isAnimatedPreset` / `remotionPreset` |
 | `tests/api.test.ts` | 11 unit tests — upload schema, the video service (incl. cross-project 404), local-route token auth |
-| `tests/clips-api.test.ts` | 16 unit tests — `requestRender`, `updateClip`, `deleteClip`, `createManualClip` (snapping), `upsertCaptionConfig` / `deleteCaptionConfig`, `listVideoClips`; all with ownership 404s |
+| `tests/clips-api.test.ts` | 18 unit tests — `requestRender`, `requestClipThumbnail`, `updateClip`, `deleteClip`, `createManualClip`, `upsertCaptionConfig` / `deleteCaptionConfig`, `listVideoClips`; all with ownership 404s |
 | `tests/auth.test.ts` | 6 unit tests — bcrypt hash/verify, the credential + register schemas |
 | `tests/ffmpeg.integration.ts` | 6 checks against the real ffmpeg binary |
 | `.env.example` | Provider configuration |
 
 ## What is not here yet
 
-The `THUMBNAIL` handler, transcript-text editing (the view is read-only —
-editing would have to keep the word timings in sync), and face detection. See
-"Continuing the build" below.
+Transcript-text editing (the view is read-only — editing would have to keep the
+word timings in sync) and face detection. See "Continuing the build" below.
 
 The Remotion render path (`bundle()` + `renderMedia()`) type-checks and its
 wiring is unit-tested, but it needs a headless Chromium (`@remotion/renderer`
@@ -65,8 +65,9 @@ npm run dev                 # http://localhost:3000
 npm run worker              # in a second terminal: the ingest job worker
 ```
 
-Register at `/register`, then upload from `/dashboard`. `npm run prisma:migrate`
-must be re-run after pulling this change — it adds `User.passwordHash`.
+Register at `/register`, then upload from `/dashboard`. Re-run
+`npm run prisma:migrate` after pulling — recent changes add `User.passwordHash`
+and `Clip.thumbnailKey`.
 
 `npm run build` runs `prisma generate` then `next build`. `npm run typecheck`
 expects a prior `npm run build` (or `npm run dev`) so Next's generated types
@@ -135,8 +136,10 @@ Order that avoids rework:
 8. ~~Clip editor (boundaries / aspect / focal point / manual clips)~~ done
 9. ~~Remotion for animated captions~~ + ~~caption-preset picker~~ done
    (`remotion/`, `PUT /api/clips/:id/captions`, `CaptionControls`)
-10. A `THUMBNAIL` handler, face detection, and an end-to-end run against real
-    Postgres + ffmpeg + Chromium
+10. ~~`THUMBNAIL` handler~~ done (`thumbnailHandler`, `Clip.thumbnailKey`,
+    `POST /api/clips/:id/thumbnail`)
+11. Face detection, and an end-to-end run against real Postgres + ffmpeg +
+    Chromium
 
 Remotion replaces the `subtitles=` burn for animated presets — `buildCues` output
 feeds Remotion directly, since cues carry word arrays. Keep the ffmpeg path for

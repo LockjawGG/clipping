@@ -8,6 +8,7 @@ import {
   deleteCaptionConfig,
   deleteClip,
   listVideoClips,
+  requestClipThumbnail,
   requestRender,
   updateClip,
   upsertCaptionConfig,
@@ -88,6 +89,7 @@ function makeDeps(over: Partial<ClipServiceDeps> = {}) {
             focalY: 0.4,
             accepted: false,
             caption: null,
+            thumbnailKey: "clips/clip1/thumb.jpg",
             subtitleConfig: {
               preset: "CLASSIC",
               animation: "POP",
@@ -152,6 +154,17 @@ test("requestRender 404s for an unknown clip or one in another project", async (
   const { deps } = makeDeps();
   await assert.rejects(() => requestRender(deps, "nope", {}), (e: unknown) => e instanceof ApiError && e.status === 404);
   await assert.rejects(() => requestRender(deps, "clipX", {}), (e: unknown) => e instanceof ApiError && e.status === 404);
+});
+
+test("requestClipThumbnail enqueues a THUMBNAIL job scoped to the clip", async () => {
+  const { deps, enqueued } = makeDeps();
+  const out = await requestClipThumbnail(deps, "clip1");
+  assert.deepEqual(out, { jobId: "job-1", status: "QUEUED" });
+  assert.deepEqual(enqueued, [{ videoId: "vidA", kind: "THUMBNAIL", payload: { clipId: "clip1" } }]);
+  await assert.rejects(
+    () => requestClipThumbnail(deps, "clipX"),
+    (e: unknown) => e instanceof ApiError && e.status === 404,
+  );
 });
 
 // --- updateClip --------------------------------------------------
@@ -240,6 +253,7 @@ test("listVideoClips returns editable fields, the caption config, and a download
   assert.equal(list[0].focalX, 0.5);
   assert.equal(list[0].accepted, false);
   assert.equal(list[0].captions?.animation, "POP");
+  assert.equal(list[0].thumbnailUrl, "https://dl.example/clips/clip1/thumb.jpg");
   assert.equal(list[0].render?.downloadUrl, "https://dl.example/renders/r1/output.mp4");
 });
 

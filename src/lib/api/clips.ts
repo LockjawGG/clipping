@@ -79,6 +79,7 @@ interface ClipListRow {
   focalY: number | null;
   accepted: boolean;
   caption: string | null;
+  thumbnailKey: string | null;
   subtitleConfig: {
     preset: string;
     animation: string;
@@ -127,7 +128,11 @@ export interface ClipServiceDeps {
   db: ClipDb;
   storage: StorageProvider;
   ensureProject: () => Promise<string>;
-  enqueue: (input: { videoId: string; kind: "RENDER"; payload?: unknown }) => Promise<string>;
+  enqueue: (input: {
+    videoId: string;
+    kind: "RENDER" | "THUMBNAIL";
+    payload?: unknown;
+  }) => Promise<string>;
 }
 
 async function assertOwnsProject(deps: ClipServiceDeps, projectId: string | undefined | null): Promise<void> {
@@ -162,6 +167,16 @@ export async function requestRender(deps: ClipServiceDeps, clipId: string, input
   });
 
   return { renderId: render.id, jobId, status: "QUEUED" as const };
+}
+
+export async function requestClipThumbnail(deps: ClipServiceDeps, clipId: string) {
+  const clip = await ownedClip(deps, clipId);
+  const jobId = await deps.enqueue({
+    videoId: clip.videoId,
+    kind: "THUMBNAIL",
+    payload: { clipId },
+  });
+  return { jobId, status: "QUEUED" as const };
 }
 
 export async function updateClip(deps: ClipServiceDeps, clipId: string, input: unknown) {
@@ -242,10 +257,12 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
   return Promise.all(
     clips.map(async (c) => {
       const latest = c.renders[0];
-      const downloadUrl =
+      const [downloadUrl, thumbnailUrl] = await Promise.all([
         latest?.status === "COMPLETED" && latest.outputKey
-          ? await deps.storage.createDownloadUrl(latest.outputKey)
-          : null;
+          ? deps.storage.createDownloadUrl(latest.outputKey)
+          : Promise.resolve(null),
+        c.thumbnailKey ? deps.storage.createDownloadUrl(c.thumbnailKey) : Promise.resolve(null),
+      ]);
       return {
         id: c.id,
         origin: c.origin,
@@ -259,6 +276,7 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
         accepted: c.accepted,
         caption: c.caption,
         captions: c.subtitleConfig,
+        thumbnailUrl,
         render: latest
           ? { id: latest.id, status: latest.status, progress: latest.progress, downloadUrl }
           : null,

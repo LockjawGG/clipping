@@ -73,6 +73,7 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
       reframe: async (_i: string, _o: string, opts: ReframeOptions) => {
         spy.reframes.push(opts);
       },
+      thumbnail: async () => {},
     },
     storage: {
       name: "fake",
@@ -98,6 +99,11 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
       loadSegments: async () => WORDS,
     },
     clips: { replaceSuggested: async () => 0 },
+    thumbnails: {
+      target: async () => null,
+      targetsForVideo: async () => [],
+      setKey: async () => {},
+    },
     captions: {
       renderCaptioned: async (input: { preset: string; videoPath: string; cues: unknown[] }) => {
         spy.captioned.push({ preset: input.preset, videoPath: input.videoPath, cueCount: input.cues.length });
@@ -237,6 +243,7 @@ test("a failing ffmpeg step marks the render FAILED and rethrows", async () => {
         throw new Error("ffmpeg exploded");
       },
       reframe: async () => {},
+      thumbnail: async () => {},
     },
   } as unknown as Partial<PipelineDeps>);
 

@@ -186,6 +186,8 @@ model Clip {
   removedWordIds String[] @default([])
 
   accepted  Boolean  @default(false)
+  // Poster frame grabbed at the clip midpoint by the THUMBNAIL job.
+  thumbnailKey String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
