@@ -1,9 +1,31 @@
 import { execFile } from "node:child_process";
-import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readdir, rename, stat } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
+
+/**
+ * yt-dlp treats `-o` as a template: with no `%(ext)s` it appends `.<ext>`, so the
+ * file lands *beside* `outputPath` (e.g. `source.mp4`), not at it. The rest of
+ * the pipeline addresses the source by the exact, extension-less path, so move
+ * whatever yt-dlp produced into place.
+ */
+async function normalizeDownload(outputPath: string): Promise<void> {
+  try {
+    await stat(outputPath);
+    return; // yt-dlp wrote exactly where we asked
+  } catch {
+    // fall through and look for `<name>.<ext>` next to it
+  }
+  const dir = dirname(outputPath);
+  const name = basename(outputPath);
+  const produced = (await readdir(dir))
+    .filter((e) => e.startsWith(`${name}.`) && !e.endsWith(".part"))
+    .sort();
+  if (produced.length === 0) throw new Error(`yt-dlp produced no output file for ${name}`);
+  await rename(join(dir, produced[0]), outputPath);
+}
 
 export interface FetchResult {
   /** The source's own title, if the downloader reported one. */
@@ -66,6 +88,7 @@ export class YtDlpFetcher implements MediaFetcher {
         signal,
         maxBuffer: 32 * 1024 * 1024,
       });
+      await normalizeDownload(outputPath);
       const line = stdout.trim().split("\n").filter(Boolean).at(-1);
       if (!line) return {};
       const meta = JSON.parse(line) as { title?: string; duration?: number; filesize_approx?: number };
