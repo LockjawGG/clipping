@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { env } from "../env.ts";
 import { db } from "../db.ts";
 import { FfmpegRunner } from "../ffmpeg/run.ts";
+import { RemotionCaptionRenderer } from "./remotion.ts";
 import { getStorage } from "../storage/index.ts";
 import { getTranscription } from "../transcription/index.ts";
 import { getAnalysis } from "../analysis/index.ts";
@@ -165,13 +166,27 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
               focalX: true,
               focalY: true,
               videoId: true,
-              subtitleConfig: { select: { id: true } },
+              subtitleConfig: {
+                select: {
+                  animation: true,
+                  fontFamily: true,
+                  fontSizePx: true,
+                  fontWeight: true,
+                  textColor: true,
+                  highlightColor: true,
+                  outlineColor: true,
+                  outlineWidthPx: true,
+                  positionY: true,
+                  uppercase: true,
+                },
+              },
               video: { select: { storageKey: true } },
             },
           },
         },
       });
       if (!render) return null;
+      const sc = render.clip.subtitleConfig;
       return {
         clipId: render.clipId,
         videoId: render.clip.videoId,
@@ -182,7 +197,21 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
         focalX: render.clip.focalX,
         focalY: render.clip.focalY,
         quality: render.quality as "P720" | "P1080" | "ORIGINAL",
-        burnCaptions: render.clip.subtitleConfig !== null,
+        burnCaptions: sc !== null,
+        captionAnimation: sc?.animation ?? "NONE",
+        captionStyle: sc
+          ? {
+              fontFamily: sc.fontFamily,
+              fontSizePx: sc.fontSizePx,
+              fontWeight: sc.fontWeight,
+              textColor: sc.textColor,
+              highlightColor: sc.highlightColor,
+              outlineColor: sc.outlineColor,
+              outlineWidthPx: sc.outlineWidthPx,
+              positionY: sc.positionY,
+              uppercase: sc.uppercase,
+            }
+          : null,
       };
     },
     async begin(renderId) {
@@ -224,6 +253,7 @@ export function buildPipelineDeps(): PipelineDeps {
     transcripts: prismaTranscriptRepo(db),
     clips: prismaClipRepo(db),
     renders: prismaRenderRepo(db),
+    captions: new RemotionCaptionRenderer(),
     queue: { enqueue: (input) => enqueueJob(db, input) },
     tempDir: env.TEMP_DIR,
   };

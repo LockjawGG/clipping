@@ -1,6 +1,6 @@
 {
   "extends": ["next/core-web-vitals", "next/typescript"],
-  "ignorePatterns": ["tests/**"],
+  "ignorePatterns": ["tests/**", "remotion/**"],
   "rules": {
     "@typescript-eslint/no-unused-vars": [
       "warn",

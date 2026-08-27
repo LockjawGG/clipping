@@ -4,6 +4,8 @@ import { dirname } from "node:path";
 import { DEFAULT_SNAP_CONFIG } from "../clips/boundaries.ts";
 import { refineSuggestions } from "../analysis/pipeline.ts";
 import { buildCues, toSrt } from "../captions/layout.ts";
+import { DEFAULT_CAPTION_STYLE, isAnimatedPreset, remotionPreset } from "../captions/presets.ts";
+import { ASPECT_DIMENSIONS } from "../ffmpeg/args.ts";
 import type { JobHandler } from "../jobs/types.ts";
 import { type PipelineDeps, scratchPath, toAspectPreset } from "./deps.ts";
 
@@ -132,7 +134,7 @@ interface RenderPayload {
 
 const CRF_BY_QUALITY: Record<string, number> = { ORIGINAL: 16, P1080: 20, P720: 24 };
 
-/** RENDER: cut the clip, reframe to its aspect (burning captions), upload the MP4. */
+/** RENDER: cut → reframe to aspect → burn captions (ffmpeg SRT or Remotion) → upload. */
 export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal, setProgress }) => {
   const { renderId } = (job.payload ?? {}) as RenderPayload;
   if (!renderId) throw new Error("RENDER job payload is missing renderId");
@@ -145,7 +147,8 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
   try {
     const source = scratchPath(deps.tempDir, "render", renderId, "source");
     const cut = scratchPath(deps.tempDir, "render", renderId, "cut.mp4");
-    const final = scratchPath(deps.tempDir, "render", renderId, "final.mp4");
+    const reframed = scratchPath(deps.tempDir, "render", renderId, "reframed.mp4");
+    const captioned = scratchPath(deps.tempDir, "render", renderId, "captioned.mp4");
 
     await deps.storage.getToFile(target.sourceKey, source);
     await setProgress(0.2);
@@ -156,28 +159,34 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
       { startMs: target.startMs, endMs: target.endMs, crf: CRF_BY_QUALITY[target.quality] ?? 20 },
       signal,
     );
-    await setProgress(0.55);
+    await setProgress(0.45);
 
-    // Captions: the clip's own words, rebased onto the clip timeline.
-    let subtitlePath: string | undefined;
+    // The clip's own words, rebased onto the clip timeline.
+    let words: Array<{ text: string; startMs: number; endMs: number }> = [];
     if (target.burnCaptions) {
       const segments = await deps.transcripts.loadSegments(target.videoId);
-      const words = segments
+      words = segments
         .flatMap((s) => s.words)
         .filter((w) => w.startMs >= target.startMs && w.endMs <= target.endMs);
-      if (words.length > 0) {
-        subtitlePath = scratchPath(deps.tempDir, "render", renderId, "captions.srt");
-        await mkdir(dirname(subtitlePath), { recursive: true });
-        await writeFile(subtitlePath, toSrt(buildCues(words), target.startMs), "utf8");
-      }
+    }
+    const animated = words.length > 0 && isAnimatedPreset(target.captionAnimation);
+    const staticBurn = words.length > 0 && !animated;
+
+    // Static captions burn during the reframe; animated ones are composited by
+    // Remotion afterwards, so the reframe gets no subtitle path.
+    let subtitlePath: string | undefined;
+    if (staticBurn) {
+      subtitlePath = scratchPath(deps.tempDir, "render", renderId, "captions.srt");
+      await mkdir(dirname(subtitlePath), { recursive: true });
+      await writeFile(subtitlePath, toSrt(buildCues(words), target.startMs), "utf8");
     }
 
     const aspect = toAspectPreset(target.aspectRatio);
-    const needsReframe = aspect !== "16:9" || subtitlePath !== undefined;
+    const needsReframe = aspect !== "16:9" || subtitlePath !== undefined || animated;
     if (needsReframe) {
       await deps.ffmpeg.reframe(
         cut,
-        final,
+        reframed,
         {
           aspect,
           focalX: target.focalX ?? undefined,
@@ -187,9 +196,29 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
         signal,
       );
     }
-    await setProgress(0.85);
+    await setProgress(0.7);
 
-    const output = needsReframe ? final : cut;
+    let output = needsReframe ? reframed : cut;
+
+    if (animated) {
+      const { width, height } = ASPECT_DIMENSIONS[aspect];
+      const pre = await deps.ffmpeg.probe(output, signal);
+      await deps.captions.renderCaptioned({
+        videoPath: output,
+        outputPath: captioned,
+        cues: buildCues(words),
+        preset: remotionPreset(target.captionAnimation),
+        style: target.captionStyle ?? DEFAULT_CAPTION_STYLE,
+        width: pre.width ?? width,
+        height: pre.height ?? height,
+        fps: pre.fps ?? 30,
+        durationMs: target.endMs - target.startMs,
+        signal,
+      });
+      output = captioned;
+    }
+    await setProgress(0.9);
+
     const info = await deps.ffmpeg.probe(output, signal);
     const outputKey = `renders/${renderId}/output.mp4`;
     await deps.storage.putFile(outputKey, output, "video/mp4");

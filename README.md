@@ -21,7 +21,9 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 | `src/lib/analysis/` | `AnalysisProvider` implementations: Anthropic (official SDK), OpenAI, and a no-LLM `heuristic` baseline, behind `getAnalysis()`. `refineSuggestions()` runs raw picks through `snapToSentences → dedupeOverlapping → capTotalRuntime` |
 | `src/lib/jobs/` | Job worker runtime: `JobWorker` polls `Job(status, runAfter)`, claims rows with a compare-and-swap, dispatches to a per-`kind` handler map, retries with exponential backoff + jitter. `createPrismaJobStore` / `enqueueJob` bind it to the DB |
 | `src/lib/ffmpeg/run.ts` | `FfmpegRunner` — runs the `args.ts` argv through the real binaries (`shell: false`): `probe` / `extractAudio` / `cut` / `reframe`. `parseProbeOutput` normalises ffprobe JSON to `MediaInfo` |
-| `src/lib/pipeline/` | `PROBE → EXTRACT_AUDIO → TRANSCRIBE → ANALYZE` (each step enqueues the next) plus `RENDER` (cut → reframe to the clip's aspect, burning its own captions → upload). Handlers depend on narrow repo interfaces (`deps.ts`); Prisma impls + `buildPipelineDeps()` in `repos.ts` |
+| `src/lib/pipeline/` | `PROBE → EXTRACT_AUDIO → TRANSCRIBE → ANALYZE` (each step enqueues the next) plus `RENDER` (cut → reframe to aspect → captions: static presets burn an SRT with ffmpeg, animated ones composite via Remotion → upload). Narrow repo interfaces in `deps.ts`; Prisma impls + `buildPipelineDeps()` in `repos.ts` |
+| `src/lib/captions/presets.ts` | `CaptionAnimation` presets — `isAnimatedPreset` decides ffmpeg-burn vs Remotion; `remotionPreset` maps to the composition string |
+| `remotion/` | Remotion project (`CaptionedClip` composition) — word-timed caption presets (word-by-word / pop / scale / bounce / fade / karaoke) over the reframed clip. `src/lib/pipeline/remotion.ts` drives it via `@remotion/{bundler,renderer}` (dynamic `import()`, so it never enters the Next bundle) |
 | `scripts/worker.ts` | `npm run worker` — the long-running ingest worker |
 | `src/lib/api/` | Upload flow (`createVideoUpload` → presigned PUT, `confirmUpload` → enqueue `PROBE`, `getVideoStatus`), clip actions (`requestRender`, `listVideoClips`, `updateClip`, `deleteClip`, `createManualClip` — snapped via `snapToSentences`), an `ApiError`/Zod → JSON `route()` wrapper, and the token-guarded local-storage file route |
 | `src/app/api/` | `videos` + `/videos/:id/{ingest,clips}`, `PATCH`/`DELETE /api/clips/:id`, `POST /api/clips/:id/render`, `GET`/`PUT /api/storage/local/[...key]`, `/api/auth/{register,[...nextauth]}` — thin shells over `src/lib` |
@@ -34,7 +36,8 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 | `tests/jobs.test.ts` | 9 unit tests — backoff, claim/retry/fail state machine, concurrency, graceful stop |
 | `tests/ffmpeg-run.test.ts` | 4 unit tests — ffprobe JSON → `MediaInfo` |
 | `tests/pipeline.test.ts` | 7 unit tests — each ingest handler + the full chain, against fake deps |
-| `tests/render.test.ts` | 6 unit tests — the RENDER handler: cut/reframe/probe/upload, caption SRT, failure → `Render` FAILED |
+| `tests/render.test.ts` | 8 unit tests — the RENDER handler: cut/reframe/probe/upload, static SRT burn vs Remotion composite, no-words fallback, failure → `Render` FAILED |
+| `tests/presets.test.ts` | 2 unit tests — `isAnimatedPreset` / `remotionPreset` |
 | `tests/api.test.ts` | 11 unit tests — upload schema, the video service (incl. cross-project 404), local-route token auth |
 | `tests/clips-api.test.ts` | 11 unit tests — `requestRender`, `updateClip` (merge + validation), `deleteClip`, `createManualClip` (snapping), `listVideoClips`; all with ownership 404s |
 | `tests/auth.test.ts` | 6 unit tests — bcrypt hash/verify, the credential + register schemas |
@@ -44,8 +47,13 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 ## What is not here yet
 
 The `THUMBNAIL` handler, transcript-text editing (the view is read-only —
-editing would have to keep the word timings in sync), Remotion animated
-captions, and face detection. See "Continuing the build" below.
+editing would have to keep the word timings in sync), a UI to pick a caption
+preset per clip (the `RENDER` path reads `SubtitleConfig.animation` but nothing
+writes it yet), and face detection. See "Continuing the build" below.
+
+The Remotion render path (`bundle()` + `renderMedia()`) type-checks and its
+wiring is unit-tested, but it needs a headless Chromium (`@remotion/renderer`
+fetches one on first run) and has not been executed end to end here.
 
 ## Setup
 
@@ -125,9 +133,10 @@ Order that avoids rework:
 5. ~~Upload API + the local-storage file route~~ done
 6. ~~Auth (NextAuth) + the dashboard~~ done
 7. ~~`RENDER` handler + clip-render UI~~ done
-8. ~~Clip editor (boundaries / aspect / focal point / manual clips)~~ done.
-   Remotion for animated captions next; then a THUMBNAIL handler and face
-   detection.
+8. ~~Clip editor (boundaries / aspect / focal point / manual clips)~~ done
+9. ~~Remotion for animated captions~~ done (`remotion/`,
+   `src/lib/pipeline/remotion.ts`). Still needs a caption-preset picker in the
+   editor and an end-to-end run. Then a `THUMBNAIL` handler and face detection.
 
 Remotion replaces the `subtitles=` burn for animated presets — `buildCues` output
 feeds Remotion directly, since cues carry word arrays. Keep the ffmpeg path for
