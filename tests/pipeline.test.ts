@@ -77,6 +77,8 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       extractAudio: async (i, o) => {
         spy.extracted.push([i, o]);
       },
+      cut: async () => {},
+      reframe: async () => {},
     },
     storage: {
       name: "fake",
@@ -136,6 +138,12 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
         spy.savedClips = clips;
         return clips.length;
       },
+    },
+    renders: {
+      loadTarget: async () => null,
+      begin: async () => {},
+      complete: async () => {},
+      fail: async () => {},
     },
     queue: {
       enqueue: async (input) => {

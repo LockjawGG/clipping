@@ -1,7 +1,11 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+
 import { DEFAULT_SNAP_CONFIG } from "../clips/boundaries.ts";
 import { refineSuggestions } from "../analysis/pipeline.ts";
+import { buildCues, toSrt } from "../captions/layout.ts";
 import type { JobHandler } from "../jobs/types.ts";
-import { type PipelineDeps, scratchPath } from "./deps.ts";
+import { type PipelineDeps, scratchPath, toAspectPreset } from "./deps.ts";
 
 /**
  * The processing chain. Each handler does one step and enqueues the next, so a
@@ -120,4 +124,84 @@ export const analyzeHandler: JobHandler<PipelineDeps> = async ({ job, deps, sign
 
   const clipCount = await deps.clips.replaceSuggested(job.videoId, refined);
   return { clipCount, consideredSegments: segments.length };
+};
+
+interface RenderPayload {
+  renderId: string;
+}
+
+const CRF_BY_QUALITY: Record<string, number> = { ORIGINAL: 16, P1080: 20, P720: 24 };
+
+/** RENDER: cut the clip, reframe to its aspect (burning captions), upload the MP4. */
+export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal, setProgress }) => {
+  const { renderId } = (job.payload ?? {}) as RenderPayload;
+  if (!renderId) throw new Error("RENDER job payload is missing renderId");
+
+  const target = await deps.renders.loadTarget(renderId);
+  if (!target) throw new Error(`render ${renderId} not found`);
+
+  await deps.renders.begin(renderId);
+
+  try {
+    const source = scratchPath(deps.tempDir, "render", renderId, "source");
+    const cut = scratchPath(deps.tempDir, "render", renderId, "cut.mp4");
+    const final = scratchPath(deps.tempDir, "render", renderId, "final.mp4");
+
+    await deps.storage.getToFile(target.sourceKey, source);
+    await setProgress(0.2);
+
+    await deps.ffmpeg.cut(
+      source,
+      cut,
+      { startMs: target.startMs, endMs: target.endMs, crf: CRF_BY_QUALITY[target.quality] ?? 20 },
+      signal,
+    );
+    await setProgress(0.55);
+
+    // Captions: the clip's own words, rebased onto the clip timeline.
+    let subtitlePath: string | undefined;
+    if (target.burnCaptions) {
+      const segments = await deps.transcripts.loadSegments(target.videoId);
+      const words = segments
+        .flatMap((s) => s.words)
+        .filter((w) => w.startMs >= target.startMs && w.endMs <= target.endMs);
+      if (words.length > 0) {
+        subtitlePath = scratchPath(deps.tempDir, "render", renderId, "captions.srt");
+        await mkdir(dirname(subtitlePath), { recursive: true });
+        await writeFile(subtitlePath, toSrt(buildCues(words), target.startMs), "utf8");
+      }
+    }
+
+    const aspect = toAspectPreset(target.aspectRatio);
+    const needsReframe = aspect !== "16:9" || subtitlePath !== undefined;
+    if (needsReframe) {
+      await deps.ffmpeg.reframe(
+        cut,
+        final,
+        {
+          aspect,
+          focalX: target.focalX ?? undefined,
+          focalY: target.focalY ?? undefined,
+          subtitlePath,
+        },
+        signal,
+      );
+    }
+    await setProgress(0.85);
+
+    const output = needsReframe ? final : cut;
+    const info = await deps.ffmpeg.probe(output, signal);
+    const outputKey = `renders/${renderId}/output.mp4`;
+    await deps.storage.putFile(outputKey, output, "video/mp4");
+
+    await deps.renders.complete(renderId, {
+      outputKey,
+      sizeBytes: info.sizeBytes,
+      durationMs: info.durationMs,
+    });
+    return { outputKey, durationMs: info.durationMs };
+  } catch (err) {
+    await deps.renders.fail(renderId, err instanceof Error ? err.message : String(err));
+    throw err;
+  }
 };
