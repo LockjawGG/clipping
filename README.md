@@ -23,6 +23,8 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 | `src/lib/ffmpeg/run.ts` | `FfmpegRunner` — runs the `args.ts` argv through the real binaries (`shell: false`); `parseProbeOutput` normalises ffprobe JSON to `MediaInfo` |
 | `src/lib/pipeline/` | The ingest chain `PROBE → EXTRACT_AUDIO → TRANSCRIBE → ANALYZE`, each handler doing one step and enqueuing the next. Handlers depend on narrow repo interfaces (`deps.ts`); Prisma-backed impls + `buildPipelineDeps()` in `repos.ts` |
 | `scripts/worker.ts` | `npm run worker` — the long-running ingest worker |
+| `src/lib/api/` | The upload flow as injectable functions (`createVideoUpload` → presigned PUT, `confirmUpload` → enqueue `PROBE`, `getVideoStatus`), an `ApiError`/Zod → JSON `route()` wrapper, and the token-guarded local-storage file route |
+| `src/app/api/` | `POST /api/videos`, `GET /api/videos/:id`, `POST /api/videos/:id/ingest`, and `GET`/`PUT /api/storage/local/[...key]` — thin shells over `src/lib/api` |
 | `src/app/` | Next.js App Router — landing page, root layout, Tailwind |
 | `tests/core.test.ts` | 33 unit tests |
 | `tests/storage.test.ts` | 10 unit tests — key safety, URL signing, local round-trip |
@@ -31,14 +33,15 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 | `tests/jobs.test.ts` | 9 unit tests — backoff, claim/retry/fail state machine, concurrency, graceful stop |
 | `tests/ffmpeg-run.test.ts` | 4 unit tests — ffprobe JSON → `MediaInfo` |
 | `tests/pipeline.test.ts` | 7 unit tests — each ingest handler + the full chain, against fake deps |
+| `tests/api.test.ts` | 10 unit tests — upload schema, `createVideoUpload` / `confirmUpload` / `getVideoStatus`, local-route token auth |
 | `tests/ffmpeg.integration.ts` | 6 checks against the real ffmpeg binary |
 | `.env.example` | Provider configuration |
 
 ## What is not here yet
 
-The `RENDER` / `THUMBNAIL` handlers, API routes, the upload flow, auth, the
-dashboard, the transcript and clip editors, Remotion animated captions, and
-face detection. See "Continuing the build" below.
+The `RENDER` / `THUMBNAIL` handlers, auth (every video currently hangs off one
+dev user + project), the dashboard, the transcript and clip editors, Remotion
+animated captions, and face detection. See "Continuing the build" below.
 
 ## Setup
 
@@ -110,9 +113,10 @@ Order that avoids rework:
    (`snapToSentences` → `dedupeOverlapping` → `capTotalRuntime`) — never trust
    raw model timestamps.
 3. ~~Job worker polling `Job` on `(status, runAfter)` with backoff~~ done
-4. ~~probe → extract audio → transcribe → analyze pipeline, wired to the
-   providers~~ done (`src/lib/pipeline/`). Upload flow + `RENDER` next.
-5. API routes + the dashboard
+4. ~~probe → extract audio → transcribe → analyze pipeline~~ done
+   (`src/lib/pipeline/`)
+5. ~~Upload API + the local-storage file route~~ done (`src/lib/api/`,
+   `src/app/api/`). Auth + the dashboard next; then the `RENDER` handler.
 6. UI, then Remotion for animated captions
 
 Remotion replaces the `subtitles=` burn for animated presets — `buildCues` output
