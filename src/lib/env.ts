@@ -41,7 +41,9 @@ const schema = z.object({
     .enum(["anthropic", "openai", "heuristic"])
     .default("heuristic"),
   ANTHROPIC_API_KEY: z.string().optional(),
-  ANALYSIS_MODEL: z.string().default("claude-sonnet-4-6"),
+  // Interpreted by whichever ANALYSIS_PROVIDER is active — a Claude id for
+  // "anthropic", a GPT id for "openai", ignored by "heuristic".
+  ANALYSIS_MODEL: z.string().default("claude-opus-5"),
 
   FFMPEG_PATH: z.string().default("ffmpeg"),
   FFPROBE_PATH: z.string().default("ffprobe"),

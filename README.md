@@ -18,18 +18,20 @@ top; the upload flow, editors, and render pipeline land in later PRs.
 | `src/lib/db.ts` | PrismaClient singleton |
 | `src/lib/storage/` | `StorageProvider` implementations: local disk + S3-compatible (AWS / R2 / MinIO), with a `getStorage()` factory and HMAC-signed URLs for the local backend |
 | `src/lib/transcription/` | `TranscriptionProvider` implementations: `whisper-local` (CLI), OpenAI, Deepgram, behind a `getTranscription()` factory. Pure `parseX` functions normalise each provider's response to integer-ms segments + words |
+| `src/lib/analysis/` | `AnalysisProvider` implementations: Anthropic (official SDK), OpenAI, and a no-LLM `heuristic` baseline, behind `getAnalysis()`. `refineSuggestions()` runs raw picks through `snapToSentences → dedupeOverlapping → capTotalRuntime` |
 | `src/app/` | Next.js App Router — landing page, root layout, Tailwind |
 | `tests/core.test.ts` | 33 unit tests |
 | `tests/storage.test.ts` | 10 unit tests — key safety, URL signing, local round-trip |
 | `tests/transcription.test.ts` | 10 unit tests — response parsing for each provider, ms normalisation |
+| `tests/analysis.test.ts` | 10 unit tests — prompt/tool parsing, the refine pipeline, the heuristic scorer |
 | `tests/ffmpeg.integration.ts` | 6 checks against the real ffmpeg binary |
 | `.env.example` | Provider configuration |
 
 ## What is not here yet
 
-The analysis provider, queue workers, API routes, the upload pipeline, auth,
-the dashboard, the transcript and clip editors, Remotion animated captions, and
-face detection. See "Continuing the build" below.
+Queue workers, API routes, the upload pipeline, auth, the dashboard, the
+transcript and clip editors, Remotion animated captions, and face detection.
+See "Continuing the build" below.
 
 ## Setup
 
@@ -95,12 +97,13 @@ escaping rules independent of the shell — colons, commas, brackets, backslashe
 Order that avoids rework:
 
 1. ~~`npm install` the stack, `prisma migrate dev`~~ &mdash; Next.js scaffold done
-2. Providers against the interfaces in `types.ts`: ~~storage~~ done,
-   ~~transcription (Whisper / Deepgram / OpenAI)~~ done, then analysis (Anthropic)
+2. ~~Providers against the interfaces in `types.ts`: storage, transcription,
+   analysis~~ done. The analysis output goes through `refineSuggestions`
+   (`snapToSentences` → `dedupeOverlapping` → `capTotalRuntime`) — never trust
+   raw model timestamps.
 3. Job worker polling `Job` on `(status, runAfter)` with backoff
-4. Upload → probe → extract audio → transcribe pipeline
-5. Analysis provider; feed output through `snapToSentences` → `dedupeOverlapping`
-   → `capTotalRuntime` before persisting. Never trust raw model timestamps.
+4. Upload → probe → extract audio → transcribe pipeline, wired to the providers
+5. API routes + the dashboard
 6. UI, then Remotion for animated captions
 
 Remotion replaces the `subtitles=` burn for animated presets — `buildCues` output
