@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { env } from "../env.ts";
 import { db } from "../db.ts";
 import { FfmpegRunner } from "../ffmpeg/run.ts";
+import { NullFaceDetector } from "../faces/detector.ts";
 import { RemotionCaptionRenderer } from "./remotion.ts";
 import { getStorage } from "../storage/index.ts";
 import { getTranscription } from "../transcription/index.ts";
@@ -285,6 +286,7 @@ export function buildPipelineDeps(): PipelineDeps {
     renders: prismaRenderRepo(db),
     thumbnails: prismaThumbnailRepo(db),
     captions: new RemotionCaptionRenderer(),
+    faces: new NullFaceDetector(),
     queue: { enqueue: (input) => enqueueJob(db, input) },
     tempDir: env.TEMP_DIR,
   };

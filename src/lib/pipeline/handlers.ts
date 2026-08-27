@@ -6,6 +6,7 @@ import { refineSuggestions } from "../analysis/pipeline.ts";
 import { buildCues, toSrt } from "../captions/layout.ts";
 import { DEFAULT_CAPTION_STYLE, isAnimatedPreset, remotionPreset } from "../captions/presets.ts";
 import { ASPECT_DIMENSIONS } from "../ffmpeg/args.ts";
+import { type FocalPoint, resampleTrack } from "../faces/track.ts";
 import type { JobHandler } from "../jobs/types.ts";
 import { type PipelineDeps, scratchPath, toAspectPreset } from "./deps.ts";
 
@@ -220,7 +221,24 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
 
     const aspect = toAspectPreset(target.aspectRatio);
     const needsReframe = aspect !== "16:9" || subtitlePath !== undefined || animated;
-    if (needsReframe) {
+
+    // No manual focal point + a real aspect change -> try to follow a face.
+    let focalTrack: FocalPoint[] = [];
+    if (needsReframe && target.focalX === null && target.focalY === null && aspect !== "16:9") {
+      const pre = await deps.ffmpeg.probe(cut, signal);
+      const raw = await deps.faces.detectTrack(cut, {
+        durationMs: target.endMs - target.startMs,
+        width: pre.width ?? undefined,
+        height: pre.height ?? undefined,
+        signal,
+      });
+      focalTrack = resampleTrack(raw, target.endMs - target.startMs);
+    }
+    const tracked = focalTrack.length >= 2;
+
+    if (needsReframe && tracked) {
+      await deps.ffmpeg.reframeTracked(cut, reframed, { aspect, track: focalTrack, subtitlePath }, signal);
+    } else if (needsReframe) {
       await deps.ffmpeg.reframe(
         cut,
         reframed,

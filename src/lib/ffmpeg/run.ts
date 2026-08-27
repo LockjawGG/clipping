@@ -4,13 +4,17 @@ import { dirname } from "node:path";
 import { promisify } from "node:util";
 
 import {
+  ASPECT_DIMENSIONS,
   type AspectRatio,
   buildCutArgs,
   buildExtractAudioArgs,
   buildProbeArgs,
   buildReframeArgs,
   buildThumbnailArgs,
+  buildTrackedReframeArgs,
 } from "./args.ts";
+import type { FocalPoint } from "../faces/track.ts";
+import { focalTrackToCropExpr } from "./track-crop.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -103,6 +107,13 @@ export interface ThumbnailOptions {
   width?: number;
 }
 
+export interface TrackedReframeOptions {
+  aspect: AspectRatio;
+  /** Smoothed/resampled focal-point keyframes; 2+ points. */
+  track: FocalPoint[];
+  subtitlePath?: string;
+}
+
 /** The ffmpeg operations the pipeline needs. Fakeable in tests. */
 export interface Ffmpeg {
   probe(inputPath: string, signal?: AbortSignal): Promise<MediaInfo>;
@@ -111,6 +122,13 @@ export interface Ffmpeg {
   cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void>;
   /** Scale/crop to an aspect preset, optionally burning subtitles. */
   reframe(inputPath: string, outputPath: string, opts: ReframeOptions, signal?: AbortSignal): Promise<void>;
+  /** Reframe with a crop window that pans along a focal-point track. */
+  reframeTracked(
+    inputPath: string,
+    outputPath: string,
+    opts: TrackedReframeOptions,
+    signal?: AbortSignal,
+  ): Promise<void>;
   /** Grab a single frame as a JPEG. */
   thumbnail(inputPath: string, outputPath: string, opts: ThumbnailOptions, signal?: AbortSignal): Promise<void>;
 }
@@ -163,6 +181,29 @@ export class FfmpegRunner implements Ffmpeg {
   ): Promise<void> {
     await mkdir(dirname(outputPath), { recursive: true });
     await this.exec(this.ffmpegPath, buildReframeArgs({ inputPath, outputPath, ...opts }), signal);
+  }
+
+  async reframeTracked(
+    inputPath: string,
+    outputPath: string,
+    opts: TrackedReframeOptions,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await mkdir(dirname(outputPath), { recursive: true });
+    const { width, height } = ASPECT_DIMENSIONS[opts.aspect];
+    const { x, y } = focalTrackToCropExpr(opts.track, { width, height });
+    await this.exec(
+      this.ffmpegPath,
+      buildTrackedReframeArgs({
+        inputPath,
+        outputPath,
+        aspect: opts.aspect,
+        cropX: x,
+        cropY: y,
+        subtitlePath: opts.subtitlePath,
+      }),
+      signal,
+    );
   }
 
   async thumbnail(

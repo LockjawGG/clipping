@@ -43,6 +43,7 @@ interface Spy {
   failed: Array<{ id: string; message: string }>;
   cuts: CutOptions[];
   reframes: ReframeOptions[];
+  trackedReframes: number;
   probed: string[];
   puts: string[];
   captioned: Array<{ preset: string; videoPath: string; cueCount: number }>;
@@ -55,6 +56,7 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
     failed: [],
     cuts: [],
     reframes: [],
+    trackedReframes: 0,
     probed: [],
     puts: [],
     captioned: [],
@@ -72,6 +74,9 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
       },
       reframe: async (_i: string, _o: string, opts: ReframeOptions) => {
         spy.reframes.push(opts);
+      },
+      reframeTracked: async () => {
+        spy.trackedReframes++;
       },
       thumbnail: async () => {},
     },
@@ -104,6 +109,7 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
       targetsForVideo: async () => [],
       setKey: async () => {},
     },
+    faces: { name: "none", detectTrack: async () => [] },
     captions: {
       renderCaptioned: async (input: { preset: string; videoPath: string; cues: unknown[] }) => {
         spy.captioned.push({ preset: input.preset, videoPath: input.videoPath, cueCount: input.cues.length });
@@ -243,6 +249,7 @@ test("a failing ffmpeg step marks the render FAILED and rethrows", async () => {
         throw new Error("ffmpeg exploded");
       },
       reframe: async () => {},
+      reframeTracked: async () => {},
       thumbnail: async () => {},
     },
   } as unknown as Partial<PipelineDeps>);
@@ -257,4 +264,29 @@ test("RENDER rejects a missing payload or an unknown render", async () => {
   await assert.rejects(() => renderHandler(ctx(a.deps, {})), /missing renderId/);
   const b = makeDeps(null);
   await assert.rejects(() => renderHandler(ctx(b.deps, { renderId: "gone" })), /not found/);
+});
+
+test("auto focal point + a detected track uses the panning reframe", async () => {
+  const { deps, spy } = makeDeps(target({ focalX: null, focalY: null }), {
+    faces: {
+      name: "fake",
+      detectTrack: async () => [
+        { atMs: 0, x: 0.4, y: 0.5 },
+        { atMs: 5_000, x: 0.7, y: 0.5 },
+      ],
+    },
+  } as unknown as Partial<PipelineDeps>);
+
+  await renderHandler(ctx(deps, { renderId: "r8" }));
+  assert.equal(spy.trackedReframes, 1);
+  assert.equal(spy.reframes.length, 0);
+  assert.equal(spy.puts[0], "renders/r8/output.mp4");
+});
+
+test("auto focal point but no detections falls back to the static centre reframe", async () => {
+  const { deps, spy } = makeDeps(target({ focalX: null, focalY: null }));
+  await renderHandler(ctx(deps, { renderId: "r9" }));
+  assert.equal(spy.trackedReframes, 0);
+  assert.equal(spy.reframes.length, 1);
+  assert.equal(spy.reframes[0].focalX, undefined); // -> defaults to centre in the builder
 });

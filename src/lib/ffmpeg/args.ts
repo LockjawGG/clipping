@@ -207,6 +207,65 @@ export function buildReframeArgs({
   ];
 }
 
+export interface TrackedReframeArgs {
+  inputPath: string;
+  outputPath: string;
+  aspect: AspectRatio;
+  /** Focal-point keyframes (already smoothed/resampled). Needs at least 2. */
+  cropX: string;
+  cropY: string;
+  subtitlePath?: string;
+}
+
+/**
+ * Like `buildReframeArgs`, but the crop x/y are time-varying expressions
+ * (see `focalTrackToCropExpr`) so the crop window pans to follow the subject.
+ * The static builder stays untouched; callers pick this one only when they
+ * have a track.
+ */
+export function buildTrackedReframeArgs({
+  inputPath,
+  outputPath,
+  aspect,
+  cropX,
+  cropY,
+  subtitlePath,
+}: TrackedReframeArgs): string[] {
+  assertSafePath(inputPath);
+  assertSafePath(outputPath);
+
+  const { width, height } = ASPECT_DIMENSIONS[aspect];
+  if (!width) throw new Error(`unknown aspect ratio: ${aspect}`);
+  if (!cropX || !cropY) throw new Error("cropX and cropY expressions are required");
+
+  // Commas inside the expression would split the filtergraph; escape them.
+  const x = cropX.replace(/,/g, "\\,");
+  const y = cropY.replace(/,/g, "\\,");
+
+  const filters = [
+    `scale=${width}:${height}:force_original_aspect_ratio=increase`,
+    `crop=${width}:${height}:'${x}':'${y}'`,
+    "setsar=1",
+  ];
+  if (subtitlePath) {
+    assertSafePath(subtitlePath);
+    filters.push(`subtitles=${escapeFilterPath(subtitlePath)}`);
+  }
+
+  return [
+    "-y",
+    "-i", inputPath,
+    "-filter_complex", filters.join(","),
+    "-c:v", "libx264",
+    "-preset", "fast",
+    "-crf", "20",
+    "-pix_fmt", "yuv420p",
+    "-c:a", "copy",
+    "-movflags", "+faststart",
+    outputPath,
+  ];
+}
+
 export interface ThumbnailArgs {
   inputPath: string;
   outputPath: string;

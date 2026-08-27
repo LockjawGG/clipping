@@ -22,7 +22,9 @@ animated captions, editable in a dashboard before rendering.
 | `src/lib/transcription/` | `TranscriptionProvider` implementations: `whisper-local` (CLI), OpenAI, Deepgram, behind a `getTranscription()` factory. Pure `parseX` functions normalise each provider's response to integer-ms segments + words |
 | `src/lib/analysis/` | `AnalysisProvider` implementations: Anthropic (official SDK), OpenAI, and a no-LLM `heuristic` baseline, behind `getAnalysis()`. `refineSuggestions()` runs raw picks through `snapToSentences → dedupeOverlapping → capTotalRuntime` |
 | `src/lib/jobs/` | Job worker runtime: `JobWorker` polls `Job(status, runAfter)`, claims rows with a compare-and-swap, dispatches to a per-`kind` handler map, retries with exponential backoff + jitter. `createPrismaJobStore` / `enqueueJob` bind it to the DB |
-| `src/lib/ffmpeg/run.ts` | `FfmpegRunner` — runs the `args.ts` argv through the real binaries (`shell: false`): `probe` / `extractAudio` / `cut` / `reframe`. `parseProbeOutput` normalises ffprobe JSON to `MediaInfo` |
+| `src/lib/ffmpeg/run.ts` | `FfmpegRunner` — runs the `args.ts` argv through the real binaries (`shell: false`): `probe` / `extractAudio` / `cut` / `reframe` / `reframeTracked` / `thumbnail`. `parseProbeOutput` normalises ffprobe JSON to `MediaInfo` |
+| `src/lib/faces/` | `FaceDetector` interface + `NullFaceDetector` (the default — no detection); `track.ts` smooths / resamples / interpolates a focal-point track. Plug a real detector into `buildPipelineDeps` |
+| `src/lib/ffmpeg/track-crop.ts` | `focalTrackToCropExpr` — turns a focal track into piecewise-`lerp` ffmpeg `crop` x/y expressions so the crop window pans to follow the subject |
 | `src/lib/pipeline/` | `PROBE → EXTRACT_AUDIO → TRANSCRIBE → ANALYZE → THUMBNAIL` (each step enqueues the next) plus `RENDER` (cut → reframe to aspect → captions: static presets burn an SRT with ffmpeg, animated ones composite via Remotion → upload). `THUMBNAIL` grabs a poster frame at each clip's midpoint. Narrow repo interfaces in `deps.ts`; Prisma impls + `buildPipelineDeps()` in `repos.ts` |
 | `src/lib/captions/presets.ts` | `CaptionAnimation` presets — `isAnimatedPreset` decides ffmpeg-burn vs Remotion; `remotionPreset` maps to the composition string |
 | `remotion/` | Remotion project (`CaptionedClip` composition) — word-timed caption presets (word-by-word / pop / scale / bounce / fade / karaoke) over the reframed clip. `src/lib/pipeline/remotion.ts` drives it via `@remotion/{bundler,renderer}` (dynamic `import()`, so it never enters the Next bundle) |
@@ -31,15 +33,17 @@ animated captions, editable in a dashboard before rendering.
 | `src/app/api/` | `videos` + `/videos/:id/{ingest,clips}`, `PATCH`/`DELETE /api/clips/:id`, `PUT`/`DELETE /api/clips/:id/captions`, `POST /api/clips/:id/{render,thumbnail}`, `GET`/`PUT /api/storage/local/[...key]`, `/api/auth/{register,[...nextauth]}` — thin shells over `src/lib` |
 | `src/lib/auth/` | NextAuth v5, Credentials + JWT sessions. `config.edge.ts` (db-free, for `middleware.ts`) is spread into the full config in `index.ts`. `password.ts` (bcrypt), `session.ts` (`requireUserId`, `getOrCreateProject`) |
 | `src/app/` | App Router — landing, `/login`, `/register`, `/dashboard` (video list + upload), `/dashboard/[videoId]` (per-clip editor: boundaries, aspect, focal point, accept, caption preset/animation/colours, render, delete; add-a-clip form; read-only transcript), root layout, Tailwind. `middleware.ts` gates `/dashboard` |
-| `tests/core.test.ts` | 33 unit tests |
+| `tests/core.test.ts` | 35 unit tests |
 | `tests/storage.test.ts` | 10 unit tests — key safety, URL signing, local round-trip |
 | `tests/transcription.test.ts` | 10 unit tests — response parsing for each provider, ms normalisation |
 | `tests/analysis.test.ts` | 10 unit tests — prompt/tool parsing, the refine pipeline, the heuristic scorer |
 | `tests/jobs.test.ts` | 9 unit tests — backoff, claim/retry/fail state machine, concurrency, graceful stop |
 | `tests/ffmpeg-run.test.ts` | 4 unit tests — ffprobe JSON → `MediaInfo` |
 | `tests/pipeline.test.ts` | 7 unit tests — each ingest handler + the full chain, against fake deps |
-| `tests/render.test.ts` | 8 unit tests — the RENDER handler: cut/reframe/probe/upload, static SRT burn vs Remotion composite, no-words fallback, failure → `Render` FAILED |
+| `tests/render.test.ts` | 10 unit tests — the RENDER handler: cut/reframe/probe/upload, static SRT vs Remotion composite, panning vs static reframe, no-words fallback, failure → `Render` FAILED |
 | `tests/thumbnail.test.ts` | 3 unit tests — the THUMBNAIL handler: single clip, whole video (one download), no-op |
+| `tests/faces.test.ts` | 7 unit tests — focal-track smoothing / interpolation / resampling, `NullFaceDetector` |
+| `tests/track-crop.test.ts` | 4 unit tests — `focalTrackToCropExpr` (static, single, nested lerp, sort) |
 | `tests/presets.test.ts` | 2 unit tests — `isAnimatedPreset` / `remotionPreset` |
 | `tests/api.test.ts` | 11 unit tests — upload schema, the video service (incl. cross-project 404), local-route token auth |
 | `tests/clips-api.test.ts` | 18 unit tests — `requestRender`, `requestClipThumbnail`, `updateClip`, `deleteClip`, `createManualClip`, `upsertCaptionConfig` / `deleteCaptionConfig`, `listVideoClips`; all with ownership 404s |
@@ -50,7 +54,10 @@ animated captions, editable in a dashboard before rendering.
 ## What is not here yet
 
 Transcript-text editing (the view is read-only — editing would have to keep the
-word timings in sync) and face detection. See "Continuing the build" below.
+word timings in sync), and a real `FaceDetector` — the track-following crop is
+wired end to end but the shipped detector (`NullFaceDetector`) returns nothing,
+so RENDER falls back to a static centre crop until one is plugged in. See
+"Continuing the build" below.
 
 The Remotion render path (`bundle()` + `renderMedia()`) type-checks and its
 wiring is unit-tested, but it needs a headless Chromium (`@remotion/renderer`
@@ -142,8 +149,9 @@ Order that avoids rework:
    (`remotion/`, `PUT /api/clips/:id/captions`, `CaptionControls`)
 10. ~~`THUMBNAIL` handler~~ done (`thumbnailHandler`, `Clip.thumbnailKey`,
     `POST /api/clips/:id/thumbnail`)
-11. Face detection, and an end-to-end run against real Postgres + ffmpeg +
-    Chromium
+11. ~~Face-tracking crop~~ scaffolded (`src/lib/faces/`, `reframeTracked`,
+    `focalTrackToCropExpr`) — still needs a real `FaceDetector` implementation
+12. An end-to-end run against real Postgres + ffmpeg + Chromium
 
 Remotion replaces the `subtitles=` burn for animated presets — `buildCues` output
 feeds Remotion directly, since cues carry word arrays. Keep the ffmpeg path for
@@ -151,9 +159,11 @@ the static presets; it's an order of magnitude faster.
 
 ## Limitations
 
-- Face detection for smart cropping is not implemented. `buildReframeArgs` takes
-  a static focal point; dynamic speaker tracking needs a detection pass emitting
-  a focal-point track, and a `sendcmd` filter or per-segment renders.
+- Face-tracking crop is wired but has no detector. The pipeline calls
+  `FaceDetector.detectTrack` when a clip has no manual focal point; the shipped
+  `NullFaceDetector` returns nothing, so it falls back to a static centre crop.
+  A real detector (MediaPipe, a face-api model, an OpenCV pass) drops into
+  `buildPipelineDeps`.
 - `Clip.removedWordIds` is modelled but no renderer consumes it. Cutting interior
   spans means splitting into N segments and concatenating.
 - Transcription confidence is stored but not yet enforced as a render gate.
