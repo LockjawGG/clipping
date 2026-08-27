@@ -185,6 +185,25 @@ test("confirmUpload 404s for an unknown video and 409s when the file is missing"
 
 // --- getVideoStatus ---------------------------------------
 
+test("a video owned by another project is 404, not 403", async () => {
+  const { deps, videos } = makeDeps();
+  const { videoId } = await createVideoUpload(deps, {
+    filename: "a.mp4",
+    contentType: "video/mp4",
+    sizeBytes: 10,
+  });
+  videos.get(videoId)!.projectId = "someone-elses-project";
+
+  await assert.rejects(
+    () => confirmUpload(deps, videoId),
+    (e: unknown) => e instanceof ApiError && e.status === 404,
+  );
+  await assert.rejects(
+    () => getVideoStatus(deps, videoId),
+    (e: unknown) => e instanceof ApiError && e.status === 404,
+  );
+});
+
 test("getVideoStatus returns the poll shape and 404s when missing", async () => {
   const { deps } = makeDeps();
   const { videoId } = await createVideoUpload(deps, {

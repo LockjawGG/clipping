@@ -18,14 +18,16 @@ datasource db {
 }
 
 model User {
-  id        String    @id @default(cuid())
-  email     String    @unique
-  name      String?
-  imageUrl  String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  imageUrl     String?
+  // bcrypt hash for the credentials provider. Null for users created another way.
+  passwordHash String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  projects  Project[]
+  projects Project[]
 
   @@map("users")
 }
