@@ -90,11 +90,15 @@ export interface AnalysisProvider {
  * generic 500, so the UI can say which env var is missing.
  */
 export class ProviderUnavailableError extends Error {
-  constructor(
-    public readonly provider: string,
-    public readonly hint: string,
-  ) {
+  readonly provider: string;
+  readonly hint: string;
+
+  constructor(provider: string, hint: string) {
     super(`Provider "${provider}" is unavailable: ${hint}`);
+    // Parameter properties are deliberately avoided: `node --experimental-strip-types`
+    // runs the test suites in strip-only mode and cannot transform them.
     this.name = "ProviderUnavailableError";
+    this.provider = provider;
+    this.hint = hint;
   }
 }
