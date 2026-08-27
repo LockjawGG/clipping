@@ -10,6 +10,7 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
+    "worker": "node --experimental-strip-types scripts/worker.ts",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test \"tests/*.test.ts\"",
