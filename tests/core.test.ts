@@ -12,6 +12,8 @@ import {
   buildCutArgs,
   buildReframeArgs,
   buildExtractAudioArgs,
+  buildProbeArgs,
+  buildThumbnailArgs,
   assertSafePath,
   escapeFilterPath,
 } from "../src/lib/ffmpeg/args.ts";
@@ -283,4 +285,28 @@ test("each aspect preset produces even dimensions for yuv420p", () => {
     assert.equal(Number(match![1]) % 2, 0);
     assert.equal(Number(match![2]) % 2, 0);
   }
+});
+
+test("probe args request json output with format and stream details", () => {
+  const args = buildProbeArgs({ inputPath: "/tmp/in.mp4" });
+  assert.equal(args[args.indexOf("-print_format") + 1], "json");
+  assert.ok(args.includes("-show_format"));
+  assert.ok(args.includes("-show_streams"));
+  assert.equal(args[args.length - 1], "/tmp/in.mp4");
+});
+
+test("probe args reject a path with a traversal segment", () => {
+  assert.throws(() => buildProbeArgs({ inputPath: "/tmp/../etc/passwd" }));
+});
+
+test("thumbnail args seek to the requested time and grab a single frame", () => {
+  const args = buildThumbnailArgs({ inputPath: "/tmp/in.mp4", outputPath: "/tmp/t.jpg", atMs: 65_500 });
+  assert.equal(args[args.indexOf("-ss") + 1], "00:01:05.500");
+  assert.equal(args[args.indexOf("-frames:v") + 1], "1");
+  assert.equal(args[args.length - 1], "/tmp/t.jpg");
+});
+
+test("thumbnail scale pins the width and leaves height even for yuv420p", () => {
+  const args = buildThumbnailArgs({ inputPath: "/tmp/in.mp4", outputPath: "/tmp/t.jpg", atMs: 0, width: 641 });
+  assert.equal(args[args.indexOf("-vf") + 1], "scale=641:-2");
 });
