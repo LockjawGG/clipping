@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import { db } from "@/lib/db.ts";
 import { currentUserId } from "@/lib/auth/session.ts";
+import { FromUrlForm } from "./from-url-form";
 import { SignOutButton } from "./sign-out-button";
 import { UploadButton } from "./upload-button";
 
@@ -38,16 +39,19 @@ export default async function DashboardPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-6 py-12">
-      <header className="flex items-center justify-between">
+      <header className="flex flex-wrap items-start justify-between gap-4">
         <h1 className="text-2xl font-semibold tracking-tight">Your videos</h1>
-        <div className="flex items-center gap-4">
-          <UploadButton />
-          <SignOutButton />
+        <div className="flex flex-col items-end gap-3">
+          <div className="flex items-center gap-4">
+            <UploadButton />
+            <SignOutButton />
+          </div>
+          <FromUrlForm />
         </div>
       </header>
 
       {videos.length === 0 ? (
-        <p className="text-neutral-500">Nothing yet. Upload a video to get started.</p>
+        <p className="text-neutral-500">Nothing yet — upload a file or paste a link to get started.</p>
       ) : (
         <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
           {videos.map((v) => (

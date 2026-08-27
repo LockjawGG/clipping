@@ -3,6 +3,7 @@ import type { PipelineDeps } from "./deps.ts";
 import {
   analyzeHandler,
   extractAudioHandler,
+  fetchHandler,
   probeHandler,
   renderHandler,
   thumbnailHandler,
@@ -11,6 +12,7 @@ import {
 
 export * from "./deps.ts";
 export {
+  fetchHandler,
   probeHandler,
   extractAudioHandler,
   transcribeHandler,
@@ -21,6 +23,7 @@ export {
 
 /** The full pipeline handler map. */
 export const PIPELINE_HANDLERS: JobHandlerMap<PipelineDeps> = {
+  FETCH: fetchHandler,
   PROBE: probeHandler,
   EXTRACT_AUDIO: extractAudioHandler,
   TRANSCRIBE: transcribeHandler,

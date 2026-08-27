@@ -7,6 +7,7 @@ import type { VideoDb, VideoRecord, VideoServiceDeps } from "../src/lib/api/vide
 import {
   confirmUpload,
   createUploadSchema,
+  createVideoFromUrl,
   createVideoUpload,
   getVideoStatus,
 } from "../src/lib/api/videos.ts";
@@ -66,11 +67,11 @@ function fakeDb() {
 
 function makeDeps(over: Partial<VideoServiceDeps> = {}): {
   deps: VideoServiceDeps;
-  enqueued: Array<{ videoId: string; kind: string }>;
+  enqueued: Array<{ videoId: string; kind: string; payload?: unknown }>;
   videos: ReturnType<typeof fakeDb>["videos"];
 } {
   const { db, videos } = fakeDb();
-  const enqueued: Array<{ videoId: string; kind: string }> = [];
+  const enqueued: Array<{ videoId: string; kind: string; payload?: unknown }> = [];
   const deps: VideoServiceDeps = {
     db,
     storage: fakeStorage(),
@@ -100,6 +101,27 @@ test("createUploadSchema accepts a video upload and rejects bad input", () => {
   assert.throws(() =>
     createUploadSchema.parse({ filename: "a.mp4", contentType: "video/mp4", sizeBytes: 0 }),
   );
+});
+
+// --- createVideoFromUrl --------------------------------------
+
+test("createVideoFromUrl stores a row and enqueues a FETCH job with the url", async () => {
+  const { deps, enqueued, videos } = makeDeps();
+  const out = await createVideoFromUrl(deps, { url: "https://www.youtube.com/watch?v=abc" });
+
+  assert.match(out.videoId, /^vid\d+$/);
+  assert.equal(out.status, "FETCHING");
+  assert.equal(videos.get(out.videoId)!.status, "UPLOADING");
+  assert.deepEqual(enqueued, [
+    { videoId: out.videoId, kind: "FETCH", payload: { url: "https://www.youtube.com/watch?v=abc" } },
+  ]);
+});
+
+test("createVideoFromUrl rejects non-URLs and non-http schemes", async () => {
+  const { deps } = makeDeps();
+  await assert.rejects(() => createVideoFromUrl(deps, { url: "not a url" }));
+  await assert.rejects(() => createVideoFromUrl(deps, { url: "ftp://example.com/x.mp4" }));
+  await assert.rejects(() => createVideoFromUrl(deps, {}));
 });
 
 // --- createVideoUpload ----------------------------------------

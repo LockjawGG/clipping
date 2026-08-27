@@ -1,6 +1,7 @@
 import type { Ffmpeg, MediaInfo } from "../ffmpeg/run.ts";
 import type { CaptionStyle } from "../captions/presets.ts";
 import type { FaceDetector } from "../faces/detector.ts";
+import type { MediaFetcher } from "./fetcher.ts";
 import type { CaptionRenderer } from "./remotion.ts";
 import type { JobKind } from "../jobs/types.ts";
 import type {
@@ -31,6 +32,8 @@ export interface VideoRepo {
   applyProbe(id: string, info: MediaInfo): Promise<void>;
   setStatus(id: string, status: string): Promise<void>;
   setError(id: string, message: string): Promise<void>;
+  /** Replace the display filename (used after FETCH learns the real title). */
+  setFilename(id: string, originalFilename: string): Promise<void>;
 }
 
 export interface TranscriptRepo {
@@ -121,6 +124,7 @@ export interface PipelineDeps {
   thumbnails: ThumbnailRepo;
   captions: CaptionRenderer;
   faces: FaceDetector;
+  fetcher: MediaFetcher;
   queue: JobQueue;
   /** POSIX-absolute scratch directory (env.TEMP_DIR). */
   tempDir: string;
