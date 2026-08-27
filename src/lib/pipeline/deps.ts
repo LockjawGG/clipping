@@ -41,6 +41,49 @@ export interface ClipRepo {
   replaceSuggested(videoId: string, clips: ClipSuggestion[]): Promise<number>;
 }
 
+export type DbAspectRatio = "VERTICAL_9_16" | "SQUARE_1_1" | "LANDSCAPE_16_9" | "PORTRAIT_4_5";
+
+/** Everything the RENDER handler needs about one clip. */
+export interface RenderTarget {
+  clipId: string;
+  videoId: string;
+  sourceKey: string;
+  startMs: number;
+  endMs: number;
+  aspectRatio: DbAspectRatio;
+  focalX: number | null;
+  focalY: number | null;
+  quality: "P720" | "P1080" | "ORIGINAL";
+  burnCaptions: boolean;
+}
+
+export interface RenderResult {
+  outputKey: string;
+  sizeBytes: number | null;
+  durationMs: number;
+}
+
+export interface RenderRepo {
+  loadTarget(renderId: string): Promise<RenderTarget | null>;
+  begin(renderId: string): Promise<void>;
+  complete(renderId: string, result: RenderResult): Promise<void>;
+  fail(renderId: string, message: string): Promise<void>;
+}
+
+/** Map the Prisma aspect enum to the `args.ts` preset string. */
+export function toAspectPreset(a: DbAspectRatio): "9:16" | "1:1" | "16:9" | "4:5" {
+  switch (a) {
+    case "SQUARE_1_1":
+      return "1:1";
+    case "LANDSCAPE_16_9":
+      return "16:9";
+    case "PORTRAIT_4_5":
+      return "4:5";
+    default:
+      return "9:16";
+  }
+}
+
 export interface JobQueue {
   enqueue(input: { videoId: string; kind: JobKind; payload?: unknown }): Promise<string>;
 }
@@ -53,6 +96,7 @@ export interface PipelineDeps {
   videos: VideoRepo;
   transcripts: TranscriptRepo;
   clips: ClipRepo;
+  renders: RenderRepo;
   queue: JobQueue;
   /** POSIX-absolute scratch directory (env.TEMP_DIR). */
   tempDir: string;

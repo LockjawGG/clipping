@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { db } from "@/lib/db.ts";
@@ -51,14 +52,14 @@ export default async function DashboardPage() {
         <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
           {videos.map((v) => (
             <li key={v.id} className="flex items-center justify-between gap-4 py-3">
-              <div className="min-w-0">
+              <Link href={`/dashboard/${v.id}`} className="min-w-0 hover:underline">
                 <p className="truncate font-medium">{v.originalFilename}</p>
                 <p className="text-sm text-neutral-500">
                   {v.durationMs ? `${Math.round(v.durationMs / 1000)}s · ` : ""}
                   {v._count.clips} clip{v._count.clips === 1 ? "" : "s"} ·{" "}
                   {v.createdAt.toISOString().slice(0, 10)}
                 </p>
-              </div>
+              </Link>
               <StatusPill status={v.status} />
             </li>
           ))}

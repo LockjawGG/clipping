@@ -3,7 +3,13 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 
-import { buildExtractAudioArgs, buildProbeArgs } from "./args.ts";
+import {
+  type AspectRatio,
+  buildCutArgs,
+  buildExtractAudioArgs,
+  buildProbeArgs,
+  buildReframeArgs,
+} from "./args.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -77,10 +83,28 @@ export function parseProbeOutput(raw: unknown): MediaInfo {
   };
 }
 
+export interface CutOptions {
+  startMs: number;
+  endMs: number;
+  crf?: number;
+}
+
+export interface ReframeOptions {
+  aspect: AspectRatio;
+  focalX?: number;
+  focalY?: number;
+  subtitlePath?: string;
+  blurredBackground?: boolean;
+}
+
 /** The ffmpeg operations the pipeline needs. Fakeable in tests. */
 export interface Ffmpeg {
   probe(inputPath: string, signal?: AbortSignal): Promise<MediaInfo>;
   extractAudio(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void>;
+  /** Frame-accurate trim (re-encode, never stream-copy). */
+  cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void>;
+  /** Scale/crop to an aspect preset, optionally burning subtitles. */
+  reframe(inputPath: string, outputPath: string, opts: ReframeOptions, signal?: AbortSignal): Promise<void>;
 }
 
 export interface FfmpegRunnerOptions {
@@ -112,6 +136,25 @@ export class FfmpegRunner implements Ffmpeg {
   async extractAudio(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void> {
     await mkdir(dirname(outputPath), { recursive: true });
     await this.exec(this.ffmpegPath, buildExtractAudioArgs({ inputPath, outputPath }), signal);
+  }
+
+  async cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void> {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await this.exec(
+      this.ffmpegPath,
+      buildCutArgs({ inputPath, outputPath, startMs: opts.startMs, endMs: opts.endMs, crf: opts.crf }),
+      signal,
+    );
+  }
+
+  async reframe(
+    inputPath: string,
+    outputPath: string,
+    opts: ReframeOptions,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await this.exec(this.ffmpegPath, buildReframeArgs({ inputPath, outputPath, ...opts }), signal);
   }
 
   private async exec(bin: string, args: string[], signal?: AbortSignal) {

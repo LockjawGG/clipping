@@ -8,7 +8,14 @@ import { getTranscription } from "../transcription/index.ts";
 import { getAnalysis } from "../analysis/index.ts";
 import { enqueueJob } from "../jobs/prisma-store.ts";
 import type { Segment } from "../providers/types.ts";
-import type { ClipRepo, PipelineDeps, TranscriptRepo, VideoRepo } from "./deps.ts";
+import type {
+  ClipRepo,
+  DbAspectRatio,
+  PipelineDeps,
+  RenderRepo,
+  TranscriptRepo,
+  VideoRepo,
+} from "./deps.ts";
 
 export function prismaVideoRepo(client: PrismaClient): VideoRepo {
   return {
@@ -142,6 +149,70 @@ export function prismaClipRepo(client: PrismaClient): ClipRepo {
   };
 }
 
+export function prismaRenderRepo(client: PrismaClient): RenderRepo {
+  return {
+    async loadTarget(renderId) {
+      const render = await client.render.findUnique({
+        where: { id: renderId },
+        select: {
+          clipId: true,
+          quality: true,
+          clip: {
+            select: {
+              startMs: true,
+              endMs: true,
+              aspectRatio: true,
+              focalX: true,
+              focalY: true,
+              videoId: true,
+              subtitleConfig: { select: { id: true } },
+              video: { select: { storageKey: true } },
+            },
+          },
+        },
+      });
+      if (!render) return null;
+      return {
+        clipId: render.clipId,
+        videoId: render.clip.videoId,
+        sourceKey: render.clip.video.storageKey,
+        startMs: render.clip.startMs,
+        endMs: render.clip.endMs,
+        aspectRatio: render.clip.aspectRatio as DbAspectRatio,
+        focalX: render.clip.focalX,
+        focalY: render.clip.focalY,
+        quality: render.quality as "P720" | "P1080" | "ORIGINAL",
+        burnCaptions: render.clip.subtitleConfig !== null,
+      };
+    },
+    async begin(renderId) {
+      await client.render.update({
+        where: { id: renderId },
+        data: { status: "PROCESSING", progress: 0, startedAt: new Date(), errorMessage: null },
+      });
+    },
+    async complete(renderId, result) {
+      await client.render.update({
+        where: { id: renderId },
+        data: {
+          status: "COMPLETED",
+          progress: 1,
+          outputKey: result.outputKey,
+          durationMs: result.durationMs,
+          sizeBytes: result.sizeBytes === null ? null : BigInt(Math.round(result.sizeBytes)),
+          finishedAt: new Date(),
+        },
+      });
+    },
+    async fail(renderId, message) {
+      await client.render.update({
+        where: { id: renderId },
+        data: { status: "FAILED", errorMessage: message.slice(0, 2000), finishedAt: new Date() },
+      });
+    },
+  };
+}
+
 /** Assemble the live dependency bag for the worker. */
 export function buildPipelineDeps(): PipelineDeps {
   return {
@@ -152,6 +223,7 @@ export function buildPipelineDeps(): PipelineDeps {
     videos: prismaVideoRepo(db),
     transcripts: prismaTranscriptRepo(db),
     clips: prismaClipRepo(db),
+    renders: prismaRenderRepo(db),
     queue: { enqueue: (input) => enqueueJob(db, input) },
     tempDir: env.TEMP_DIR,
   };

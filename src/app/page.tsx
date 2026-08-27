@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function HomePage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-6 px-6">
@@ -15,12 +17,12 @@ export default function HomePage() {
         This scaffold wires up Next.js, Tailwind, and the Prisma client. The
         transcript editor and render pipeline land in later PRs.
       </p>
-      <a
+      <Link
         href="/dashboard"
         className="w-fit rounded bg-neutral-900 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-neutral-900"
       >
         Go to the dashboard
-      </a>
+      </Link>
     </main>
   );
 }
