@@ -15,6 +15,7 @@
 export type JobStatus = "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED";
 
 export type JobKind =
+  | "FETCH"
   | "PROBE"
   | "EXTRACT_AUDIO"
   | "TRANSCRIBE"

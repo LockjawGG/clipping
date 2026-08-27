@@ -47,6 +47,7 @@ const schema = z.object({
 
   FFMPEG_PATH: z.string().default("ffmpeg"),
   FFPROBE_PATH: z.string().default("ffprobe"),
+  YTDLP_PATH: z.string().default("yt-dlp"),
   TEMP_DIR: z.string().default("/tmp/clipper"),
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(5_368_709_120),
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),

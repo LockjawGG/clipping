@@ -15,7 +15,7 @@ import { type PipelineDeps, scratchPath, toAspectPreset } from "./deps.ts";
  * failure only retries that step. `Job.videoId` carries the subject; `payload`
  * carries step-specific options.
  *
- *   PROBE → EXTRACT_AUDIO → TRANSCRIBE → ANALYZE
+ *   (FETCH) → PROBE → EXTRACT_AUDIO → TRANSCRIBE → ANALYZE → THUMBNAIL
  */
 
 const AUDIO_MIME = "audio/wav";
@@ -23,6 +23,30 @@ const AUDIO_MIME = "audio/wav";
 function audioKeyFor(videoId: string): string {
   return `videos/${videoId}/audio.wav`;
 }
+
+interface FetchPayload {
+  url?: string;
+}
+
+/** FETCH: download a URL to a file, put it in storage, then start PROBE. */
+export const fetchHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal, setProgress }) => {
+  const { url } = (job.payload ?? {}) as FetchPayload;
+  if (!url) throw new Error("FETCH job payload is missing url");
+
+  const video = await deps.videos.get(job.videoId);
+  if (!video) throw new Error(`video ${job.videoId} not found`);
+
+  const local = scratchPath(deps.tempDir, "fetch", job.videoId, "source.mp4");
+  const result = await deps.fetcher.fetch(url, local, signal);
+  await setProgress(0.7);
+
+  await deps.storage.putFile(video.storageKey, local, "video/mp4");
+  if (result.title) await deps.videos.setFilename(job.videoId, result.title.slice(0, 500));
+  await deps.videos.setStatus(job.videoId, "UPLOADED");
+
+  await deps.queue.enqueue({ videoId: job.videoId, kind: "PROBE" });
+  return { title: result.title ?? null, durationSec: result.durationSec ?? null };
+};
 
 /** PROBE: read container metadata, store it on the Video, queue audio extraction. */
 export const probeHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal, setProgress }) => {

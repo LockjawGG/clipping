@@ -9,6 +9,7 @@ import { PIPELINE_HANDLERS } from "../src/lib/pipeline/index.ts";
 import {
   analyzeHandler,
   extractAudioHandler,
+  fetchHandler,
   probeHandler,
   transcribeHandler,
 } from "../src/lib/pipeline/handlers.ts";
@@ -52,6 +53,8 @@ interface Spy {
   probed: MediaInfo | null;
   savedTranscript: TranscriptResult | null;
   savedClips: unknown[] | null;
+  fetched: string | null;
+  filename: string | null;
 }
 
 function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: Spy } {
@@ -64,6 +67,8 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
     probed: null,
     savedTranscript: null,
     savedClips: null,
+    fetched: null,
+    filename: null,
   };
   const video = { id: "vid1", storageKey: "videos/vid1/source.mp4", durationMs: null as number | null, status: "UPLOADED" };
 
@@ -127,6 +132,9 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
         video.status = s;
       },
       setError: async () => {},
+      setFilename: async (_id, name) => {
+        spy.filename = name;
+      },
     },
     transcripts: {
       save: async (_id, result) => {
@@ -154,6 +162,13 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
     },
     captions: { renderCaptioned: async () => {} },
     faces: { name: "none", detectTrack: async () => [] },
+    fetcher: {
+      name: "fake",
+      fetch: async (url: string) => {
+        spy.fetched = url;
+        return { title: "Fetched Title" };
+      },
+    },
     queue: {
       enqueue: async (input) => {
         spy.enqueued.push(input);
@@ -181,6 +196,23 @@ function ctx(deps: PipelineDeps, kind: JobKind, payload: unknown = null): JobCon
 }
 
 // --- individual handlers -------------------------------------------
+
+test("FETCH downloads the URL, stores it, sets the title, queues PROBE", async () => {
+  const { deps, spy } = makeDeps();
+  const result = await fetchHandler(ctx(deps, "FETCH", { url: "https://youtu.be/abc123" }));
+
+  assert.equal(spy.fetched, "https://youtu.be/abc123");
+  assert.equal(spy.puts[0], "videos/vid1/source.mp4");
+  assert.equal(spy.filename, "Fetched Title");
+  assert.equal(spy.statuses.includes("UPLOADED"), true);
+  assert.deepEqual(spy.enqueued, [{ videoId: "vid1", kind: "PROBE" }]);
+  assert.equal((result as { title: string }).title, "Fetched Title");
+});
+
+test("FETCH throws without a url in the payload", async () => {
+  const { deps } = makeDeps();
+  await assert.rejects(() => fetchHandler(ctx(deps, "FETCH", {})), /missing url/);
+});
 
 test("PROBE stores media info and queues EXTRACT_AUDIO", async () => {
   const { deps, spy } = makeDeps();

@@ -4,6 +4,7 @@ import { env } from "../env.ts";
 import { db } from "../db.ts";
 import { FfmpegRunner } from "../ffmpeg/run.ts";
 import { NullFaceDetector } from "../faces/detector.ts";
+import { YtDlpFetcher } from "./fetcher.ts";
 import { RemotionCaptionRenderer } from "./remotion.ts";
 import { getStorage } from "../storage/index.ts";
 import { getTranscription } from "../transcription/index.ts";
@@ -55,6 +56,9 @@ export function prismaVideoRepo(client: PrismaClient): VideoRepo {
         where: { id },
         data: { status: "FAILED", errorMessage: message.slice(0, 2000) },
       });
+    },
+    async setFilename(id, originalFilename) {
+      await client.video.update({ where: { id }, data: { originalFilename } });
     },
   };
 }
@@ -287,6 +291,7 @@ export function buildPipelineDeps(): PipelineDeps {
     thumbnails: prismaThumbnailRepo(db),
     captions: new RemotionCaptionRenderer(),
     faces: new NullFaceDetector(),
+    fetcher: new YtDlpFetcher({ binPath: env.YTDLP_PATH, maxBytes: env.MAX_UPLOAD_BYTES }),
     queue: { enqueue: (input) => enqueueJob(db, input) },
     tempDir: env.TEMP_DIR,
   };

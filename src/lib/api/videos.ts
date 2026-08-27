@@ -27,6 +27,14 @@ export const createUploadSchema = z.object({
 });
 export type CreateUploadInput = z.infer<typeof createUploadSchema>;
 
+export const createFromUrlSchema = z.object({
+  url: z
+    .string()
+    .url()
+    .refine((v) => /^https?:\/\//i.test(v), "must be an http(s) URL")
+    .refine((v) => v.length <= 2000, "URL is too long"),
+});
+
 /** Minimal slice of the Prisma client the upload flow needs. */
 export interface VideoDb {
   video: {
@@ -60,7 +68,7 @@ export interface VideoServiceDeps {
   maxUploadBytes: number;
   /** Returns the project id new videos are attached to (auth replaces this). */
   ensureProject: () => Promise<string>;
-  enqueue: (input: { videoId: string; kind: JobKind }) => Promise<string>;
+  enqueue: (input: { videoId: string; kind: JobKind; payload?: unknown }) => Promise<string>;
 }
 
 const SAFE_EXT = /^\.[a-z0-9]{1,8}$/;
@@ -94,6 +102,26 @@ export async function createVideoUpload(deps: VideoServiceDeps, input: unknown) 
     storageKey,
     upload: { url: uploadUrl, method: "PUT" as const, headers: { "content-type": parsed.contentType } },
   };
+}
+
+/** Ingest from a URL: create the row, enqueue FETCH (yt-dlp downloads server-side). */
+export async function createVideoFromUrl(deps: VideoServiceDeps, input: unknown) {
+  const { url } = createFromUrlSchema.parse(input);
+
+  const projectId = await deps.ensureProject();
+  const storageKey = `videos/${randomUUID()}/source.mp4`;
+
+  const video = await deps.db.video.create({
+    data: {
+      projectId,
+      status: "UPLOADING",
+      originalFilename: url.slice(0, 500),
+      storageKey,
+    },
+  });
+
+  const jobId = await deps.enqueue({ videoId: video.id, kind: "FETCH", payload: { url } });
+  return { videoId: video.id, jobId, status: "FETCHING" as const };
 }
 
 /** 404 (not 403) for a video the caller's project doesn't own — don't leak ids. */
