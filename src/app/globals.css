@@ -4,8 +4,116 @@
 
 :root {
   color-scheme: light dark;
+
+  --c-bg: 251 251 250;
+  --c-surface: 255 255 255;
+  --c-surface-raised: 244 244 245;
+  --c-border: 228 228 231;
+  --c-text: 24 24 27;
+  --c-muted: 113 113 122;
+  --c-accent: 109 40 217;
+  --c-accent-fg: 255 255 255;
+  --c-danger: 220 38 38;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-bg: 10 10 11;
+    --c-surface: 20 20 22;
+    --c-surface-raised: 30 30 33;
+    --c-border: 42 42 47;
+    --c-text: 250 250 250;
+    --c-muted: 161 161 170;
+    --c-accent: 139 92 246;
+    --c-accent-fg: 12 12 14;
+    --c-danger: 248 113 113;
+  }
 }
 
 body {
-  @apply bg-white text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100;
+  @apply bg-bg text-text antialiased;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-border bg-surface shadow-card;
+  }
+
+  /* Buttons ---------------------------------------------------------------- */
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-1.5 rounded-lg border border-border
+      bg-surface px-3 py-1.5 text-sm font-medium text-text transition-colors
+      hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2
+      focus-visible:ring-accent/60 disabled:pointer-events-none disabled:opacity-40;
+  }
+  .btn-primary {
+    @apply border-transparent bg-accent text-accent-fg hover:bg-accent/90;
+  }
+  .btn-ghost {
+    @apply border-transparent bg-transparent hover:bg-surface-raised;
+  }
+  .btn-danger {
+    @apply border-danger/40 text-danger hover:bg-danger/10;
+  }
+  .btn-sm {
+    @apply px-2 py-1 text-xs;
+  }
+
+  /* Inputs / selects ----------------------------------------------------- */
+  .field {
+    @apply rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-text
+      shadow-sm transition-colors placeholder:text-muted focus-visible:outline-none
+      focus-visible:ring-2 focus-visible:ring-accent/60;
+  }
+
+  /* Chips / pills ------------------------------------------------------------ */
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-md bg-surface-raised px-1.5 py-0.5
+      text-xs font-medium text-muted;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-0.5
+      text-xs font-medium text-muted;
+  }
+
+  /* Toggle switch --------------------------------------------------------- */
+  .switch {
+    @apply relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full
+      border border-border bg-surface-raised transition-colors focus-visible:outline-none
+      focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed
+      disabled:opacity-40;
+  }
+  .switch[aria-checked="true"] {
+    @apply border-transparent bg-accent;
+  }
+  .switch::after {
+    content: "";
+    position: absolute;
+    left: 2px;
+    height: 1.125rem;
+    width: 1.125rem;
+    border-radius: 9999px;
+    background: #fff;
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
+    transition: transform 0.15s ease;
+  }
+  .switch[aria-checked="true"]::after {
+    transform: translateX(1.25rem);
+  }
+}
+
+/* Range inputs pick up the brand hue */
+input[type="range"] {
+  accent-color: rgb(var(--c-accent));
+}
+
+/* Burned-in preview: match the on-video look of the static caption presets */
+::cue {
+  background: transparent;
+  color: #fff;
+  font-weight: 800;
+  text-shadow:
+    0 2px 6px rgb(0 0 0 / 0.9),
+    0 0 2px rgb(0 0 0 / 0.9);
+  line-height: 1.2;
 }

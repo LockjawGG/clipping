@@ -190,3 +190,20 @@ export function toSrt(cues: Cue[], offsetMs = 0): string {
     })
     .join("\n");
 }
+
+/**
+ * WebVTT form of {@link toSrt}, for a browser `<track>` preview (no ffmpeg).
+ * Same cue walk; VTT uses a `.` millisecond separator and a `WEBVTT` header,
+ * and cue-index lines are optional so we drop them.
+ */
+export function toVtt(cues: Cue[], offsetMs = 0): string {
+  const body = cues
+    .map((cue) => {
+      const start = Math.max(0, cue.startMs - offsetMs);
+      const end = Math.max(0, cue.endMs - offsetMs);
+      const time = `${srtTime(start).replace(",", ".")} --> ${srtTime(end).replace(",", ".")}`;
+      return `${time}\n${cue.lines.join("\n")}\n`;
+    })
+    .join("\n");
+  return `WEBVTT\n\n${body}`;
+}

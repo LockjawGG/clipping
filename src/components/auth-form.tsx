@@ -45,19 +45,17 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   }
 
   return (
-    <form onSubmit={onSubmit} className="flex w-full max-w-sm flex-col gap-4">
+    <form onSubmit={onSubmit} className="card flex w-full max-w-sm flex-col gap-4 p-6">
       <h1 className="text-2xl font-semibold tracking-tight">
         {isRegister ? "Create your account" : "Sign in"}
       </h1>
 
       {isRegister && (
         <label className="flex flex-col gap-1 text-sm">
-          Name <span className="text-neutral-500">(optional)</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="rounded border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
-          />
+          <span>
+            Name <span className="text-muted">(optional)</span>
+          </span>
+          <input value={name} onChange={(e) => setName(e.target.value)} className="field" />
         </label>
       )}
 
@@ -68,7 +66,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="rounded border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
+          className="field"
         />
       </label>
 
@@ -80,28 +78,30 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
           minLength={10}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className="rounded border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
+          className="field"
         />
       </label>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
 
-      <button
-        type="submit"
-        disabled={busy}
-        className="rounded bg-neutral-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-      >
+      <button type="submit" disabled={busy} className="btn btn-primary w-full">
         {busy ? "…" : isRegister ? "Create account" : "Sign in"}
       </button>
 
-      <p className="text-sm text-neutral-500">
+      <p className="text-sm text-muted">
         {isRegister ? (
           <>
-            Already have an account? <Link href="/login" className="underline">Sign in</Link>
+            Already have an account?{" "}
+            <Link href="/login" className="text-accent underline">
+              Sign in
+            </Link>
           </>
         ) : (
           <>
-            Need an account? <Link href="/register" className="underline">Register</Link>
+            Need an account?{" "}
+            <Link href="/register" className="text-accent underline">
+              Register
+            </Link>
           </>
         )}
       </p>

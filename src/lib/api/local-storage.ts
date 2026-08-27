@@ -53,7 +53,53 @@ export function authorizeLocalRequest(
   }
 }
 
-export async function serveLocalFile(deps: LocalRouteDeps, keyParts: string[], token: string | null): Promise<Response> {
+const CONTENT_TYPES: Record<string, string> = {
+  mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  wav: "audio/wav",
+  mp3: "audio/mpeg",
+  vtt: "text/vtt",
+  srt: "application/x-subrip",
+};
+
+function contentTypeFor(path: string): string {
+  const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  return CONTENT_TYPES[ext] ?? "application/octet-stream";
+}
+
+/**
+ * Parse a single-range `Range: bytes=start-end` header against a known size.
+ * Returns null for absent/unsupported/malformed ranges (caller serves 200);
+ * throws {@link ApiError} 416 for a syntactically valid but unsatisfiable one.
+ */
+function parseRange(header: string | null, size: number): { start: number; end: number } | null {
+  if (!header) return null;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m || (m[1] === "" && m[2] === "")) return null;
+  let start: number;
+  let end: number;
+  if (m[1] === "") {
+    // Suffix range: last N bytes.
+    start = Math.max(0, size - Number(m[2]));
+    end = size - 1;
+  } else {
+    start = Number(m[1]);
+    end = m[2] === "" ? size - 1 : Math.min(Number(m[2]), size - 1);
+  }
+  if (start > end || start >= size) throw new ApiError(416, "range not satisfiable");
+  return { start, end };
+}
+
+export async function serveLocalFile(
+  deps: LocalRouteDeps,
+  keyParts: string[],
+  token: string | null,
+  req?: Request,
+): Promise<Response> {
   const { path } = authorizeLocalRequest(deps, keyParts, "get", token);
 
   let size: number;
@@ -65,9 +111,32 @@ export async function serveLocalFile(deps: LocalRouteDeps, keyParts: string[], t
     throw new ApiError(404, "not found");
   }
 
+  const contentType = contentTypeFor(path);
+  const range = parseRange(req?.headers.get("range") ?? null, size);
+
+  if (range) {
+    const { start, end } = range;
+    const body = Readable.toWeb(
+      createReadStream(path, { start, end }),
+    ) as ReadableStream<Uint8Array>;
+    return new Response(body, {
+      status: 206,
+      headers: {
+        "content-type": contentType,
+        "content-length": String(end - start + 1),
+        "content-range": `bytes ${start}-${end}/${size}`,
+        "accept-ranges": "bytes",
+      },
+    });
+  }
+
   const body = Readable.toWeb(createReadStream(path)) as ReadableStream<Uint8Array>;
   return new Response(body, {
-    headers: { "content-type": "application/octet-stream", "content-length": String(size) },
+    headers: {
+      "content-type": contentType,
+      "content-length": String(size),
+      "accept-ranges": "bytes",
+    },
   });
 }
 

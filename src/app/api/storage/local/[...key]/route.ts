@@ -10,7 +10,7 @@ type Ctx = { params: Promise<{ key: string[] }> };
 export const GET = route<Ctx>(async (req, { params }) => {
   const { key } = await params;
   const token = new URL(req.url).searchParams.get("token");
-  return serveLocalFile(localRouteDeps(), key, token);
+  return serveLocalFile(localRouteDeps(), key, token, req);
 });
 
 /** PUT /api/storage/local/<key>?action=put&token=… — receive a direct upload. */

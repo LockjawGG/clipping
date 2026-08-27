@@ -13,11 +13,11 @@ export const dynamic = "force-dynamic";
 function StatusPill({ status }: { status: string }) {
   const tone =
     status === "READY"
-      ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+      ? "border-accent/40 text-accent"
       : status === "FAILED"
-        ? "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
-        : "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300";
-  return <span className={`rounded px-2 py-0.5 text-xs font-medium ${tone}`}>{status}</span>;
+        ? "border-danger/40 text-danger"
+        : "";
+  return <span className={`pill ${tone}`}>{status.toLowerCase()}</span>;
 }
 
 export default async function DashboardPage() {
@@ -40,31 +40,38 @@ export default async function DashboardPage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-6 py-12">
       <header className="flex flex-wrap items-start justify-between gap-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Your videos</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">Your videos</h1>
+          <SignOutButton />
+        </div>
         <div className="flex flex-col items-end gap-3">
-          <div className="flex items-center gap-4">
-            <UploadButton />
-            <SignOutButton />
-          </div>
+          <UploadButton />
           <FromUrlForm />
         </div>
       </header>
 
       {videos.length === 0 ? (
-        <p className="text-neutral-500">Nothing yet — upload a file or paste a link to get started.</p>
+        <p className="rounded-xl border border-dashed border-border p-8 text-center text-muted">
+          Nothing yet — upload a file or paste a link to get started.
+        </p>
       ) : (
-        <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
+        <ul className="flex flex-col gap-2">
           {videos.map((v) => (
-            <li key={v.id} className="flex items-center justify-between gap-4 py-3">
-              <Link href={`/dashboard/${v.id}`} className="min-w-0 hover:underline">
-                <p className="truncate font-medium">{v.originalFilename}</p>
-                <p className="text-sm text-neutral-500">
-                  {v.durationMs ? `${Math.round(v.durationMs / 1000)}s · ` : ""}
-                  {v._count.clips} clip{v._count.clips === 1 ? "" : "s"} ·{" "}
-                  {v.createdAt.toISOString().slice(0, 10)}
-                </p>
+            <li key={v.id}>
+              <Link
+                href={`/dashboard/${v.id}`}
+                className="card flex items-center justify-between gap-4 p-4 transition-colors hover:bg-surface-raised"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{v.originalFilename}</p>
+                  <p className="text-sm text-muted">
+                    {v.durationMs ? `${Math.round(v.durationMs / 1000)}s · ` : ""}
+                    {v._count.clips} clip{v._count.clips === 1 ? "" : "s"} ·{" "}
+                    {v.createdAt.toISOString().slice(0, 10)}
+                  </p>
+                </div>
+                <StatusPill status={v.status} />
               </Link>
-              <StatusPill status={v.status} />
             </li>
           ))}
         </ul>

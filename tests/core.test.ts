@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildCues, packLines, toSrt, DEFAULT_CAPTION_CONFIG } from "../src/lib/captions/layout.ts";
+import {
+  buildCues,
+  packLines,
+  toSrt,
+  toVtt,
+  DEFAULT_CAPTION_CONFIG,
+} from "../src/lib/captions/layout.ts";
 import {
   snapToSentences,
   dedupeOverlapping,
@@ -121,6 +127,22 @@ test("toSrt clamps rather than emitting a negative timestamp", () => {
   // Match a minus sign attached to a digit; the "-->" separator is unaffected.
   assert.ok(!/-\d/.test(srt), srt);
   assert.match(srt, /00:00:00,000 --> 00:00:00,000/);
+});
+
+test("toVtt writes a WEBVTT header, dot separator, and rebases like toSrt", () => {
+  const cues = buildCues(evenWords("hello world from the clip", 65_000, 400));
+  const vtt = toVtt(cues, 65_000);
+  assert.match(vtt, /^WEBVTT\n\n/);
+  assert.match(vtt, /\n00:00:00\.000 --> 00:00:0\d\.\d{3}\n/);
+  assert.ok(!vtt.includes(","), "VTT timestamps must use a dot, not a comma");
+  assert.ok(!vtt.includes("00:01:05"), "timestamps were not rebased");
+});
+
+test("toVtt clamps rather than emitting a negative timestamp", () => {
+  const cues = buildCues(evenWords("one two three", 1000, 400));
+  const vtt = toVtt(cues, 10_000);
+  assert.ok(!/-\d/.test(vtt), vtt);
+  assert.match(vtt, /00:00:00\.000 --> 00:00:00\.000/);
 });
 
 // --- clip boundaries ------------------------------------------------------

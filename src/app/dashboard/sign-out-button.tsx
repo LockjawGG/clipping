@@ -6,7 +6,7 @@ export function SignOutButton() {
   return (
     <button
       onClick={() => signOut({ redirectTo: "/login" })}
-      className="text-sm text-neutral-500 underline"
+      className="text-sm text-muted underline underline-offset-2 hover:text-text"
     >
       Sign out
     </button>

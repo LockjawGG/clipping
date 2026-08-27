@@ -51,7 +51,7 @@ export function UploadButton() {
       <button
         onClick={() => inputRef.current?.click()}
         disabled={busy}
-        className="rounded bg-neutral-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+        className="btn btn-primary"
       >
         {phase === "idle" && "Upload a video"}
         {phase === "creating" && "Preparing…"}
@@ -71,7 +71,7 @@ export function UploadButton() {
           if (file) void onFile(file);
         }}
       />
-      {message && <p className="text-sm text-red-600">{message}</p>}
+      {message && <p className="text-sm text-danger">{message}</p>}
     </div>
   );
 }

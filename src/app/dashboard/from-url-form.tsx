@@ -38,17 +38,13 @@ export function FromUrlForm() {
           placeholder="Paste a video link (YouTube, …)"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          className="w-72 rounded border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+          className="field w-72"
         />
-        <button
-          type="submit"
-          disabled={busy || url.trim() === ""}
-          className="rounded border border-neutral-300 px-3 py-2 text-sm font-medium disabled:opacity-40 dark:border-neutral-700"
-        >
+        <button type="submit" disabled={busy || url.trim() === ""} className="btn">
           {busy ? "…" : "Add from link"}
         </button>
       </div>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
     </form>
   );
 }
