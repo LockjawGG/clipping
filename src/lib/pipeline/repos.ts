@@ -334,6 +334,23 @@ export function prismaThumbnailRepo(client: PrismaClient): ThumbnailRepo {
     async setKey(clipId, thumbnailKey) {
       await client.clip.update({ where: { id: clipId }, data: { thumbnailKey } });
     },
+    async videoPosterTarget(videoId) {
+      const v = await client.video.findUnique({
+        where: { id: videoId },
+        select: { storageKey: true, durationMs: true, thumbnailKey: true },
+      });
+      return v
+        ? {
+            videoId,
+            sourceKey: v.storageKey,
+            durationMs: v.durationMs,
+            hasThumbnail: v.thumbnailKey != null,
+          }
+        : null;
+    },
+    async setVideoKey(videoId, thumbnailKey) {
+      await client.video.update({ where: { id: videoId }, data: { thumbnailKey } });
+    },
   };
 }
 

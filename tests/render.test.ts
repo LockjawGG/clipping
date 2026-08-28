@@ -128,6 +128,8 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
       target: async () => null,
       targetsForVideo: async () => [],
       setKey: async () => {},
+      videoPosterTarget: async () => null,
+      setVideoKey: async () => {},
     },
     faces: { name: "none", detectTrack: async () => [] },
     captions: {

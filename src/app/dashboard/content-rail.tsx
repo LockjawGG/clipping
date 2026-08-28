@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { UploadButton } from "./upload-button";
 import { FromUrlForm } from "./from-url-form";
+import { RailThumb } from "./rail-thumb";
 import type { ProjectSummary } from "./project-rail";
 
 export interface VideoSummary {
@@ -166,12 +167,7 @@ export function ContentRail({
               <div key={v.id} className="relative">
                 {renaming === v.id ? (
                   <div className="flex items-center gap-2 px-2.5 py-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element -- signed storage URL */}
-                    <img
-                      src={v.thumbnailUrl ?? undefined}
-                      alt=""
-                      className="h-9 w-14 shrink-0 rounded bg-surface-raised object-cover"
-                    />
+                    <RailThumb url={v.thumbnailUrl} />
                     <input
                       autoFocus
                       defaultValue={v.name}
@@ -189,12 +185,7 @@ export function ContentRail({
                   aria-current={v.id === activeVideoId}
                   onClick={() => open(v.id)}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element -- signed storage URL */}
-                  <img
-                    src={v.thumbnailUrl ?? undefined}
-                    alt=""
-                    className="h-9 w-14 shrink-0 rounded bg-surface-raised object-cover"
-                  />
+                  <RailThumb url={v.thumbnailUrl} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate">{v.name}</span>
                     <span className="block truncate text-xs text-muted">

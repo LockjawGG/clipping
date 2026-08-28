@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { RailThumb } from "./rail-thumb";
+
 
 export interface ProjectSummary {
   id: string;
@@ -182,12 +184,7 @@ export function ProjectRail({
             className="rail-item"
             onClick={() => go({ project: activeProjectId, video: c.videoId })}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element -- signed storage URL */}
-            <img
-              src={c.thumbnailUrl ?? undefined}
-              alt=""
-              className="h-8 w-12 shrink-0 rounded bg-surface-raised object-cover"
-            />
+            <RailThumb url={c.thumbnailUrl} className="h-8 w-12" />
             <span className="min-w-0 flex-1">
               <span className="block truncate">{c.title}</span>
               <span className="block truncate text-xs text-muted">{c.videoName}</span>

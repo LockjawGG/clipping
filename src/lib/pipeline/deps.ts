@@ -103,12 +103,23 @@ export interface ThumbnailTarget {
   endMs: number;
 }
 
+export interface VideoPosterTarget {
+  videoId: string;
+  sourceKey: string;
+  durationMs: number | null;
+  /** True when the video already has a poster — the handler skips it then. */
+  hasThumbnail: boolean;
+}
+
 export interface ThumbnailRepo {
   /** One clip. Returns null if it doesn't exist. */
   target(clipId: string): Promise<ThumbnailTarget | null>;
   /** Every clip of the video that has no thumbnail yet. */
   targetsForVideo(videoId: string): Promise<ThumbnailTarget[]>;
   setKey(clipId: string, thumbnailKey: string): Promise<void>;
+  /** The video itself, for a poster frame. Null if the video is gone. */
+  videoPosterTarget(videoId: string): Promise<VideoPosterTarget | null>;
+  setVideoKey(videoId: string, thumbnailKey: string): Promise<void>;
 }
 
 /** Map the Prisma aspect enum to the `args.ts` preset string. */

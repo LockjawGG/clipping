@@ -58,6 +58,14 @@ export default async function DashboardPage({
         originalFilename: true,
         status: true,
         thumbnailKey: true,
+        // Fallback poster while the video's own thumbnail is still pending:
+        // the earliest clip that has one.
+        clips: {
+          where: { thumbnailKey: { not: null } },
+          orderBy: { startMs: "asc" },
+          take: 1,
+          select: { thumbnailKey: true },
+        },
         _count: { select: { clips: true } },
         jobs: {
           where: { status: { in: ["QUEUED", "PROCESSING"] } },
@@ -86,7 +94,10 @@ export default async function DashboardPage({
       id: v.id,
       name: v.originalFilename,
       status: v.status,
-      thumbnailUrl: v.thumbnailKey ? await storage.createDownloadUrl(v.thumbnailKey) : null,
+      thumbnailUrl: await (async () => {
+        const key = v.thumbnailKey ?? v.clips[0]?.thumbnailKey ?? null;
+        return key ? storage.createDownloadUrl(key) : null;
+      })(),
       clipCount: v._count.clips,
       progress: v.jobs[0]?.progress ?? 0,
       jobKind: v.jobs[0]?.kind ?? null,

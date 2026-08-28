@@ -191,7 +191,14 @@ interface ThumbnailPayload {
   clipId?: string;
 }
 
-/** THUMBNAIL: grab a poster frame at each clip's midpoint. Last ingest step. */
+/**
+ * THUMBNAIL: grab a poster frame at each clip's midpoint, plus one poster for the
+ * video itself (used in the library / rails). Last ingest step.
+ *
+ * A full run (no `clipId`) does the video poster too, but only when the video
+ * has none yet — so re-running is cheap and idempotent. A single-clip run
+ * (re-thumbnail while editing) skips the video poster.
+ */
 export const thumbnailHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal, setProgress }) => {
   const { clipId } = (job.payload ?? {}) as ThumbnailPayload;
 
@@ -199,13 +206,34 @@ export const thumbnailHandler: JobHandler<PipelineDeps> = async ({ job, deps, si
     ? [await deps.thumbnails.target(clipId)].filter((t): t is NonNullable<typeof t> => t !== null)
     : await deps.thumbnails.targetsForVideo(job.videoId);
 
-  if (targets.length === 0) return { generated: 0 };
+  const poster = clipId ? null : await deps.thumbnails.videoPosterTarget(job.videoId);
+  const needPoster = !!poster && !poster.hasThumbnail;
 
-  const source = await deps.source.ensureLocal(job.videoId, targets[0].sourceKey, signal);
+  if (targets.length === 0 && !needPoster) return { generated: 0 };
+
+  const sourceKey = targets[0]?.sourceKey ?? poster?.sourceKey;
+  if (!sourceKey) return { generated: 0 };
+  const source = await deps.source.ensureLocal(job.videoId, sourceKey, signal);
   const work = jobWorkDir(deps.tempDir, job.id);
 
   let generated = 0;
+  const total = targets.length + (needPoster ? 1 : 0);
   try {
+    if (needPoster && poster) {
+      // A frame a little into the video — 25%, clamped away from the very end.
+      const dur = poster.durationMs ?? 0;
+      const atMs = dur > 0 ? Math.min(Math.floor(dur * 0.25), Math.max(0, dur - 500)) : 3000;
+      const out = scratchPath(work, `poster.jpg`);
+      await deps.ffmpeg.thumbnail(source, out, { atMs, width: 640 }, signal);
+
+      const key = `videos/${job.videoId}/poster.jpg`;
+      await deps.storage.putFile(key, out, "image/jpeg");
+      await deps.thumbnails.setVideoKey(job.videoId, key);
+
+      generated++;
+      await setProgress(generated / total);
+    }
+
     for (const t of targets) {
       const atMs = t.startMs + Math.floor((t.endMs - t.startMs) / 2);
       const out = scratchPath(work, `${t.clipId}.jpg`);
@@ -216,7 +244,7 @@ export const thumbnailHandler: JobHandler<PipelineDeps> = async ({ job, deps, si
       await deps.thumbnails.setKey(t.clipId, key);
 
       generated++;
-      await setProgress(generated / targets.length);
+      await setProgress(generated / total);
     }
   } finally {
     // Ingest is done — drop the cached source unless one clip was targeted

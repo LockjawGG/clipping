@@ -34,6 +34,7 @@ export function FromUrlForm({ projectId }: { projectId?: string }) {
   const [phase, setPhase] = useState<"input" | "analyzing" | "preview">("input");
   const [adding, setAdding] = useState(false);
   const [result, setResult] = useState<Analyzed | null>(null);
+  const [thumbBroken, setThumbBroken] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ytdlp, setYtdlp] = useState<{ version: string | null; updateCommand: string } | null>(null);
 
@@ -49,6 +50,7 @@ export function FromUrlForm({ projectId }: { projectId?: string }) {
     setPhase("analyzing");
     setError(null);
     setResult(null);
+    setThumbBroken(false);
     try {
       const res = await fetch("/api/videos/analyze-url", {
         method: "POST",
@@ -117,11 +119,13 @@ export function FromUrlForm({ projectId }: { projectId?: string }) {
       {phase === "preview" && result?.ok && (
         <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-raised p-3">
           <div className="flex gap-3">
-            {result.thumbnail ? (
+            {result.thumbnail && !thumbBroken ? (
               // eslint-disable-next-line @next/next/no-img-element -- remote source thumbnail
               <img
                 src={result.thumbnail}
                 alt=""
+                referrerPolicy="no-referrer"
+                onError={() => setThumbBroken(true)}
                 className="h-16 w-28 shrink-0 rounded object-cover"
               />
             ) : (
