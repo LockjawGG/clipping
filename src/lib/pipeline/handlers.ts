@@ -40,8 +40,16 @@ export const fetchHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal
   if (!video) throw new Error(`video ${job.videoId} not found`);
 
   const local = deps.source.localPath(job.videoId);
-  const result = await deps.fetcher.fetch(url, local, signal);
-  await setProgress(0.7);
+  // Map the download 0..1 onto 0..0.85 of the job; storage + finalize take the rest.
+  let lastPct = -1;
+  const result = await deps.fetcher.fetch(url, local, signal, (f) => {
+    const pct = Math.floor(f * 100);
+    if (pct > lastPct) {
+      lastPct = pct;
+      void setProgress(Math.min(0.85, f * 0.85)).catch(() => {});
+    }
+  });
+  await setProgress(0.9);
 
   await deps.storage.putFile(video.storageKey, local, "video/mp4");
   if (result.title) await deps.videos.setFilename(job.videoId, result.title.slice(0, 500));

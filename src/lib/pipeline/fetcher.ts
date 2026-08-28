@@ -1,9 +1,6 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdir, readdir, rename, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { promisify } from "node:util";
-
-const run = promisify(execFile);
 
 /**
  * yt-dlp treats `-o` as a template: with no `%(ext)s` it appends `.<ext>`, so the
@@ -36,10 +33,16 @@ export interface FetchResult {
 /**
  * Downloads a video from a URL (YouTube, Vimeo, a direct link, …) to a local
  * file so the rest of the pipeline can treat it exactly like an upload.
+ * `onProgress` reports a 0..1 download fraction as it streams.
  */
 export interface MediaFetcher {
   readonly name: string;
-  fetch(url: string, outputPath: string, signal?: AbortSignal): Promise<FetchResult>;
+  fetch(
+    url: string,
+    outputPath: string,
+    signal?: AbortSignal,
+    onProgress?: (fraction: number) => void,
+  ): Promise<FetchResult>;
 }
 
 export interface YtDlpFetcherOptions {
@@ -67,8 +70,13 @@ export function buildYtDlpArgs(
   return [
     url,
     "--no-playlist",
-    "--no-progress",
     "--no-warnings",
+    // Newline-terminated, machine-parseable progress on stdout: `DLP <pct>`.
+    // `--progress` is required because `--print-json` otherwise implies quiet.
+    "--newline",
+    "--progress",
+    "--progress-template",
+    "DLP %(progress._percent_str)s",
     ...(impersonate ? ["--impersonate", impersonate] : []),
     "--max-filesize",
     `${maxMb}M`,
@@ -98,46 +106,110 @@ export class YtDlpFetcher implements MediaFetcher {
     this.impersonate = opts.impersonate ?? "chrome";
   }
 
-  async fetch(url: string, outputPath: string, signal?: AbortSignal): Promise<FetchResult> {
+  async fetch(
+    url: string,
+    outputPath: string,
+    signal?: AbortSignal,
+    onProgress?: (fraction: number) => void,
+  ): Promise<FetchResult> {
     await mkdir(dirname(outputPath), { recursive: true });
 
     let impersonate = this.impersonate;
     for (;;) {
-      try {
-        const { stdout } = await run(
-          this.binPath,
-          buildYtDlpArgs(url, outputPath, this.maxBytes, impersonate),
-          { signal, maxBuffer: 32 * 1024 * 1024 },
-        );
-        await normalizeDownload(outputPath);
-        const line = stdout.trim().split("\n").filter(Boolean).at(-1);
-        if (!line) return {};
-        const meta = JSON.parse(line) as {
-          title?: string;
-          duration?: number;
-          filesize_approx?: number;
-        };
-        if (typeof meta.filesize_approx === "number" && meta.filesize_approx > this.maxBytes) {
-          throw new Error(`source is ~${Math.round(meta.filesize_approx / 1e6)}MB, over the limit`);
-        }
-        return {
-          title: meta.title?.trim() || undefined,
-          durationSec: typeof meta.duration === "number" ? meta.duration : undefined,
-        };
-      } catch (err) {
-        const e = err as NodeJS.ErrnoException & { stderr?: string };
-        if (e.code === "ENOENT") {
+      const { jsonLine, stderr, code, spawnError } = await this.run(
+        buildYtDlpArgs(url, outputPath, this.maxBytes, impersonate),
+        signal,
+        onProgress,
+      );
+
+      if (spawnError) {
+        if ((spawnError as NodeJS.ErrnoException).code === "ENOENT") {
           throw new Error(`yt-dlp not found: ${this.binPath} (set YTDLP_PATH or install yt-dlp)`);
         }
-        const stderr = e.stderr ?? "";
+        throw new Error(`yt-dlp failed: ${spawnError.message}`);
+      }
+
+      if (code !== 0) {
         // This yt-dlp build can't impersonate (no curl_cffi) — retry plainly.
         if (impersonate && /impersonat|curl[_ ]?cffi/i.test(stderr)) {
           impersonate = "";
           continue;
         }
-        const tail = stderr.split("\n").slice(-3).join("\n").trim();
-        throw new Error(`yt-dlp failed${tail ? `:\n${tail}` : `: ${e.message}`}`);
+        const tail = stderr.split("\n").filter(Boolean).slice(-3).join("\n").trim();
+        throw new Error(`yt-dlp failed${tail ? `:\n${tail}` : ` (exit ${code})`}`);
       }
+
+      await normalizeDownload(outputPath);
+
+      if (!jsonLine) return {};
+      const meta = JSON.parse(jsonLine) as {
+        title?: string;
+        duration?: number;
+        filesize_approx?: number;
+      };
+      if (typeof meta.filesize_approx === "number" && meta.filesize_approx > this.maxBytes) {
+        throw new Error(`source is ~${Math.round(meta.filesize_approx / 1e6)}MB, over the limit`);
+      }
+      return {
+        title: meta.title?.trim() || undefined,
+        durationSec: typeof meta.duration === "number" ? meta.duration : undefined,
+      };
     }
+  }
+
+  /**
+   * Spawn yt-dlp, streaming output so `DLP <pct>` lines drive `onProgress` and the
+   * `--print-json` blob is captured as it appears (it can scroll out of any buffer
+   * on a long download).
+   */
+  private run(
+    args: string[],
+    signal: AbortSignal | undefined,
+    onProgress: ((fraction: number) => void) | undefined,
+  ): Promise<{ jsonLine: string | null; stderr: string; code: number | null; spawnError?: Error }> {
+    return new Promise((resolve) => {
+      const child = spawn(this.binPath, args, { signal });
+      let stderr = "";
+      let jsonLine: string | null = null;
+      let lastReported = 0;
+      // yt-dlp may emit progress on either stream depending on version/flags.
+      const scan = (buf: string): string => {
+        const lines = buf.split("\n");
+        const rest = lines.pop() ?? "";
+        for (const raw of lines) {
+          const line = raw.trim();
+          const m = /DLP\s*([\d.]+)%/.exec(line);
+          if (m) {
+            const f = Math.min(1, Number(m[1]) / 100);
+            if (onProgress && f > lastReported + 0.005) {
+              lastReported = f;
+              onProgress(f);
+            }
+          } else if (line.startsWith("{") && line.endsWith("}")) {
+            jsonLine = line;
+          }
+        }
+        return rest;
+      };
+      let outPending = "";
+      let errPending = "";
+
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        outPending = scan(outPending + chunk);
+      });
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk: string) => {
+        stderr += chunk;
+        if (stderr.length > 200_000) stderr = stderr.slice(-100_000);
+        errPending = scan(errPending + chunk);
+      });
+      child.on("error", (spawnError) => resolve({ jsonLine, stderr, code: null, spawnError }));
+      child.on("close", (code) => {
+        scan(outPending + "\n");
+        scan(errPending + "\n");
+        resolve({ jsonLine, stderr, code });
+      });
+    });
   }
 }

@@ -403,7 +403,17 @@ export function ClipEditor({
               </div>
             )}
             {clip.render.downloadUrl && (
-              <a href={clip.render.downloadUrl} className="text-accent underline">
+              <a
+                href={clip.render.downloadUrl}
+                download={`${
+                  draft.title
+                    .replace(/[^\w\s.-]/g, "")
+                    .trim()
+                    .replace(/\s+/g, "-")
+                    .slice(0, 80) || "clip"
+                }.mp4`}
+                className="text-accent underline"
+              >
                 download
               </a>
             )}

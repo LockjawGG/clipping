@@ -59,7 +59,7 @@ export default async function DashboardPage({
           where: { status: { in: ["QUEUED", "PROCESSING"] } },
           orderBy: { createdAt: "desc" },
           take: 1,
-          select: { progress: true },
+          select: { progress: true, kind: true },
         },
       },
     }),
@@ -84,6 +84,7 @@ export default async function DashboardPage({
       thumbnailUrl: v.thumbnailKey ? await storage.createDownloadUrl(v.thumbnailKey) : null,
       clipCount: v._count.clips,
       progress: v.jobs[0]?.progress ?? 0,
+      jobKind: v.jobs[0]?.kind ?? null,
     })),
   );
 

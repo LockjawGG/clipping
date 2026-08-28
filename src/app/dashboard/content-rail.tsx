@@ -14,7 +14,17 @@ export interface VideoSummary {
   thumbnailUrl: string | null;
   clipCount: number;
   progress: number; // 0..1 for in-flight ingest, else 0
+  jobKind: string | null; // current job's kind, e.g. "FETCH"
 }
+
+const STEP_LABEL: Record<string, string> = {
+  FETCH: "downloading",
+  PROBE: "reading media",
+  EXTRACT_AUDIO: "extracting audio",
+  TRANSCRIBE: "transcribing",
+  ANALYZE: "finding clips",
+  THUMBNAIL: "thumbnails",
+};
 
 const GROUPS: Array<{ key: string; label: string; match: (s: string) => boolean }> = [
   { key: "processing", label: "Processing", match: (s) => !["READY", "FAILED"].includes(s) },
@@ -39,10 +49,10 @@ export function ContentRail({
   const [subMenu, setSubMenu] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
 
-  // Poll while anything is still ingesting so the rail advances on its own.
+  // Poll while anything is still ingesting so the rail (and % ) advances on its own.
   useEffect(() => {
     if (!videos.some((v) => GROUPS[0].match(v.status))) return;
-    const t = setInterval(() => router.refresh(), 4000);
+    const t = setInterval(() => router.refresh(), 2000);
     return () => clearInterval(t);
   }, [videos, router]);
 
@@ -162,13 +172,13 @@ export function ContentRail({
                         ? `${v.clipCount} clip${v.clipCount === 1 ? "" : "s"}`
                         : v.status === "FAILED"
                           ? "failed"
-                          : "processing…"}
+                          : `${STEP_LABEL[v.jobKind ?? ""] ?? "processing"}… ${Math.round(v.progress * 100)}%`}
                     </span>
                     {GROUPS[0].match(v.status) && (
                       <span className="mt-1 block h-1 w-full overflow-hidden rounded-full bg-surface-raised">
                         <span
                           className="block h-full bg-accent transition-all"
-                          style={{ width: `${Math.max(6, Math.round(v.progress * 100))}%` }}
+                          style={{ width: `${Math.max(4, Math.round(v.progress * 100))}%` }}
                         />
                       </span>
                     )}
