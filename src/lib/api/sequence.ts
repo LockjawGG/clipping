@@ -17,6 +17,16 @@ export type SequenceTrackKind = "VIDEO" | "AUDIO" | "OVERLAY";
 /** Default on-timeline length for a still image dropped onto the timeline. */
 const STILL_IMAGE_MS = 5_000;
 
+/**
+ * Injected media (image / GIF overlays) lives in its own `Overlay` table, not in
+ * `SequenceItem`. The timeline still *shows* it: overlays are projected onto a
+ * synthetic OVERLAY track so the user can see and re-time every piece of media
+ * on the clip in one place. Their ids are prefixed so the client routes edits
+ * back to `/api/overlays/:id` instead of the sequence-item endpoint.
+ */
+export const OVERLAY_TRACK_ID = "ov_track";
+export const OVERLAY_ID_PREFIX = "ov_";
+
 export const updateSequenceSchema = z
   .object({
     width: z.number().int().min(16).max(8192),
@@ -116,6 +126,14 @@ interface AssetLite {
   storageKey: string;
   durationMs: number | null;
 }
+interface OverlayLite {
+  id: string;
+  assetId: string | null;
+  content: string;
+  startMs: number | null;
+  endMs: number | null;
+  hidden: boolean;
+}
 
 export interface SequenceDb {
   clip: {
@@ -126,6 +144,9 @@ export interface SequenceDb {
   };
   asset: {
     findUnique(a: { where: { id: string } }): Promise<AssetLite | null>;
+  };
+  overlay: {
+    findMany(a: { where: { clipId: string }; orderBy?: unknown }): Promise<OverlayLite[]>;
   };
   sequence: {
     findUnique(a: {
@@ -293,6 +314,78 @@ async function toView(deps: SequenceServiceDeps, seq: SeqRow): Promise<SequenceV
   };
 }
 
+/* ----------------------------------------------------- overlay projection */
+
+/**
+ * The clip's image / GIF overlays, projected as read-through timeline items on a
+ * synthetic OVERLAY track. Hidden overlays and text/emoji overlays (no asset)
+ * are skipped. `null` when the clip has no visible overlays — the caller then
+ * adds nothing.
+ */
+async function overlayItems(
+  deps: SequenceServiceDeps,
+  clipId: string,
+  clipLenMs: number,
+): Promise<{ track: SequenceView["tracks"][number]; items: SequenceItemView[] } | null> {
+  const rows = await deps.db.overlay.findMany({
+    where: { clipId },
+    orderBy: { zIndex: "asc" },
+  });
+  const visible = rows.filter((o) => !o.hidden && o.assetId);
+  if (visible.length === 0) return null;
+
+  const items = await Promise.all(
+    visible.map(async (o): Promise<SequenceItemView> => {
+      const asset = o.assetId ? await deps.db.asset.findUnique({ where: { id: o.assetId } }) : null;
+      const start = Math.max(0, o.startMs ?? 0);
+      const end = Math.max(start + 1, o.endMs ?? clipLenMs);
+      return {
+        id: OVERLAY_ID_PREFIX + o.id,
+        trackId: OVERLAY_TRACK_ID,
+        kind: "image",
+        name: asset?.name ?? o.content ?? "overlay",
+        timelineStart: start,
+        sourceIn: 0,
+        sourceOut: end - start,
+        // Overlays have no fixed source length — allow trimming/extending across
+        // the whole clip.
+        sourceDurationMs: Math.max(clipLenMs, end),
+        sourceUrl: asset ? await deps.storage.createDownloadUrl(asset.storageKey) : null,
+        sourceVideoId: null,
+        sourceAssetId: o.assetId,
+      };
+    }),
+  );
+
+  return {
+    track: {
+      id: OVERLAY_TRACK_ID,
+      // after every real track
+      index: 1_000,
+      kind: "OVERLAY",
+      name: "Overlays",
+      muted: false,
+      locked: false,
+    },
+    items,
+  };
+}
+
+/** Merge the clip's overlay projection into a freshly built sequence view. */
+async function withOverlays(
+  deps: SequenceServiceDeps,
+  view: SequenceView,
+  clipLenMs: number,
+): Promise<SequenceView> {
+  const ov = await overlayItems(deps, view.clipId, clipLenMs);
+  if (!ov) return view;
+  return {
+    ...view,
+    tracks: [...view.tracks, ov.track],
+    items: [...view.items, ...ov.items],
+  };
+}
+
 /* --------------------------------------------------------------- service */
 
 /**
@@ -305,12 +398,13 @@ export async function getOrCreateClipSequence(
   clipId: string,
 ): Promise<SequenceView> {
   const clip = await ownedClip(deps, clipId);
+  const clipLenMs = Math.max(1, clip.endMs - clip.startMs);
 
   const existing = await deps.db.sequence.findUnique({
     where: { clipId },
     include: { tracks: true, items: true },
   });
-  if (existing) return toView(deps, existing);
+  if (existing) return withOverlays(deps, await toView(deps, existing), clipLenMs);
 
   const seq = await deps.db.sequence.create({
     data: { clipId },
@@ -330,7 +424,7 @@ export async function getOrCreateClipSequence(
       order: 0,
     },
   });
-  return toView(deps, { ...seq, tracks: [track], items: [item] });
+  return withOverlays(deps, await toView(deps, { ...seq, tracks: [track], items: [item] }), clipLenMs);
 }
 
 export async function updateSequence(
@@ -339,13 +433,15 @@ export async function updateSequence(
   input: unknown,
 ): Promise<SequenceView> {
   const patch = updateSequenceSchema.parse(input);
-  await ownedSequence(deps, sequenceId);
+  const seq = await ownedSequence(deps, sequenceId);
+  const clip = await deps.db.clip.findUnique({ where: { id: seq.clipId } });
+  const clipLenMs = clip ? Math.max(1, clip.endMs - clip.startMs) : 1;
   const updated = await deps.db.sequence.update({ where: { id: sequenceId }, data: patch });
   const full = await deps.db.sequence.findUnique({
     where: { id: sequenceId },
     include: { tracks: true, items: true },
   });
-  return toView(deps, full ?? updated);
+  return withOverlays(deps, await toView(deps, full ?? updated), clipLenMs);
 }
 
 export async function createSequenceItem(

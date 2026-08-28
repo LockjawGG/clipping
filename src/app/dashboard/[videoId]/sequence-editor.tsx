@@ -43,6 +43,14 @@ interface SequenceView {
   items: SequenceItemView[];
 }
 
+/**
+ * Overlay items are projected onto the timeline from the `Overlay` table with an
+ * `ov_`-prefixed id. Edits to them round-trip to `/api/overlays/:id` (start/end
+ * only), not the sequence-item endpoint, and they can't be split.
+ */
+const isOverlay = (id: string) => id.startsWith("ov_");
+const overlayId = (id: string) => id.slice(3);
+
 const itemToClip = (it: SequenceItemView): TimelineClip => ({
   id: it.id,
   trackId: it.trackId,
@@ -52,6 +60,8 @@ const itemToClip = (it: SequenceItemView): TimelineClip => ({
   sourceIn: it.sourceIn,
   sourceOut: it.sourceOut,
   sourceDuration: it.sourceDurationMs || it.sourceOut,
+  // show the actual image for an injected overlay so it's recognisable at a glance
+  thumbnails: it.kind === "image" && it.sourceUrl ? [it.sourceUrl] : undefined,
 });
 
 const trackToTrack = (t: SequenceView["tracks"][number]): TimelineTrack => ({
@@ -116,7 +126,8 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
     timers.current.delete(id);
     if (!body || Object.keys(body).length === 0) return;
     setSave("saving");
-    void fetch(`/api/sequence-items/${id}`, {
+    const url = isOverlay(id) ? `/api/overlays/${overlayId(id)}` : `/api/sequence-items/${id}`;
+    void fetch(url, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -133,9 +144,31 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
   const persist = useCallback(
     (next: TimelineClip[]) => {
       const base = new Map(serverMirror.current.map((c) => [c.id, c]));
+      // clip length = furthest end of the real (video) items — used to clamp
+      // overlay windows so the overlay PATCH never 422s.
+      const clipLenMs = Math.max(
+        1000,
+        next.filter((c) => !isOverlay(c.id)).reduce((m, c) => Math.max(m, c.start + c.duration), 0),
+      );
       for (const nc of next) {
         const oc = base.get(nc.id);
         if (!oc) continue; // new items are created via their own endpoint
+
+        if (isOverlay(nc.id)) {
+          const moved =
+            nc.start !== oc.start || nc.duration !== oc.duration || nc.sourceOut !== oc.sourceOut;
+          if (!moved) continue;
+          const startMs = Math.min(Math.max(0, Math.round(nc.start)), clipLenMs - 200);
+          const endMs = Math.min(
+            Math.max(startMs + 200, Math.round(nc.start + nc.duration)),
+            clipLenMs,
+          );
+          pending.current.set(nc.id, { startMs, endMs });
+          clearTimeout(timers.current.get(nc.id));
+          timers.current.set(nc.id, setTimeout(() => flush(nc.id), 250));
+          continue;
+        }
+
         const patch: Record<string, unknown> = {};
         if (nc.start !== oc.start) patch.timelineStart = Math.round(nc.start);
         if (nc.sourceIn !== oc.sourceIn) patch.sourceIn = Math.round(nc.sourceIn);
@@ -167,7 +200,10 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
         setFuture([]);
         for (const c of removed) {
           setSave("saving");
-          void fetch(`/api/sequence-items/${c.id}`, { method: "DELETE" })
+          const url = isOverlay(c.id)
+            ? `/api/overlays/${overlayId(c.id)}`
+            : `/api/sequence-items/${c.id}`;
+          void fetch(url, { method: "DELETE" })
             .then((r) => {
               setSave(r.ok ? "saved" : "idle");
               if (r.ok) setTimeout(() => setSave("idle"), 1500);
@@ -215,6 +251,10 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
 
   const onSplit = useCallback(
     async (id: string, atMs: number) => {
+      if (isOverlay(id)) {
+        setError("Overlays can't be split — drag their ends to re-time them.");
+        return;
+      }
       setSave("saving");
       try {
         const res = await fetch(`/api/sequence-items/${id}/split`, {
@@ -314,8 +354,9 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
       {error && <p className="text-xs text-danger">{error}</p>}
       <p className="text-[11px] text-muted">
         Output {seq.width}×{seq.height} · {seq.fps}fps · drag to move, drag an edge to trim, S to
-        split at the playhead, Del to remove, ⌘Z to undo. Non-destructive — the source clip is
-        untouched.
+        split at the playhead, Del to remove, ⌘Z to undo. The <span className="text-fg">Overlays</span>{" "}
+        track shows every image / GIF injected onto this clip — drag it to re-time or trim it here.
+        Non-destructive — the source clip is untouched.
       </p>
     </div>
   );

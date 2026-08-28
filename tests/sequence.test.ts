@@ -45,6 +45,8 @@ function makeDeps(over: Partial<SequenceServiceDeps> = {}) {
   const assets: Record<string, any> = {
     img1: { id: "img1", projectId: "p1", kind: "IMAGE", name: "logo.png", storageKey: "a/logo.png", durationMs: null },
   };
+  /** Overlays on c1, keyed by id. Tests push into this before calling. */
+  const overlays: any[] = [];
 
   const withIncludes = (s: any) => ({
     ...s,
@@ -56,6 +58,10 @@ function makeDeps(over: Partial<SequenceServiceDeps> = {}) {
     clip: { findUnique: async ({ where }) => (clips[where.id] ?? null) as never },
     video: { findUnique: async ({ where }) => (videos[where.id] ?? null) as never },
     asset: { findUnique: async ({ where }) => (assets[where.id] ?? null) as never },
+    overlay: {
+      findMany: async ({ where }) =>
+        overlays.filter((o) => o.clipId === where.clipId) as never,
+    },
     sequence: {
       findUnique: async ({ where }) => {
         const s = where.id
@@ -106,7 +112,7 @@ function makeDeps(over: Partial<SequenceServiceDeps> = {}) {
     },
     ...over,
   };
-  return { deps, sequences, tracks, items };
+  return { deps, sequences, tracks, items, overlays };
 }
 
 // --- schema -------------------------------------------------------------
@@ -142,6 +148,38 @@ test("getOrCreateClipSequence seeds one VIDEO track + the clip window as one ite
   );
   assert.equal(v.items[0].sourceDurationMs, 60000);
   assert.equal(v.items[0].sourceUrl, "https://dl/videos/v1.mp4");
+});
+
+test("getOrCreateClipSequence projects visible overlays onto an OVERLAY track", async () => {
+  const { deps, overlays } = makeDeps();
+  overlays.push(
+    { id: "o1", clipId: "c1", assetId: "img1", content: "logo.png", startMs: 1000, endMs: 4000, hidden: false, zIndex: 1 },
+    { id: "o2", clipId: "c1", assetId: "img1", content: "open-ended", startMs: null, endMs: null, hidden: false, zIndex: 2 },
+    { id: "o3", clipId: "c1", assetId: "img1", content: "hidden one", startMs: 0, endMs: 500, hidden: true, zIndex: 3 },
+  );
+  const v = await getOrCreateClipSequence(deps, "c1");
+
+  const ovTrack = v.tracks.find((t) => t.kind === "OVERLAY");
+  assert.ok(ovTrack, "an OVERLAY track is present");
+  const ovItems = v.items.filter((i) => i.trackId === ovTrack!.id);
+  assert.equal(ovItems.length, 2); // hidden overlay skipped
+
+  const o1 = ovItems.find((i) => i.id === "ov_o1")!;
+  assert.deepEqual([o1.timelineStart, o1.sourceIn, o1.sourceOut], [1000, 0, 3000]);
+  assert.equal(o1.sourceUrl, "https://dl/a/logo.png");
+
+  // open-ended overlay runs to the end of the 10s clip window
+  const o2 = ovItems.find((i) => i.id === "ov_o2")!;
+  assert.deepEqual([o2.timelineStart, o2.sourceOut], [0, 10000]);
+
+  // the base video item is still there
+  assert.equal(v.items.filter((i) => i.kind === "video").length, 1);
+});
+
+test("getOrCreateClipSequence adds no OVERLAY track when there are no overlays", async () => {
+  const { deps } = makeDeps();
+  const v = await getOrCreateClipSequence(deps, "c1");
+  assert.equal(v.tracks.some((t) => t.kind === "OVERLAY"), false);
 });
 
 test("getOrCreateClipSequence is idempotent", async () => {
