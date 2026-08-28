@@ -34,7 +34,7 @@ export function FromUrlForm({ projectId }: { projectId?: string }) {
       <input
         type="url"
         required
-        placeholder="Paste a video link (YouTube, …)"
+        placeholder="Paste a video link (YouTube, Rumble, Vimeo, …)"
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         className="field w-full"

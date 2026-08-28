@@ -13,6 +13,7 @@ import {
   probeHandler,
   transcribeHandler,
 } from "../src/lib/pipeline/handlers.ts";
+import { buildYtDlpArgs } from "../src/lib/pipeline/fetcher.ts";
 
 const SEGMENTS: Segment[] = [
   { startMs: 0, endMs: 15_000, text: "Welcome to the show today.", words: [] },
@@ -225,6 +226,16 @@ test("FETCH downloads the URL, stores it, sets the title, queues PROBE", async (
   assert.equal(spy.statuses.includes("UPLOADED"), true);
   assert.deepEqual(spy.enqueued, [{ videoId: "vid1", kind: "PROBE" }]);
   assert.equal((result as { title: string }).title, "Fetched Title");
+});
+
+test("buildYtDlpArgs adds --impersonate for Cloudflare-fronted hosts (Rumble), omits it when disabled", () => {
+  const withImp = buildYtDlpArgs("https://rumble.com/v6k90ss-x.html", "/tmp/videos/v/source", 5_000_000, "chrome");
+  const i = withImp.indexOf("--impersonate");
+  assert.ok(i >= 0 && withImp[i + 1] === "chrome");
+
+  const without = buildYtDlpArgs("https://rumble.com/v6k90ss-x.html", "/tmp/videos/v/source", 5_000_000, "");
+  assert.equal(without.includes("--impersonate"), false);
+  assert.ok(without.includes("--merge-output-format") && without.includes("--print-json"));
 });
 
 test("FETCH throws without a url in the payload", async () => {

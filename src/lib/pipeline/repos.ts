@@ -299,7 +299,11 @@ export function buildPipelineDeps(): PipelineDeps {
     thumbnails: prismaThumbnailRepo(db),
     captions: new RemotionCaptionRenderer(),
     faces: new NullFaceDetector(),
-    fetcher: new YtDlpFetcher({ binPath: env.YTDLP_PATH, maxBytes: env.MAX_UPLOAD_BYTES }),
+    fetcher: new YtDlpFetcher({
+      binPath: env.YTDLP_PATH,
+      maxBytes: env.MAX_UPLOAD_BYTES,
+      impersonate: env.YTDLP_IMPERSONATE,
+    }),
     queue: { enqueue: (input) => enqueueJob(db, input) },
     tempDir: env.TEMP_DIR,
   };

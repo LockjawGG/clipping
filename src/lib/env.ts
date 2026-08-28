@@ -48,6 +48,9 @@ const schema = z.object({
   FFMPEG_PATH: z.string().default("ffmpeg"),
   FFPROBE_PATH: z.string().default("ffprobe"),
   YTDLP_PATH: z.string().default("yt-dlp"),
+  // Browser fingerprint yt-dlp impersonates (`--impersonate`). Needed for
+  // Rumble and other Cloudflare-fronted hosts. "" disables it.
+  YTDLP_IMPERSONATE: z.string().default("chrome"),
   TEMP_DIR: z.string().default("/tmp/clipper"),
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(5_368_709_120),
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),

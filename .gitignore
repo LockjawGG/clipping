@@ -14,7 +14,8 @@ next-env.d.ts
 # prisma
 /prisma/migrations/dev.db*
 
-# local storage / build artifacts
+# local storage / scratch / build artifacts
 .storage/
+.tmp/
 dist/
 *.log
