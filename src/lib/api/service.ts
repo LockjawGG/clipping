@@ -4,6 +4,7 @@ import { getStorage } from "../storage/index.ts";
 import { enqueueJob } from "../jobs/prisma-store.ts";
 import { getOrCreateProject } from "../auth/session.ts";
 import { ApiError } from "./http.ts";
+import { YtDlpFetcher, type MediaProbe } from "../pipeline/fetcher.ts";
 import type { VideoServiceDeps } from "./videos.ts";
 import type { ClipServiceDeps } from "./clips.ts";
 import type { ProjectServiceDeps } from "./projects.ts";
@@ -93,4 +94,13 @@ export function sequenceService(userId: string): SequenceServiceDeps {
     storage: getStorage(),
     assertProjectOwned: ownsProject(userId),
   };
+}
+
+/** yt-dlp-backed probe for URL analyze + downloader-version endpoints. */
+export function mediaProbe(): MediaProbe {
+  return new YtDlpFetcher({
+    binPath: env.YTDLP_PATH,
+    maxBytes: env.MAX_UPLOAD_BYTES,
+    impersonate: env.YTDLP_IMPERSONATE,
+  });
 }
