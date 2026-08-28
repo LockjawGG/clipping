@@ -78,8 +78,9 @@ model Asset {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
-  project  Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  overlays Overlay[]
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  overlays      Overlay[]
+  sequenceItems SequenceItem[]
 
   @@index([projectId, createdAt])
   @@map("assets")
@@ -120,10 +121,11 @@ model Video {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  project    Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  transcript Transcript?
-  clips      Clip[]
-  jobs       Job[]
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  transcript    Transcript?
+  clips         Clip[]
+  jobs          Job[]
+  sequenceItems SequenceItem[]
 
   @@index([projectId, createdAt])
   @@map("videos")
@@ -263,10 +265,91 @@ model Clip {
   overlays       Overlay[]
   renders        Render[]
   wordStyles     CaptionWordStyle[]
+  sequence       Sequence?
 
   @@index([videoId, startMs])
   @@index([savedToProjectId])
   @@map("clips")
+}
+
+/// An optional non-linear timeline for a clip. When present, the render
+/// composes the sequence items instead of the clip's plain [startMs,endMs] cut.
+/// Absent on a clip = today's behaviour, unchanged.
+model Sequence {
+  id        String   @id @default(cuid())
+  clipId    String   @unique
+  /// Output frame size / rate for this sequence's render (independent of the
+  /// clip's own aspectRatio).
+  width     Int      @default(1080)
+  height    Int      @default(1920)
+  fps       Int      @default(30)
+  /// UI toggle for edge/playhead snapping; does not affect the render.
+  snap      Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clip   Clip            @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  tracks SequenceTrack[]
+  items  SequenceItem[]
+
+  @@map("sequences")
+}
+
+enum SequenceTrackKind {
+  VIDEO
+  AUDIO
+  OVERLAY
+}
+
+model SequenceTrack {
+  id         String            @id @default(cuid())
+  sequenceId String
+  /// Display / stacking order; 0 = top.
+  index      Int
+  kind       SequenceTrackKind @default(VIDEO)
+  name       String
+  muted      Boolean           @default(false)
+  locked     Boolean           @default(false)
+
+  sequence Sequence       @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  items    SequenceItem[]
+
+  @@unique([sequenceId, index])
+  @@index([sequenceId])
+  @@map("sequence_tracks")
+}
+
+/// One placed piece of media on a sequence track. Non-destructive: it references
+/// a slice [sourceIn,sourceOut] of a source and never alters the source bytes.
+model SequenceItem {
+  id         String @id @default(cuid())
+  sequenceId String
+  trackId    String
+
+  /// Exactly one of these. A video item plays a range of a project Video; an
+  /// asset item places an image / GIF / audio bed from the media library.
+  sourceVideoId String?
+  sourceAssetId String?
+
+  /// Position on the sequence timeline (ms) and the slice of the source shown.
+  timelineStart Int
+  sourceIn      Int @default(0)
+  sourceOut     Int
+  /// Left-to-right tiebreak within a track for equal starts.
+  order         Int @default(0)
+
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sequence Sequence      @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  track    SequenceTrack @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  video    Video?        @relation(fields: [sourceVideoId], references: [id], onDelete: Cascade)
+  asset    Asset?        @relation(fields: [sourceAssetId], references: [id], onDelete: Cascade)
+
+  @@index([sequenceId])
+  @@index([trackId, timelineStart])
+  @@map("sequence_items")
 }
 
 enum SubtitlePreset {

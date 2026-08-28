@@ -134,6 +134,14 @@ export function Timeline({
   onSelectClip,
   playing = false,
   onTogglePlay,
+  snap: snapProp,
+  onSnapChange,
+  onSplit,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
+  saveState = "idle",
   onImport,
   className,
 }: TimelineProps) {
@@ -144,6 +152,7 @@ export function Timeline({
     onSelectClip,
     null as string | null,
   );
+  const [snap, setSnap] = useControllable(snapProp, onSnapChange, true);
 
   const [zoom, setZoom] = useState(1);
   const pxPerSec = BASE_PPS * zoom;
@@ -191,9 +200,14 @@ export function Timeline({
     [clips, msToX, playhead],
   );
 
-  /** Snap `edgeX` to the nearest target within SNAP_PX; returns the adjusted delta. */
+  /** Snap `edgeX` to the nearest target within SNAP_PX; returns the adjusted
+   *  delta. A no-op (free positioning) when snapping is toggled off. */
   const applySnap = useCallback(
     (edgeX: number, rawDx: number, excludeId: string) => {
+      if (!snap) {
+        setSnapX(null);
+        return rawDx;
+      }
       let best: number | null = null;
       let bestDist = SNAP_PX;
       for (const t of snapTargets(excludeId)) {
@@ -210,7 +224,7 @@ export function Timeline({
       setSnapX(best);
       return rawDx + (best - edgeX);
     },
-    [snapTargets],
+    [snap, snapTargets],
   );
 
   /* ------------------------------------------------------ clip drag / trim */
@@ -359,11 +373,27 @@ export function Timeline({
   /* ------------------------------------------------------------ keyboard */
 
   const rootRef = useRef<HTMLDivElement>(null);
+
+  /** Split the selected clip at the playhead — only when the playhead is
+   *  strictly inside it. Handled here and by the toolbar button. */
+  const splitAtPlayhead = useCallback(() => {
+    if (!selected || !onSplit) return;
+    const c = clips.find((x) => x.id === selected);
+    if (!c) return;
+    if (playhead > c.start + 1 && playhead < c.start + c.duration - 1) {
+      onSplit(selected, Math.round(playhead));
+    }
+  }, [clips, onSplit, playhead, selected]);
+
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if ((e.target as HTMLElement).closest("input, textarea")) return;
       const frame = e.shiftKey ? 1000 : 1000 / 30;
-      if (e.code === "Space") {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.code === "KeyZ") {
+        e.preventDefault();
+        (e.shiftKey ? onRedo : onUndo)?.();
+      } else if (e.code === "Space") {
         e.preventDefault();
         onTogglePlay?.();
       } else if (e.code === "ArrowLeft") {
@@ -372,12 +402,15 @@ export function Timeline({
       } else if (e.code === "ArrowRight") {
         e.preventDefault();
         setPlayhead(clamp(Math.round(playhead + frame), 0, total));
+      } else if (e.code === "KeyS" && !mod) {
+        e.preventDefault();
+        splitAtPlayhead();
       } else if ((e.code === "Delete" || e.code === "Backspace") && selected) {
         e.preventDefault();
         removeClip(selected);
       }
     },
-    [onTogglePlay, playhead, removeClip, selected, setPlayhead, total],
+    [onRedo, onTogglePlay, onUndo, playhead, removeClip, selected, setPlayhead, splitAtPlayhead, total],
   );
 
   /* ---------------------------------------------------------------- drop */
@@ -431,7 +464,50 @@ export function Timeline({
         <span style={{ color: C.muted }} className="tabular-nums">
           {fmt(playhead, true)} <span style={{ opacity: 0.5 }}>/ {fmt(total)}</span>
         </span>
+
+        {/* edit actions — Undo | Redo | Split | Delete | Snap  (§15) */}
+        <div className="ml-3 flex items-center gap-1">
+          {(onUndo || onRedo) && (
+            <>
+              <TBtn label="Undo (⌘Z)" disabled={!canUndo} onClick={() => onUndo?.()}>
+                ↺
+              </TBtn>
+              <TBtn label="Redo (⌘⇧Z)" disabled={!canRedo} onClick={() => onRedo?.()}>
+                ↻
+              </TBtn>
+              <span style={{ width: 1, height: 16, background: C.border }} />
+            </>
+          )}
+          {onSplit && (
+            <TBtn
+              label="Split at playhead (S)"
+              disabled={!selected}
+              onClick={splitAtPlayhead}
+            >
+              ✂
+            </TBtn>
+          )}
+          <TBtn label="Delete selected (Del)" disabled={!selected} onClick={() => selected && removeClip(selected)}>
+            🗑
+          </TBtn>
+          <TBtn label={`Snap ${snap ? "on" : "off"}`} active={snap} onClick={() => setSnap(!snap)}>
+            🧲
+          </TBtn>
+        </div>
+
+        {saveState !== "idle" && (
+          <span
+            className="ml-2 text-[11px] transition-opacity"
+            style={{ color: saveState === "saved" ? C.accent : C.muted }}
+          >
+            {saveState === "saving" ? "Saving…" : "✓ Saved"}
+          </span>
+        )}
+
         <div className="ml-auto flex items-center gap-1">
+          <TBtn label="Fit timeline" onClick={() => setZoom(1)}>
+            ⤢
+          </TBtn>
           <button
             onClick={() => setZoom((z) => clamp(z / 1.4, MIN_ZOOM, MAX_ZOOM))}
             className="h-7 w-7 rounded-md"
@@ -602,6 +678,41 @@ export function Timeline({
         </div>
       </div>
     </div>
+  );
+}
+
+/* --------------------------------------------------------------- toolbar */
+
+function TBtn({
+  children,
+  label,
+  onClick,
+  disabled,
+  active,
+}: {
+  children: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  active?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+      disabled={disabled}
+      onClick={onClick}
+      className="grid h-7 w-7 place-items-center rounded-md text-[13px] transition-colors disabled:opacity-30"
+      style={{
+        background: active ? C.accent : C.surfaceRaised,
+        color: active ? C.bg : C.text,
+        border: `1px solid ${C.border}`,
+      }}
+    >
+      {children}
+    </button>
   );
 }
 

@@ -11,6 +11,7 @@ import type { TranscriptServiceDeps } from "./transcript.ts";
 import type { AssetServiceDeps } from "./assets.ts";
 import type { OverlayServiceDeps } from "./overlays.ts";
 import type { CaptionStyleServiceDeps } from "./caption-styles.ts";
+import type { SequenceServiceDeps } from "./sequence.ts";
 
 /** Throws 404 unless `projectId` belongs to `userId`. Shared by every service. */
 function ownsProject(userId: string) {
@@ -81,6 +82,15 @@ export function overlayService(userId: string): OverlayServiceDeps {
 export function captionStyleService(userId: string): CaptionStyleServiceDeps {
   return {
     db: db as unknown as CaptionStyleServiceDeps["db"],
+    assertProjectOwned: ownsProject(userId),
+  };
+}
+
+/** Clip-timeline (sequence) deps scoped to the signed-in user. */
+export function sequenceService(userId: string): SequenceServiceDeps {
+  return {
+    db: db as unknown as SequenceServiceDeps["db"],
+    storage: getStorage(),
     assertProjectOwned: ownsProject(userId),
   };
 }

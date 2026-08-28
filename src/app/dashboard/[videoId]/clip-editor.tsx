@@ -8,6 +8,7 @@ import { ClipPlayer, type PreviewWord } from "./clip-player";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
 import { OverlayPanel, type OverlayView } from "./overlay-panel";
 import type { WordStyle, WordStylePatch } from "./editable-transcript";
+import { SequenceEditor } from "./sequence-editor";
 import { ASSET_DND_MIME } from "../media-library";
 
 const ASPECTS = [
@@ -62,6 +63,7 @@ export function ClipEditor({
   const [dropActive, setDropActive] = useState(false);
   const [overlayError, setOverlayError] = useState<string | null>(null);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
+  const [timelineOpen, setTimelineOpen] = useState(false);
   const clipLenMs = Math.max(1, clip.endMs - clip.startMs);
 
   // Overlays are edited optimistically: every move/resize/hide/reorder updates
@@ -606,6 +608,20 @@ export function ClipEditor({
         onDelete={deleteOverlayLocal}
       />
       {overlayError && <p className="text-sm text-danger">{overlayError}</p>}
+
+      {/* Optional non-linear timeline. Opening it once creates the sequence,
+          seeded with this clip's window; a clip with no sequence renders as
+          it always has. */}
+      <details
+        className="group rounded-lg border border-border bg-surface-raised open:pb-3"
+        onToggle={(e) => setTimelineOpen((e.target as HTMLDetailsElement).open)}
+      >
+        <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium text-muted marker:content-none hover:text-text">
+          <span className="inline-block transition-transform group-open:rotate-90">▸</span> Timeline
+          — split &amp; rearrange this clip into pieces
+        </summary>
+        <div className="px-3">{timelineOpen && <SequenceEditor clipId={clip.id} />}</div>
+      </details>
 
       <div className="flex flex-col gap-1.5">
         <p className="text-xs font-medium text-muted">

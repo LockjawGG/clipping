@@ -69,6 +69,23 @@ export interface TimelineProps {
   playing?: boolean;
   onTogglePlay?: () => void;
 
+  /** Edge/playhead snapping. Controlled if paired with `onSnapChange`. */
+  snap?: boolean;
+  onSnapChange?: (on: boolean) => void;
+
+  /** Cut a clip in two at a timeline ms. Fired by the Split button / `S` key
+   *  with the selected clip and the current playhead. */
+  onSplit?: (clipId: string, atMs: number) => void;
+
+  /** Undo / redo — wired to the host's history stack. Buttons hide when absent. */
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+
+  /** Subtle "Saved" affordance in the toolbar: "saving" | "saved" | "idle". */
+  saveState?: "idle" | "saving" | "saved";
+
   /** Files dropped onto an empty track / the empty state. */
   onImport?: (files: File[]) => void;
 
