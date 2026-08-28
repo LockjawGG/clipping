@@ -8,7 +8,10 @@ import {
   normalizeLanguage,
   secToMs,
 } from "../src/lib/transcription/normalize.ts";
-import { parseWhisperJson } from "../src/lib/transcription/whisper-local.ts";
+import {
+  parseWhisperCueEndMs,
+  parseWhisperJson,
+} from "../src/lib/transcription/whisper-local.ts";
 import { parseVerboseJson } from "../src/lib/transcription/openai.ts";
 import { parseDeepgramResponse } from "../src/lib/transcription/deepgram.ts";
 
@@ -111,6 +114,18 @@ test("parseWhisperJson tolerates a missing segments array", () => {
   const r = parseWhisperJson({ language: "en" }, "tiny");
   assert.deepEqual(r.segments, []);
   assert.equal(r.confidence, undefined);
+});
+
+test("parseWhisperCueEndMs reads the cue end from a streamed CLI line", () => {
+  assert.equal(parseWhisperCueEndMs("[00:00.000 --> 00:05.560]  Hello there"), 5_560);
+  // past an hour the CLI adds an HH: field
+  assert.equal(parseWhisperCueEndMs("[01:02:03.500 --> 01:02:09.250]  later"), 3_729_250);
+});
+
+test("parseWhisperCueEndMs ignores non-cue output", () => {
+  assert.equal(parseWhisperCueEndMs("Detected language: English"), null);
+  assert.equal(parseWhisperCueEndMs("UserWarning: FP16 is not supported on CPU"), null);
+  assert.equal(parseWhisperCueEndMs(""), null);
 });
 
 // --- openai verbose_json -------------------------------------------

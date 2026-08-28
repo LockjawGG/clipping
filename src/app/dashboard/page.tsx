@@ -59,7 +59,7 @@ export default async function DashboardPage({
           where: { status: { in: ["QUEUED", "PROCESSING"] } },
           orderBy: { createdAt: "desc" },
           take: 1,
-          select: { progress: true, kind: true },
+          select: { progress: true, kind: true, startedAt: true },
         },
       },
     }),
@@ -85,6 +85,7 @@ export default async function DashboardPage({
       clipCount: v._count.clips,
       progress: v.jobs[0]?.progress ?? 0,
       jobKind: v.jobs[0]?.kind ?? null,
+      startedAtMs: v.jobs[0]?.startedAt?.getTime() ?? null,
     })),
   );
 

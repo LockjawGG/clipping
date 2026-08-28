@@ -347,6 +347,8 @@ model Job {
   errorMessage String?
   // Set on retry with exponential backoff; workers skip rows not yet due.
   runAfter    DateTime @default(now())
+  // Stamped when a worker claims the job; the baseline for progress ETAs.
+  startedAt   DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

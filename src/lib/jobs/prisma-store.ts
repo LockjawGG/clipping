@@ -47,7 +47,12 @@ export function createPrismaJobStore(db: PrismaClient): JobStore {
       // Compare-and-swap: only the worker that flips QUEUED->PROCESSING owns it.
       const res = await db.job.updateMany({
         where: { id, status: "QUEUED" },
-        data: { status: "PROCESSING", attempts: { increment: 1 }, progress: 0 },
+        data: {
+          status: "PROCESSING",
+          attempts: { increment: 1 },
+          progress: 0,
+          startedAt: new Date(),
+        },
       });
       if (res.count === 0) return null;
       const row = await db.job.findUnique({ where: { id } });

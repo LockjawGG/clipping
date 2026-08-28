@@ -110,11 +110,22 @@ export const transcribeHandler: JobHandler<PipelineDeps> = async ({ job, deps, s
   await deps.videos.setStatus(job.videoId, "TRANSCRIBING");
   await setProgress(0.2);
 
+  const video = await deps.videos.get(job.videoId);
+  let lastPct = -1;
   const result = await deps.transcription.transcribe(wav, {
     language: payload.language,
     diarize: payload.diarize,
     wordTimestamps: true,
     signal,
+    durationMs: video?.durationMs ?? undefined,
+    // Decoding 0..1 occupies 0.2..0.9 of the job; saving takes the rest.
+    onProgress: (f) => {
+      const pct = Math.floor(f * 100);
+      if (pct > lastPct) {
+        lastPct = pct;
+        void setProgress(0.2 + f * 0.7).catch(() => {});
+      }
+    },
   });
   const { segmentCount } = await deps.transcripts.save(job.videoId, result);
   await setProgress(0.9);

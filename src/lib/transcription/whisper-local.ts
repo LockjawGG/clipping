@@ -1,8 +1,7 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
-import { promisify } from "node:util";
 
 import {
   ProviderUnavailableError,
@@ -14,7 +13,6 @@ import {
 } from "../providers/types.ts";
 import { clamp01, meanConfidence, normalizeLanguage, secToMs } from "./normalize.ts";
 
-const run = promisify(execFile);
 
 /** Shape of the JSON the OpenAI `whisper` CLI writes with `--output_format json`. */
 interface WhisperJson {
@@ -71,6 +69,22 @@ export interface WhisperLocalOptions {
   tempDir?: string;
 }
 
+/**
+ * The CLI streams each decoded segment as `[MM:SS.mmm --> MM:SS.mmm]  text`
+ * (with an `HH:` field once past an hour). The *end* of the latest cue is how
+ * far into the audio it has got — the only progress signal whisper offers.
+ * Returns the cue end in ms, or null for any other line.
+ */
+export function parseWhisperCueEndMs(line: string): number | null {
+  const m = /-->\s*(?:(\d+):)?(\d{1,2}):(\d{2})\.(\d{1,3})\]/.exec(line);
+  if (!m) return null;
+  const [, h, mm, ss, frac] = m;
+  return (
+    (Number(h ?? 0) * 3600 + Number(mm) * 60 + Number(ss)) * 1000 +
+    Number(frac.padEnd(3, "0"))
+  );
+}
+
 export class WhisperLocalProvider implements TranscriptionProvider {
   readonly name = "whisper-local";
 
@@ -96,7 +110,7 @@ export class WhisperLocalProvider implements TranscriptionProvider {
     if (options.language) args.push("--language", options.language);
 
     try {
-      await run(this.opts.binary, args, { signal: options.signal, maxBuffer: 32 * 1024 * 1024 });
+      await this.run(args, options);
       const jsonPath = join(outDir, `${basename(audioPath, extname(audioPath))}.json`);
       const raw = JSON.parse(await readFile(jsonPath, "utf8")) as WhisperJson;
       return parseWhisperJson(raw, this.opts.model);
@@ -111,5 +125,56 @@ export class WhisperLocalProvider implements TranscriptionProvider {
     } finally {
       await rm(outDir, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * Spawn the CLI, streaming its cue lines so `onProgress` can report how far
+   * into the audio it has decoded. Rejects with an execFile-shaped error so the
+   * ENOENT branch above still works.
+   */
+  private run(args: string[], options: TranscribeOptions): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(this.opts.binary, args, {
+        signal: options.signal,
+        // The CLI is Python; without this its cue lines sit in a block buffer
+        // until exit and `onProgress` never fires mid-run.
+        env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      });
+      let stderr = "";
+      let last = 0;
+
+      const scan = (buf: string): string => {
+        const lines = buf.split("\n");
+        const rest = lines.pop() ?? "";
+        if (!options.onProgress || !options.durationMs) return rest;
+        for (const line of lines) {
+          const endMs = parseWhisperCueEndMs(line);
+          if (endMs === null) continue;
+          const f = Math.min(1, endMs / options.durationMs);
+          if (f > last + 0.005) {
+            last = f;
+            options.onProgress(f);
+          }
+        }
+        return rest;
+      };
+      let outPending = "";
+      let errPending = "";
+
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (c: string) => (outPending = scan(outPending + c)));
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (c: string) => {
+        stderr += c;
+        if (stderr.length > 200_000) stderr = stderr.slice(-100_000);
+        errPending = scan(errPending + c);
+      });
+      child.on("error", reject);
+      child.on("close", (code) => {
+        if (code === 0) return resolve();
+        const tail = stderr.split("\n").filter(Boolean).slice(-3).join("\n").trim();
+        reject(new Error(`whisper exited ${code}${tail ? `:\n${tail}` : ""}`));
+      });
+    });
   }
 }

@@ -39,6 +39,10 @@ export interface TranscribeOptions {
   /** Proper nouns the model routinely mangles. */
   vocabulary?: string[];
   signal?: AbortSignal;
+  /** Total audio length, so a provider can report progress as a fraction. */
+  durationMs?: number;
+  /** Called with 0..1 as transcription advances, when the provider can tell. */
+  onProgress?: (fraction: number) => void;
 }
 
 export interface TranscriptionProvider {

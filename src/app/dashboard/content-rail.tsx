@@ -15,6 +15,7 @@ export interface VideoSummary {
   clipCount: number;
   progress: number; // 0..1 for in-flight ingest, else 0
   jobKind: string | null; // current job's kind, e.g. "FETCH"
+  startedAtMs: number | null; // when the current job was claimed
 }
 
 const STEP_LABEL: Record<string, string> = {
@@ -25,6 +26,21 @@ const STEP_LABEL: Record<string, string> = {
   ANALYZE: "finding clips",
   THUMBNAIL: "thumbnails",
 };
+
+/**
+ * Remaining time for the current step, extrapolated from how long this much
+ * progress took. Null until there is enough signal to not be a wild guess.
+ */
+function etaLabel(progress: number, startedAtMs: number | null, nowMs: number): string | null {
+  if (!nowMs || !startedAtMs || progress < 0.05 || progress >= 1) return null;
+  const elapsed = nowMs - startedAtMs;
+  if (elapsed < 5_000) return null;
+  const remaining = (elapsed / progress) * (1 - progress);
+  if (remaining < 5_000) return "a few seconds left";
+  if (remaining < 90_000) return `~${Math.round(remaining / 1000)}s left`;
+  if (remaining < 90 * 60_000) return `~${Math.round(remaining / 60_000)}m left`;
+  return `~${(remaining / 3_600_000).toFixed(1)}h left`;
+}
 
 const GROUPS: Array<{ key: string; label: string; match: (s: string) => boolean }> = [
   { key: "processing", label: "Processing", match: (s) => !["READY", "FAILED"].includes(s) },
@@ -48,6 +64,14 @@ export function ContentRail({
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [subMenu, setSubMenu] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
+  // Null on the server + first paint so the ETA can't cause a hydration mismatch.
+  const [nowMs, setNowMs] = useState<number | null>(null);
+
+  useEffect(() => {
+    setNowMs(Date.now());
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   // Poll while anything is still ingesting so the rail (and % ) advances on its own.
   useEffect(() => {
@@ -193,7 +217,14 @@ export function ContentRail({
                           </span>
                         </>
                       ) : (
-                        `${STEP_LABEL[v.jobKind ?? ""] ?? "processing"}… ${Math.round(v.progress * 100)}%`
+                        <>
+                          {STEP_LABEL[v.jobKind ?? ""] ?? "processing"}…{" "}
+                          {Math.round(v.progress * 100)}%
+                          {(() => {
+                            const eta = etaLabel(v.progress, v.startedAtMs, nowMs ?? 0);
+                            return eta ? ` · ${eta}` : "";
+                          })()}
+                        </>
                       )}
                     </span>
                     {GROUPS[0].match(v.status) && (
