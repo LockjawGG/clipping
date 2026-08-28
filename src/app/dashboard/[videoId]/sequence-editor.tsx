@@ -62,6 +62,12 @@ const trackToTrack = (t: SequenceView["tracks"][number]): TimelineTrack => ({
   locked: t.locked,
 });
 
+const TIMECODE = (ms: number) => (Math.max(0, ms) / 1000).toFixed(2);
+const parseSec = (s: string): number | null => {
+  const n = Number(s.trim());
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 1000) : null;
+};
+
 export function SequenceEditor({ clipId }: { clipId: string }) {
   const [seq, setSeq] = useState<SequenceView | null>(null);
   const [clips, setClips] = useState<TimelineClip[]>([]);
@@ -70,13 +76,23 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
   const [playhead, setPlayhead] = useState(0);
   const [save, setSave] = useState<"idle" | "saving" | "saved">("idle");
 
+  // undo / redo — move & trim only; split / delete are structural and reset it.
+  const [history, setHistory] = useState<TimelineClip[][]>([]);
+  const [future, setFuture] = useState<TimelineClip[][]>([]);
+
   // per-item coalesced PATCH (move/trim fire many times during a drag)
   const pending = useRef(new Map<string, Record<string, unknown>>());
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  /** Last state we've persisted — the diff base for every PATCH. */
+  const serverMirror = useRef<TimelineClip[]>([]);
 
   const hydrate = useCallback((v: SequenceView) => {
     setSeq(v);
-    setClips(v.items.map(itemToClip));
+    const mapped = v.items.map(itemToClip);
+    setClips(mapped);
+    serverMirror.current = mapped;
+    setHistory([]);
+    setFuture([]);
   }, []);
 
   const load = useCallback(async () => {
@@ -113,29 +129,13 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
       .catch(() => setError("a change didn't save — try again"));
   }, []);
 
-  /** The component hands us the whole array on any move / trim / delete. */
-  const onClipsChange = useCallback(
+  /** Diff `next` against what's persisted and fire a coalesced PATCH per item. */
+  const persist = useCallback(
     (next: TimelineClip[]) => {
-      const prevById = new Map(clips.map((c) => [c.id, c]));
-      const nextIds = new Set(next.map((c) => c.id));
-
-      // deletions
-      for (const c of clips) {
-        if (!nextIds.has(c.id)) {
-          setSave("saving");
-          void fetch(`/api/sequence-items/${c.id}`, { method: "DELETE" })
-            .then((r) => {
-              setSave(r.ok ? "saved" : "idle");
-              if (r.ok) setTimeout(() => setSave("idle"), 1500);
-            })
-            .catch(() => setError("delete didn't save"));
-        }
-      }
-
-      // moves / trims -> coalesced PATCH
+      const base = new Map(serverMirror.current.map((c) => [c.id, c]));
       for (const nc of next) {
-        const oc = prevById.get(nc.id);
-        if (!oc) continue;
+        const oc = base.get(nc.id);
+        if (!oc) continue; // new items are created via their own endpoint
         const patch: Record<string, unknown> = {};
         if (nc.start !== oc.start) patch.timelineStart = Math.round(nc.start);
         if (nc.sourceIn !== oc.sourceIn) patch.sourceIn = Math.round(nc.sourceIn);
@@ -146,10 +146,71 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
         clearTimeout(timers.current.get(nc.id));
         timers.current.set(nc.id, setTimeout(() => flush(nc.id), 250));
       }
+      serverMirror.current = next;
+    },
+    [flush],
+  );
+
+  /** The component hands us the whole array on any move / trim / delete. */
+  const onClipsChange = useCallback(
+    (next: TimelineClip[]) => {
+      const nextIds = new Set(next.map((c) => c.id));
+      const removed = clips.filter((c) => !nextIds.has(c.id));
+
+      if (removed.length === 0) {
+        // move / trim -> undoable
+        setHistory((h) => [...h.slice(-49), clips]);
+        setFuture([]);
+      } else {
+        // structural -> reset history and delete server-side
+        setHistory([]);
+        setFuture([]);
+        for (const c of removed) {
+          setSave("saving");
+          void fetch(`/api/sequence-items/${c.id}`, { method: "DELETE" })
+            .then((r) => {
+              setSave(r.ok ? "saved" : "idle");
+              if (r.ok) setTimeout(() => setSave("idle"), 1500);
+            })
+            .catch(() => setError("delete didn't save"));
+        }
+      }
 
       setClips(next);
+      persist(next);
     },
-    [clips, flush],
+    [clips, persist],
+  );
+
+  const undo = useCallback(() => {
+    setHistory((h) => {
+      if (h.length === 0) return h;
+      const prev = h[h.length - 1];
+      setFuture((f) => [clips, ...f]);
+      setClips(prev);
+      persist(prev);
+      return h.slice(0, -1);
+    });
+  }, [clips, persist]);
+
+  const redo = useCallback(() => {
+    setFuture((f) => {
+      if (f.length === 0) return f;
+      const nextState = f[0];
+      setHistory((h) => [...h, clips]);
+      setClips(nextState);
+      persist(nextState);
+      return f.slice(1);
+    });
+  }, [clips, persist]);
+
+  /** Apply one field change to the selected item through the same path as a drag. */
+  const editSelected = useCallback(
+    (patch: Partial<TimelineClip>) => {
+      if (!selected) return;
+      onClipsChange(clips.map((c) => (c.id === selected ? { ...c, ...patch } : c)));
+    },
+    [clips, onClipsChange, selected],
   );
 
   const onSplit = useCallback(
@@ -198,6 +259,7 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
   }
 
   const contentEnd = clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0);
+  const sel = clips.find((c) => c.id === selected) ?? null;
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -214,13 +276,79 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
         snap={seq.snap}
         onSnapChange={onSnapChange}
         onSplit={(id, atMs) => void onSplit(id, atMs)}
+        onUndo={undo}
+        onRedo={redo}
+        canUndo={history.length > 0}
+        canRedo={future.length > 0}
         saveState={save}
       />
+
+      {/* precise numeric editing for the selected item (§11) */}
+      {sel && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border bg-surface-raised px-3 py-2 text-xs">
+          <span className="min-w-0 max-w-[40%] truncate font-medium" title={sel.name}>
+            {sel.name}
+          </span>
+          <NumField
+            label="Start"
+            value={sel.start}
+            onCommit={(ms) => editSelected({ start: ms })}
+          />
+          <NumField
+            label="End"
+            value={sel.start + sel.duration}
+            onCommit={(ms) =>
+              editSelected({ duration: Math.max(100, ms - sel.start), sourceOut: sel.sourceIn + Math.max(100, ms - sel.start) })
+            }
+          />
+          <NumField
+            label="Duration"
+            value={sel.duration}
+            onCommit={(ms) =>
+              editSelected({ duration: Math.max(100, ms), sourceOut: sel.sourceIn + Math.max(100, ms) })
+            }
+          />
+        </div>
+      )}
+
       {error && <p className="text-xs text-danger">{error}</p>}
       <p className="text-[11px] text-muted">
         Output {seq.width}×{seq.height} · {seq.fps}fps · drag to move, drag an edge to trim, S to
-        split at the playhead, Del to remove. Non-destructive — the source clip is untouched.
+        split at the playhead, Del to remove, ⌘Z to undo. Non-destructive — the source clip is
+        untouched.
       </p>
     </div>
+  );
+}
+
+function NumField({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string;
+  value: number;
+  onCommit: (ms: number) => void;
+}) {
+  return (
+    <label className="flex items-center gap-1.5">
+      <span className="text-muted">{label}</span>
+      <input
+        type="number"
+        min={0}
+        step={0.01}
+        defaultValue={TIMECODE(value)}
+        key={`${label}-${value}`}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+        onBlur={(e) => {
+          const ms = parseSec(e.target.value);
+          if (ms != null && ms !== value) onCommit(ms);
+        }}
+        className="field w-20 font-mono tabular-nums"
+      />
+      <span className="text-muted">s</span>
+    </label>
   );
 }
