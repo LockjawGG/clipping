@@ -2,16 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Discord-flavoured palette. Dark is the reference; light is a muted grey. */
+/* Discord-flavoured palette — a clearly grey backdrop in both themes. */
 :root {
   color-scheme: light dark;
 
-  --c-bg: 242 243 245; /* #f2f3f5 */
+  --c-bg: 227 229 232; /* #e3e5e8 — light grey backdrop */
   --c-surface: 255 255 255; /* #ffffff — cards, rails */
-  --c-surface-raised: 228 230 233; /* #e4e6e9 — inputs, insets, chips */
-  --c-elevated: 233 234 237; /* #e9eaed — buttons */
-  --c-elevated-hover: 220 222 226; /* hover state */
-  --c-border: 214 216 220; /* #d6d8dc */
+  --c-surface-raised: 212 215 219; /* #d4d7db — inputs, insets, chips */
+  --c-elevated: 242 243 245; /* #f2f3f5 — buttons */
+  --c-elevated-hover: 224 226 230; /* hover state */
+  --c-border: 207 210 214; /* #cfd2d6 */
   --c-text: 33 35 40; /* #212328 */
   --c-muted: 91 94 102; /* #5b5e66 */
   --c-accent: 88 101 242; /* #5865f2 blurple */
@@ -21,14 +21,14 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --c-bg: 49 51 56; /* #313338 — main content */
-    --c-surface: 43 45 49; /* #2b2d31 — cards, rails */
-    --c-surface-raised: 30 31 34; /* #1e1f22 — inputs, deep insets */
-    --c-elevated: 63 66 72; /* #3f4248 — buttons */
-    --c-elevated-hover: 78 81 88; /* hover state */
-    --c-border: 59 61 68; /* #3b3d44 */
-    --c-text: 219 222 225; /* #dbdee1 */
-    --c-muted: 148 155 164; /* #949ba4 */
+    --c-bg: 58 60 67; /* #3a3c43 — grey backdrop */
+    --c-surface: 49 51 56; /* #313338 — cards, rails */
+    --c-surface-raised: 41 43 47; /* #292b2f — inputs, deep insets */
+    --c-elevated: 74 77 85; /* #4a4d55 — buttons */
+    --c-elevated-hover: 86 89 99; /* hover state */
+    --c-border: 67 69 77; /* #43454d */
+    --c-text: 227 229 232; /* #e3e5e8 */
+    --c-muted: 163 168 176; /* #a3a8b0 */
     --c-accent: 88 101 242; /* #5865f2 blurple */
     --c-accent-fg: 255 255 255;
     --c-danger: 242 63 67; /* #f23f43 */
