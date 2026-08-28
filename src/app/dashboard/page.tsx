@@ -64,8 +64,8 @@ export default async function DashboardPage({
       },
     }),
     db.clip.findMany({
-      where: { favoritedAt: { not: null }, video: { projectId: activeProjectId } },
-      orderBy: { favoritedAt: "desc" },
+      where: { savedToProjectId: activeProjectId },
+      orderBy: { updatedAt: "desc" },
       select: {
         id: true,
         title: true,
@@ -158,6 +158,7 @@ export default async function DashboardPage({
           clips={clips}
           wordsByClip={wordsByClip}
           transcriptRows={transcriptRows}
+          projects={projects.map((p) => ({ id: p.id, name: p.name }))}
         />
       );
     }

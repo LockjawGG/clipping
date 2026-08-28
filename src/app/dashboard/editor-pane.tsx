@@ -25,12 +25,14 @@ export function EditorPane({
   clips,
   wordsByClip,
   transcriptRows,
+  projects,
 }: {
   video: EditorVideo;
   sourceUrl: string;
   clips: ClipData[];
   wordsByClip: Record<string, PreviewWord[]>;
   transcriptRows: TranscriptRow[];
+  projects: Array<{ id: string; name: string }>;
 }) {
   return (
     <div className="flex flex-col gap-8">
@@ -59,7 +61,12 @@ export function EditorPane({
           <div className="flex flex-col gap-5">
             {clips.map((c) => (
               <div key={c.id} id={`clip-${c.id}`} className="scroll-mt-6">
-                <ClipEditor clip={c} sourceUrl={sourceUrl} words={wordsByClip[c.id] ?? []} />
+                <ClipEditor
+                  clip={c}
+                  sourceUrl={sourceUrl}
+                  words={wordsByClip[c.id] ?? []}
+                  projects={projects}
+                />
               </div>
             ))}
           </div>

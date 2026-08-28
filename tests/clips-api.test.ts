@@ -91,7 +91,7 @@ function makeDeps(
             focalX: 0.5,
             focalY: 0.4,
             accepted: false,
-            favoritedAt: null,
+            savedToProjectId: null,
             caption: null,
             thumbnailKey: "clips/clip1/thumb.jpg",
             subtitleConfig: {

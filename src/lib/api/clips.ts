@@ -31,8 +31,8 @@ export const updateClipSchema = z
     volume: z.number().min(0).max(2),
     playbackRate: z.number().min(0.25).max(4),
     accepted: z.boolean(),
-    /** Star / un-star for the "Saved clips" rail. */
-    favorite: z.boolean(),
+    /** Project to file this clip under for the "Saved clips" rail; null unsaves. */
+    savedToProjectId: z.string().min(1).nullable(),
   })
   .partial()
   .strict();
@@ -84,7 +84,7 @@ interface ClipListRow {
   focalX: number | null;
   focalY: number | null;
   accepted: boolean;
-  favoritedAt: Date | null;
+  savedToProjectId: string | null;
   caption: string | null;
   thumbnailKey: string | null;
   subtitleConfig: {
@@ -217,11 +217,9 @@ export async function updateClip(deps: ClipServiceDeps, clipId: string, input: u
   const endMs = patch.endMs ?? clip.endMs;
   if (endMs <= startMs) throw new ApiError(400, "endMs must be after startMs");
 
-  const { favorite, ...rest } = patch;
-  const data: Record<string, unknown> = { ...rest };
-  if (favorite !== undefined) data.favoritedAt = favorite ? new Date() : null;
+  if (patch.savedToProjectId) await deps.assertProjectOwned(patch.savedToProjectId);
 
-  await deps.db.clip.update({ where: { id: clipId }, data });
+  await deps.db.clip.update({ where: { id: clipId }, data: patch });
   return { id: clipId, ...patch, startMs, endMs };
 }
 
@@ -317,7 +315,7 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
         focalX: c.focalX,
         focalY: c.focalY,
         accepted: c.accepted,
-        favorited: c.favoritedAt !== null,
+        savedToProjectId: c.savedToProjectId,
         caption: c.caption,
         captions: c.subtitleConfig
           ? {

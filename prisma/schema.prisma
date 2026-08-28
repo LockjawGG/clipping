@@ -43,8 +43,9 @@ model Project {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  videos Video[]
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videos     Video[]
+  savedClips Clip[]  @relation("SavedClips")
 
   // Every list query is scoped by owner. Index accordingly.
   @@index([userId, updatedAt])
@@ -190,20 +191,22 @@ model Clip {
   removedWordIds String[] @default([])
 
   accepted  Boolean  @default(false)
-  // Set when the user stars the clip. Independent of `accepted`; drives the
-  // "Saved clips" rail.
-  favoritedAt DateTime?
+  // Project the user filed this clip under. Independent of the source video's
+  // project; drives the per-project "Saved clips" rail. Null = not saved.
+  savedToProjectId String?
   // Poster frame grabbed at the clip midpoint by the THUMBNAIL job.
   thumbnailKey String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   video          Video           @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  savedToProject Project?        @relation("SavedClips", fields: [savedToProjectId], references: [id], onDelete: SetNull)
   subtitleConfig SubtitleConfig?
   overlays       Overlay[]
   renders        Render[]
 
   @@index([videoId, startMs])
+  @@index([savedToProjectId])
   @@map("clips")
 }
 

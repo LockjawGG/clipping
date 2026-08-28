@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { CaptionControls, CAPTION_DEFAULTS, type CaptionConfig } from "./caption-controls";
@@ -24,7 +24,7 @@ export interface ClipData {
   focalX: number | null;
   focalY: number | null;
   accepted: boolean;
-  favorited: boolean;
+  savedToProjectId: string | null;
   captions: CaptionConfig | null;
   thumbnailUrl: string | null;
   render: { id: string; status: string; progress: number; downloadUrl: string | null } | null;
@@ -37,18 +37,54 @@ export function ClipEditor({
   clip,
   sourceUrl,
   words,
+  projects,
 }: {
   clip: ClipData;
   sourceUrl: string;
   words: PreviewWord[];
+  projects: Array<{ id: string; name: string }>;
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState(clip);
-  const [busy, setBusy] = useState<"save" | "render" | "delete" | "thumb" | "star" | null>(null);
+  const [busy, setBusy] = useState<"save" | "render" | "delete" | "thumb" | "save-to" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playheadMs, setPlayheadMs] = useState(0);
   const [captionsOn, setCaptionsOn] = useState(clip.captions !== null);
   const [captionDraft, setCaptionDraft] = useState<CaptionConfig>(clip.captions ?? CAPTION_DEFAULTS);
+  const [saveMenu, setSaveMenu] = useState(false);
+
+  const storageKey = `clip-collapsed:${clip.id}`;
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    try {
+      setCollapsed(localStorage.getItem(storageKey) === "1");
+    } catch {
+      /* private mode */
+    }
+  }, [storageKey]);
+  const toggleCollapsed = () => {
+    setCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem(storageKey, next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!saveMenu) return;
+    const close = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setSaveMenu(false);
+    };
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [saveMenu]);
+
+  const savedProject = projects.find((p) => p.id === clip.savedToProjectId) ?? null;
 
   const rendering = clip.render?.status === "QUEUED" || clip.render?.status === "PROCESSING";
 
@@ -102,14 +138,16 @@ export function ClipEditor({
   const remove = () => call("delete", () => fetch(`/api/clips/${clip.id}`, { method: "DELETE" }));
   const thumbnail = () =>
     call("thumb", () => fetch(`/api/clips/${clip.id}/thumbnail`, { method: "POST" }));
-  const toggleStar = () =>
-    call("star", () =>
+  const saveTo = (projectId: string | null) => {
+    setSaveMenu(false);
+    return call("save-to", () =>
       fetch(`/api/clips/${clip.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ favorite: !clip.favorited }),
+        body: JSON.stringify({ savedToProjectId: projectId }),
       }),
     );
+  };
 
   const setStartToPlayhead = () =>
     setDraft((d) => ({
@@ -132,31 +170,70 @@ export function ClipEditor({
   return (
     <div className="card flex flex-col gap-4 p-4">
       <div className="flex items-start gap-3">
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Expand clip" : "Minimize clip"}
+          className="btn btn-ghost btn-sm mt-1 w-7 shrink-0"
+        >
+          {collapsed ? "▸" : "▾"}
+        </button>
         {/* eslint-disable-next-line @next/next/no-img-element -- signed storage URL */}
         <img
           src={clip.thumbnailUrl ?? undefined}
           alt=""
-          className="h-16 w-28 shrink-0 rounded-lg bg-surface-raised object-cover"
+          className={`shrink-0 rounded-lg bg-surface-raised object-cover ${collapsed ? "h-9 w-16" : "h-16 w-28"}`}
         />
         <input
           value={draft.title}
           onChange={(e) => setDraft({ ...draft, title: e.target.value })}
           className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm font-semibold hover:border-border focus-visible:border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
         />
+        {collapsed && (
+          <span className="shrink-0 self-center font-mono text-xs text-muted">
+            {s(Math.max(0, clip.endMs - clip.startMs))}s
+          </span>
+        )}
         <span className="chip shrink-0">
           {draft.origin === "USER_CREATED" ? "manual" : "AI"}
           {draft.score !== null ? ` · ${draft.score.toFixed(2)}` : ""}
         </span>
-        <button
-          type="button"
-          onClick={toggleStar}
-          disabled={busy !== null}
-          aria-pressed={clip.favorited}
-          aria-label={clip.favorited ? "Unstar clip" : "Star clip"}
-          className={`btn btn-ghost btn-sm shrink-0 ${clip.favorited ? "text-accent" : ""}`}
-        >
-          {clip.favorited ? "★" : "☆"}
-        </button>
+
+        <div ref={menuRef} className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setSaveMenu((v) => !v)}
+            disabled={busy !== null || projects.length === 0}
+            aria-haspopup="menu"
+            aria-expanded={saveMenu}
+            className={`btn btn-ghost btn-sm ${savedProject ? "text-accent" : ""}`}
+          >
+            {busy === "save-to" ? "…" : savedProject ? `✓ ${savedProject.name}` : "Save to ▸"}
+          </button>
+          {saveMenu && (
+            <div className="menu right-0 top-9" role="menu">
+              <p className="px-2 py-1 text-xs text-muted">Save this clip to…</p>
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  role="menuitemradio"
+                  aria-checked={p.id === clip.savedToProjectId}
+                  onClick={() => saveTo(p.id)}
+                >
+                  {p.id === clip.savedToProjectId ? "● " : "○ "}
+                  {p.name}
+                </button>
+              ))}
+              {clip.savedToProjectId && (
+                <button className="text-danger" onClick={() => saveTo(null)}>
+                  Remove from saved
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
         <button
           type="button"
           onClick={thumbnail}
@@ -167,6 +244,8 @@ export function ClipEditor({
         </button>
       </div>
 
+      {!collapsed && (
+      <>
       <ClipPlayer
         sourceUrl={sourceUrl}
         startMs={clip.startMs}
@@ -323,6 +402,8 @@ export function ClipEditor({
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }

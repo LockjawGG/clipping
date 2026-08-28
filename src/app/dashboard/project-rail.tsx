@@ -178,7 +178,9 @@ export function ProjectRail({
 
       <span className="rail-heading">Saved clips</span>
       {favorites.length === 0 ? (
-        <p className="px-2.5 text-xs text-muted">Star a clip to keep it here.</p>
+        <p className="px-2.5 text-xs text-muted">
+          Use “Save to” on a clip to file it here.
+        </p>
       ) : (
         favorites.map((c) => (
           <button
