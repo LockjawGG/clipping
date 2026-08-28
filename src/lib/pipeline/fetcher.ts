@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, readdir, rename, stat } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 /**
@@ -24,10 +24,118 @@ async function normalizeDownload(outputPath: string): Promise<void> {
   await rename(join(dir, produced[0]), outputPath);
 }
 
+/** Delete a half-finished download and any `.part` / `<name>.<ext>` siblings. */
+async function cleanupPartials(outputPath: string): Promise<void> {
+  const dir = dirname(outputPath);
+  const name = basename(outputPath);
+  await rm(outputPath, { force: true }).catch(() => {});
+  try {
+    for (const e of await readdir(dir)) {
+      if (e === name || e.startsWith(`${name}.`) || e.endsWith(".part")) {
+        await rm(join(dir, e), { force: true }).catch(() => {});
+      }
+    }
+  } catch {
+    /* dir may not exist */
+  }
+}
+
+/** Largest source height we pull — the clipper never outputs above 1080p. */
+export const MAX_SOURCE_HEIGHT = 1080;
+
+export type FetchErrorKind =
+  | "unsupported"
+  | "unavailable"
+  | "auth"
+  | "restricted"
+  | "network"
+  | "no_stream"
+  | "too_large"
+  | "not_installed"
+  | "unknown";
+
+/** A fetch failure with a user-facing message plus the raw tail for debugging. */
+export class FetchError extends Error {
+  readonly kind: FetchErrorKind;
+  readonly technical: string;
+
+  constructor(kind: FetchErrorKind, message: string, technical = "") {
+    super(message);
+    this.name = "FetchError";
+    this.kind = kind;
+    this.technical = technical;
+  }
+}
+
+const FRIENDLY: Record<FetchErrorKind, string> = {
+  unsupported: "That link isn’t from a video source this app can read.",
+  unavailable: "The video is unavailable — it may have been removed or made private.",
+  auth: "This video needs an account to access, so it can’t be pulled in automatically.",
+  restricted: "Access to this video is restricted (region-locked or blocked).",
+  network: "Couldn’t reach the video source. Check the connection and try again.",
+  no_stream: "Found the page, but couldn’t get a usable media stream from it.",
+  too_large: "That source is larger than the size limit.",
+  not_installed: "The media downloader (yt-dlp) isn’t installed or isn’t on the path.",
+  unknown: "Couldn’t get media from that link.",
+};
+
+/**
+ * Map a yt-dlp stderr dump to a `{ kind, message }` a normal user can act on.
+ * Pure and order-sensitive: more specific signatures are checked first.
+ */
+export function classifyFetchError(stderr: string): { kind: FetchErrorKind; message: string } {
+  const s = stderr.toLowerCase();
+  const is = (re: RegExp) => re.test(s);
+
+  let kind: FetchErrorKind = "unknown";
+  if (is(/larger than.*max-filesize|file is larger|exceeds the maximum|filesize.*limit/)) {
+    kind = "too_large";
+  } else if (
+    is(/sign in|log ?in|login required|requires authentication|private video|members-only|member's only|age[- ]restricted|confirm your age|use --cookies|this video is only available/)
+  ) {
+    kind = "auth";
+  } else if (
+    is(/not available in your (country|region|location)|geo[- ]?restrict|geoblock|blocked it in your country|content is not available in your|http error 451/)
+  ) {
+    kind = "restricted";
+  } else if (
+    is(/video unavailable|this video (is|has been) (removed|deleted|no longer)|has been removed|is no longer available|content isn'?t available|account (has been )?terminated|this video does not exist|removed by the uploader/)
+  ) {
+    kind = "unavailable";
+  } else if (
+    is(/unable to download (webpage|api page|json|m3u8)|getaddrinfo|failed to resolve|connection (reset|refused|timed out|aborted)|network is unreachable|temporary failure in name resolution|read timed out|timed out|urlopen error|ssl:|remote end closed/)
+  ) {
+    kind = "network";
+  } else if (
+    is(/unsupported url|is not a valid url|no suitable inforextractor|unable to extract webpage|generic.*could not|does not pass url validation/)
+  ) {
+    kind = "unsupported";
+  } else if (
+    is(/requested format is not available|no video formats found|unable to extract (video )?(url|data|formats|player)|there'?s no video|no media found|no formats found|forbidden|http error 403/)
+  ) {
+    kind = "no_stream";
+  }
+  return { kind, message: FRIENDLY[kind] };
+}
+
 export interface FetchResult {
   /** The source's own title, if the downloader reported one. */
   title?: string;
   durationSec?: number;
+}
+
+/** What an analyze/preview step surfaces before committing to a download. */
+export interface ProbeResult {
+  supported: boolean;
+  title?: string;
+  durationSec?: number;
+  thumbnail?: string;
+  /** Extractor name, cleaned for display ("YouTube", "Vimeo", "generic"…). */
+  source?: string;
+  hasVideo: boolean;
+  hasAudio: boolean;
+  approxBytes?: number;
+  isLive: boolean;
 }
 
 /**
@@ -43,6 +151,12 @@ export interface MediaFetcher {
     signal?: AbortSignal,
     onProgress?: (fraction: number) => void,
   ): Promise<FetchResult>;
+}
+
+/** The subset an analyze endpoint needs — no download. */
+export interface MediaProbe {
+  probe(url: string, signal?: AbortSignal): Promise<ProbeResult>;
+  version(): Promise<string | null>;
 }
 
 export interface YtDlpFetcherOptions {
@@ -80,6 +194,9 @@ export function buildYtDlpArgs(
     ...(impersonate ? ["--impersonate", impersonate] : []),
     "--max-filesize",
     `${maxMb}M`,
+    // Never pull more than the clipper can use: prefer <=1080p, muxed mp4.
+    "-S",
+    `res:${MAX_SOURCE_HEIGHT},ext:mp4:m4a`,
     // Prefer a single already-muxed mp4; fall back to bestvideo+bestaudio.
     "-f",
     "b[ext=mp4]/bv*[ext=mp4]+ba[ext=m4a]/b",
@@ -92,8 +209,28 @@ export function buildYtDlpArgs(
   ];
 }
 
+/** Build the yt-dlp argv for an info-only probe (no download). */
+export function buildProbeArgs(url: string, impersonate: string): string[] {
+  return [
+    url,
+    "--no-playlist",
+    "--no-warnings",
+    "--skip-download",
+    "--dump-single-json",
+    ...(impersonate ? ["--impersonate", impersonate] : []),
+  ];
+}
+
+/** Clean an extractor key like `YoutubeTab` / `generic` for display. */
+function displaySource(j: { extractor_key?: string; extractor?: string }): string | undefined {
+  const raw = j.extractor_key || j.extractor;
+  if (!raw) return undefined;
+  if (/^generic$/i.test(raw)) return "generic";
+  return raw.replace(/(Tab|IE|Playlist|Video|User|Channel)$/i, "").replace(/^Youtube$/i, "YouTube");
+}
+
 /** `yt-dlp`-backed fetcher. Requires the binary on PATH (or an explicit path). */
-export class YtDlpFetcher implements MediaFetcher {
+export class YtDlpFetcher implements MediaFetcher, MediaProbe {
   readonly name = "yt-dlp";
 
   private readonly binPath: string;
@@ -124,9 +261,14 @@ export class YtDlpFetcher implements MediaFetcher {
 
       if (spawnError) {
         if ((spawnError as NodeJS.ErrnoException).code === "ENOENT") {
-          throw new Error(`yt-dlp not found: ${this.binPath} (set YTDLP_PATH or install yt-dlp)`);
+          throw new FetchError(
+            "not_installed",
+            FRIENDLY.not_installed,
+            `${this.binPath}: ${spawnError.message}`,
+          );
         }
-        throw new Error(`yt-dlp failed: ${spawnError.message}`);
+        await cleanupPartials(outputPath);
+        throw new FetchError("unknown", FRIENDLY.unknown, spawnError.message);
       }
 
       if (code !== 0) {
@@ -135,8 +277,10 @@ export class YtDlpFetcher implements MediaFetcher {
           impersonate = "";
           continue;
         }
-        const tail = stderr.split("\n").filter(Boolean).slice(-3).join("\n").trim();
-        throw new Error(`yt-dlp failed${tail ? `:\n${tail}` : ` (exit ${code})`}`);
+        await cleanupPartials(outputPath);
+        const tail = stderr.split("\n").filter(Boolean).slice(-4).join("\n").trim();
+        const { kind, message } = classifyFetchError(stderr);
+        throw new FetchError(kind, message, tail || `exit ${code}`);
       }
 
       await normalizeDownload(outputPath);
@@ -148,13 +292,91 @@ export class YtDlpFetcher implements MediaFetcher {
         filesize_approx?: number;
       };
       if (typeof meta.filesize_approx === "number" && meta.filesize_approx > this.maxBytes) {
-        throw new Error(`source is ~${Math.round(meta.filesize_approx / 1e6)}MB, over the limit`);
+        await cleanupPartials(outputPath);
+        throw new FetchError(
+          "too_large",
+          FRIENDLY.too_large,
+          `~${Math.round(meta.filesize_approx / 1e6)}MB`,
+        );
       }
       return {
         title: meta.title?.trim() || undefined,
         durationSec: typeof meta.duration === "number" ? meta.duration : undefined,
       };
     }
+  }
+
+  /** Info-only lookup for the analyze/preview step. Downloads nothing. */
+  async probe(url: string, signal?: AbortSignal): Promise<ProbeResult> {
+    let impersonate = this.impersonate;
+    for (;;) {
+      const { stdout, stderr, code, spawnError } = await this.exec(
+        buildProbeArgs(url, impersonate),
+        signal,
+      );
+      if (spawnError) {
+        if ((spawnError as NodeJS.ErrnoException).code === "ENOENT") {
+          throw new FetchError("not_installed", FRIENDLY.not_installed, spawnError.message);
+        }
+        throw new FetchError("unknown", FRIENDLY.unknown, spawnError.message);
+      }
+      if (code !== 0) {
+        if (impersonate && /impersonat|curl[_ ]?cffi/i.test(stderr)) {
+          impersonate = "";
+          continue;
+        }
+        const tail = stderr.split("\n").filter(Boolean).slice(-4).join("\n").trim();
+        const { kind, message } = classifyFetchError(stderr);
+        throw new FetchError(kind, message, tail || `exit ${code}`);
+      }
+
+      const line = stdout
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.startsWith("{") && l.endsWith("}"))
+        .pop();
+      if (!line) throw new FetchError("no_stream", FRIENDLY.no_stream, "yt-dlp returned no JSON");
+
+      let j = JSON.parse(line) as Record<string, unknown>;
+      if (j._type === "playlist" && Array.isArray(j.entries) && j.entries.length) {
+        j = j.entries[0] as Record<string, unknown>;
+      }
+      const formats = (Array.isArray(j.formats) ? j.formats : []) as Array<{
+        vcodec?: string;
+        acodec?: string;
+        filesize?: number;
+        filesize_approx?: number;
+      }>;
+      const hasVideo =
+        (j.vcodec != null && j.vcodec !== "none") ||
+        formats.some((f) => f.vcodec && f.vcodec !== "none");
+      const hasAudio =
+        (j.acodec != null && j.acodec !== "none") ||
+        formats.some((f) => f.acodec && f.acodec !== "none");
+      const approxBytes =
+        (typeof j.filesize_approx === "number" && j.filesize_approx) ||
+        (typeof j.filesize === "number" && j.filesize) ||
+        formats.reduce((m, f) => Math.max(m, f.filesize ?? f.filesize_approx ?? 0), 0) ||
+        undefined;
+
+      return {
+        supported: true,
+        title: typeof j.title === "string" ? j.title.trim() : undefined,
+        durationSec: typeof j.duration === "number" ? j.duration : undefined,
+        thumbnail: typeof j.thumbnail === "string" ? j.thumbnail : undefined,
+        source: displaySource(j as { extractor_key?: string; extractor?: string }),
+        hasVideo,
+        hasAudio: hasAudio || (!hasVideo && !!j.url), // direct-audio links
+        approxBytes: approxBytes || undefined,
+        isLive: j.is_live === true,
+      };
+    }
+  }
+
+  async version(): Promise<string | null> {
+    const { stdout, code, spawnError } = await this.exec(["--version"]);
+    if (spawnError || code !== 0) return null;
+    return stdout.trim().split("\n")[0] || null;
   }
 
   /**
@@ -210,6 +432,30 @@ export class YtDlpFetcher implements MediaFetcher {
         scan(errPending + "\n");
         resolve({ jsonLine, stderr, code });
       });
+    });
+  }
+
+  /** Non-streaming spawn — buffers stdout/stderr. For `probe` and `version`. */
+  private exec(
+    args: string[],
+    signal?: AbortSignal,
+  ): Promise<{ stdout: string; stderr: string; code: number | null; spawnError?: Error }> {
+    return new Promise((resolve) => {
+      const child = spawn(this.binPath, args, { signal });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (c: string) => {
+        stdout += c;
+        if (stdout.length > 4_000_000) stdout = stdout.slice(-2_000_000);
+      });
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (c: string) => {
+        stderr += c;
+        if (stderr.length > 200_000) stderr = stderr.slice(-100_000);
+      });
+      child.on("error", (spawnError) => resolve({ stdout, stderr, code: null, spawnError }));
+      child.on("close", (code) => resolve({ stdout, stderr, code }));
     });
   }
 }
