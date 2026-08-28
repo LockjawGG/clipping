@@ -58,6 +58,17 @@ export interface VideoDb {
       where: { videoId: string };
     }): Promise<{ language: string } | null>;
   };
+  job: {
+    findMany(args: {
+      where: Record<string, unknown>;
+      orderBy?: unknown;
+      select?: unknown;
+    }): Promise<Array<{ kind: string }>>;
+    updateMany(args: {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }): Promise<{ count: number }>;
+  };
 }
 
 export interface VideoRecord {
@@ -185,6 +196,33 @@ export async function confirmUpload(deps: VideoServiceDeps, videoId: string) {
   const jobId = await deps.enqueue({ videoId, kind: "PROBE" });
 
   return { videoId, status: "UPLOADED" as const, jobId };
+}
+
+/** Kick a stuck / failed ingest: reset its non-completed jobs to run now. */
+export async function retryVideo(deps: VideoServiceDeps, videoId: string) {
+  const video = await ownedVideo(deps, videoId);
+
+  const stuck = await deps.db.job.findMany({
+    where: { videoId, status: { in: ["FAILED", "PROCESSING", "QUEUED"] } },
+    orderBy: { createdAt: "asc" },
+    select: { kind: true },
+  });
+  if (stuck.length === 0) {
+    return { videoId, requeued: 0, note: "nothing to retry" };
+  }
+
+  const res = await deps.db.job.updateMany({
+    where: { videoId, status: { in: ["FAILED", "PROCESSING", "QUEUED"] } },
+    data: { status: "QUEUED", attempts: 0, progress: 0, errorMessage: null, runAfter: new Date() },
+  });
+
+  // Pull the video out of a terminal state so the rail shows it as in-flight;
+  // the handler for the requeued step will set the precise status.
+  if (video.status === "FAILED") {
+    await deps.db.video.update({ where: { id: videoId }, data: { status: "PROBING" } });
+  }
+
+  return { videoId, requeued: res.count };
 }
 
 export async function getVideoStatus(deps: VideoServiceDeps, videoId: string) {

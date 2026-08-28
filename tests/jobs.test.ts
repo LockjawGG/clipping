@@ -107,6 +107,7 @@ class MemoryStore implements JobStore {
       if (r.status === "PROCESSING" && (r.updatedAt?.getTime() ?? 0) < staleBefore.getTime()) {
         r.status = "QUEUED";
         r.runAfter = new Date(this.clock());
+        r.attempts = 0;
         n++;
       }
     }

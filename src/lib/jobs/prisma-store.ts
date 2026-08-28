@@ -85,9 +85,12 @@ export function createPrismaJobStore(db: PrismaClient): JobStore {
     },
 
     async reclaimStale(staleBefore) {
+      // A job in PROCESSING with a dead heartbeat means its worker vanished
+      // (crash, kill, deploy) — the attempt never really ran, so hand it back
+      // with a fresh attempt budget rather than burning one each time.
       const res = await db.job.updateMany({
         where: { status: "PROCESSING", updatedAt: { lt: staleBefore } },
-        data: { status: "QUEUED", runAfter: new Date() },
+        data: { status: "QUEUED", runAfter: new Date(), attempts: 0, progress: 0, errorMessage: null },
       });
       return res.count;
     },

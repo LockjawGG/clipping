@@ -78,6 +78,12 @@ export function ContentRail({
     router.refresh();
   }
 
+  async function retry(videoId: string) {
+    setMenuFor(null);
+    await fetch(`/api/videos/${videoId}/retry`, { method: "POST" });
+    router.refresh();
+  }
+
   async function rename(videoId: string, name: string, original: string) {
     setRenaming(null);
     const trimmed = name.trim();
@@ -168,11 +174,27 @@ export function ContentRail({
                   <span className="min-w-0 flex-1">
                     <span className="block truncate">{v.name}</span>
                     <span className="block truncate text-xs text-muted">
-                      {v.status === "READY"
-                        ? `${v.clipCount} clip${v.clipCount === 1 ? "" : "s"}`
-                        : v.status === "FAILED"
-                          ? "failed"
-                          : `${STEP_LABEL[v.jobKind ?? ""] ?? "processing"}… ${Math.round(v.progress * 100)}%`}
+                      {v.status === "READY" ? (
+                        `${v.clipCount} clip${v.clipCount === 1 ? "" : "s"}`
+                      ) : v.status === "FAILED" ? (
+                        <>
+                          <span className="text-danger">failed</span>
+                          {" · "}
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            className="text-accent underline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              retry(v.id);
+                            }}
+                          >
+                            retry
+                          </span>
+                        </>
+                      ) : (
+                        `${STEP_LABEL[v.jobKind ?? ""] ?? "processing"}… ${Math.round(v.progress * 100)}%`
+                      )}
                     </span>
                     {GROUPS[0].match(v.status) && (
                       <span className="mt-1 block h-1 w-full overflow-hidden rounded-full bg-surface-raised">
@@ -209,6 +231,16 @@ export function ContentRail({
                     >
                       Rename
                     </button>
+                    {v.status !== "READY" && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          retry(v.id);
+                        }}
+                      >
+                        Retry processing
+                      </button>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

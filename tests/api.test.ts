@@ -61,6 +61,10 @@ function fakeDb() {
     },
     clip: { count: async () => 3 },
     transcript: { findUnique: async () => ({ language: "en" }) },
+    job: {
+      findMany: async () => [],
+      updateMany: async () => ({ count: 0 }),
+    },
   };
   return { db, videos };
 }
