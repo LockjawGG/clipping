@@ -15,6 +15,10 @@ export function createPipelineWorker(): JobWorker<PipelineDeps> {
     deps: buildPipelineDeps(),
     handlers: PIPELINE_HANDLERS,
     concurrency: env.WORKER_CONCURRENCY,
+    // CPU-bound steps (whisper) can pin every core and starve this process's
+    // heartbeat timer, so give a job a long grace window before it's reclaimed.
+    leaseMs: 15 * 60_000,
+    heartbeatMs: 20_000,
     // Wipe the job's scratch dir once it's done, whatever the outcome.
     cleanup: (job) => rm(jobWorkDir(env.TEMP_DIR, job.id), { recursive: true, force: true }),
     onError: (job, err) => {

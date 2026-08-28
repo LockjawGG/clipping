@@ -46,10 +46,43 @@ model Project {
   user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   videos     Video[]
   savedClips Clip[]  @relation("SavedClips")
+  assets     Asset[]
 
   // Every list query is scoped by owner. Index accordingly.
   @@index([userId, updatedAt])
   @@map("projects")
+}
+
+enum AssetKind {
+  IMAGE
+  GIF
+  AUDIO
+  SFX
+}
+
+/// Reusable media dropped into a project's library: image / GIF overlays and
+/// audio / SFX beds. Referenced by `Overlay` (visual) and, later, audio tracks.
+model Asset {
+  id         String    @id @default(cuid())
+  projectId  String
+  kind       AssetKind
+  name       String
+  storageKey String    @unique
+  mimeType   String
+  sizeBytes  BigInt?
+  // Intrinsic dimensions for images/GIFs; duration for audio/GIF.
+  width      Int?
+  height     Int?
+  durationMs Int?
+  favoritedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  project  Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  overlays Overlay[]
+
+  @@index([projectId, createdAt])
+  @@map("assets")
 }
 
 enum VideoStatus {
@@ -272,17 +305,22 @@ model Overlay {
   id      String      @id @default(cuid())
   clipId  String
   kind    OverlayKind
+  /// For TEXT: the string. For IMAGE/EMOJI backed by a library asset: unused.
   content String
-  // Normalised layout so overlays survive an aspect-ratio change.
+  /// Set for IMAGE/GIF overlays that point at a library asset.
+  assetId String?
+  // Normalised 0..1 layout so overlays survive an aspect-ratio change.
   x       Float
   y       Float
   scale   Float @default(1.0)
   rotation Float @default(0)
+  opacity Float @default(1.0)
   startMs Int?
   endMs   Int?
   zIndex  Int   @default(0)
 
-  clip Clip @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  clip  Clip   @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  asset Asset? @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
   @@index([clipId])
   @@map("overlays")

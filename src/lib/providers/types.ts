@@ -43,6 +43,8 @@ export interface TranscribeOptions {
   durationMs?: number;
   /** Called with 0..1 as transcription advances, when the provider can tell. */
   onProgress?: (fraction: number) => void;
+  /** Called on any sign of life from the provider — used to keep the job lease alive. */
+  onActivity?: () => void;
 }
 
 export interface TranscriptionProvider {

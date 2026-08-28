@@ -112,6 +112,8 @@ export const transcribeHandler: JobHandler<PipelineDeps> = async ({ job, deps, s
 
   const video = await deps.videos.get(job.videoId);
   let lastPct = -1;
+  let jobFraction = 0.2;
+  let lastBeat = 0;
   const result = await deps.transcription.transcribe(wav, {
     language: payload.language,
     diarize: payload.diarize,
@@ -120,10 +122,19 @@ export const transcribeHandler: JobHandler<PipelineDeps> = async ({ job, deps, s
     durationMs: video?.durationMs ?? undefined,
     // Decoding 0..1 occupies 0.2..0.9 of the job; saving takes the rest.
     onProgress: (f) => {
+      jobFraction = 0.2 + f * 0.7;
       const pct = Math.floor(f * 100);
       if (pct > lastPct) {
         lastPct = pct;
-        void setProgress(0.2 + f * 0.7).catch(() => {});
+        void setProgress(jobFraction).catch(() => {});
+      }
+    },
+    // Touch the row on any output so a slow chunk doesn't look like a dead worker.
+    onActivity: () => {
+      const now = Date.now();
+      if (now - lastBeat > 10_000) {
+        lastBeat = now;
+        void setProgress(jobFraction).catch(() => {});
       }
     },
   });

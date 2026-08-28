@@ -5,10 +5,12 @@ import { currentUserId, getOrCreateProject } from "@/lib/auth/session.ts";
 import { clipService, projectService } from "@/lib/api/service.ts";
 import { listVideoClips } from "@/lib/api/clips.ts";
 import { listProjects } from "@/lib/api/projects.ts";
+import { listAssets } from "@/lib/api/assets.ts";
+import { assetService } from "@/lib/api/service.ts";
 import { getStorage } from "@/lib/storage/index.ts";
 
 import { WorkspaceShell } from "./workspace-shell";
-import { ProjectRail } from "./project-rail";
+import { LeftRail } from "./left-rail";
 import { ContentRail } from "./content-rail";
 import { EditorPane } from "./editor-pane";
 
@@ -45,7 +47,7 @@ export default async function DashboardPage({
 
   const storage = getStorage();
 
-  const [rawVideos, favRows] = await Promise.all([
+  const [rawVideos, favRows, assets] = await Promise.all([
     db.video.findMany({
       where: { projectId: activeProjectId },
       orderBy: { createdAt: "desc" },
@@ -74,6 +76,7 @@ export default async function DashboardPage({
         video: { select: { originalFilename: true } },
       },
     }),
+    listAssets(assetService(userId), activeProjectId),
   ]);
 
   const videos = await Promise.all(
@@ -177,10 +180,11 @@ export default async function DashboardPage({
   return (
     <WorkspaceShell
       left={
-        <ProjectRail
+        <LeftRail
           projects={projects}
           activeProjectId={activeProjectId}
           favorites={favorites}
+          assets={assets}
         />
       }
       right={

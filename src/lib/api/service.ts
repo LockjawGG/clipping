@@ -8,6 +8,7 @@ import type { VideoServiceDeps } from "./videos.ts";
 import type { ClipServiceDeps } from "./clips.ts";
 import type { ProjectServiceDeps } from "./projects.ts";
 import type { TranscriptServiceDeps } from "./transcript.ts";
+import type { AssetServiceDeps } from "./assets.ts";
 
 /** Throws 404 unless `projectId` belongs to `userId`. Shared by every service. */
 function ownsProject(userId: string) {
@@ -51,6 +52,16 @@ export function projectService(userId: string): ProjectServiceDeps {
 export function transcriptService(userId: string): TranscriptServiceDeps {
   return {
     db: db as unknown as TranscriptServiceDeps["db"],
+    assertProjectOwned: ownsProject(userId),
+  };
+}
+
+/** Media-library deps scoped to the signed-in user. */
+export function assetService(userId: string): AssetServiceDeps {
+  return {
+    db: db as unknown as AssetServiceDeps["db"],
+    storage: getStorage(),
+    maxUploadBytes: env.MAX_UPLOAD_BYTES,
     assertProjectOwned: ownsProject(userId),
   };
 }

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { SignOutButton } from "./sign-out-button";
 
 export interface ProjectSummary {
   id: string;
@@ -93,13 +92,8 @@ export function ProjectRail({
   }
 
   return (
-    <nav className="rail px-2 pb-6">
-      <div className="flex items-center justify-between px-2.5 pb-2 pt-4">
-        <span className="text-sm font-semibold">Clipper</span>
-        <SignOutButton />
-      </div>
-
-      <div className="flex items-center justify-between">
+    <nav className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-6">
+      <div className="flex items-center justify-between pt-2">
         <span className="rail-heading">Projects</span>
         <button
           className="btn btn-ghost btn-sm mr-1"

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import os, { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 
 import {
@@ -134,11 +134,18 @@ export class WhisperLocalProvider implements TranscriptionProvider {
    */
   private run(args: string[], options: TranscribeOptions): Promise<void> {
     return new Promise((resolve, reject) => {
+      // Leave a few cores for this process so the job heartbeat keeps firing.
+      const cores = Math.max(1, (os.availableParallelism?.() ?? os.cpus().length) - 3);
       const child = spawn(this.opts.binary, args, {
         signal: options.signal,
-        // The CLI is Python; without this its cue lines sit in a block buffer
-        // until exit and `onProgress` never fires mid-run.
-        env: { ...process.env, PYTHONUNBUFFERED: "1" },
+        env: {
+          ...process.env,
+          // Python is block-buffered on a pipe; without this its cue lines sit
+          // in a buffer until exit and `onProgress` never fires mid-run.
+          PYTHONUNBUFFERED: "1",
+          OMP_NUM_THREADS: String(cores),
+          MKL_NUM_THREADS: String(cores),
+        },
       });
       let stderr = "";
       let last = 0;
@@ -146,6 +153,8 @@ export class WhisperLocalProvider implements TranscriptionProvider {
       const scan = (buf: string): string => {
         const lines = buf.split("\n");
         const rest = lines.pop() ?? "";
+        // Any output at all is a sign of life — keep the lease alive.
+        if (lines.length) options.onActivity?.();
         if (!options.onProgress || !options.durationMs) return rest;
         for (const line of lines) {
           const endMs = parseWhisperCueEndMs(line);
