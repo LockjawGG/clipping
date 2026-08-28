@@ -65,7 +65,7 @@ export function EditorPane({
           </p>
         ) : (
           <div className="flex flex-col gap-5">
-            {clips.map((c) => (
+            {clips.map((c, i) => (
               <div key={c.id} id={`clip-${c.id}`} className="scroll-mt-6">
                 <ClipEditor
                   clip={c}
@@ -75,6 +75,7 @@ export function EditorPane({
                   overlays={overlaysByClip[c.id] ?? []}
                   wordStyles={wordStylesByClip[c.id] ?? {}}
                   projects={projects}
+                  defaultTimelineOpen={i === 0}
                 />
               </div>
             ))}

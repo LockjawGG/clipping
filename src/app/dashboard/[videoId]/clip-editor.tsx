@@ -46,6 +46,7 @@ export function ClipEditor({
   overlays: serverOverlays,
   wordStyles: serverWordStyles,
   projects,
+  defaultTimelineOpen = false,
 }: {
   clip: ClipData;
   sourceUrl: string;
@@ -54,6 +55,7 @@ export function ClipEditor({
   overlays: OverlayView[];
   wordStyles: Record<string, WordStyle>;
   projects: Array<{ id: string; name: string }>;
+  defaultTimelineOpen?: boolean;
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState(clip);
@@ -63,7 +65,7 @@ export function ClipEditor({
   const [dropActive, setDropActive] = useState(false);
   const [overlayError, setOverlayError] = useState<string | null>(null);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
-  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(defaultTimelineOpen);
   const clipLenMs = Math.max(1, clip.endMs - clip.startMs);
 
   // Overlays are edited optimistically: every move/resize/hide/reorder updates
@@ -609,19 +611,32 @@ export function ClipEditor({
       />
       {overlayError && <p className="text-sm text-danger">{overlayError}</p>}
 
-      {/* Optional non-linear timeline. Opening it once creates the sequence,
-          seeded with this clip's window; a clip with no sequence renders as
-          it always has. */}
-      <details
-        className="group rounded-lg border border-border bg-surface-raised open:pb-3"
-        onToggle={(e) => setTimelineOpen((e.target as HTMLDetailsElement).open)}
-      >
-        <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium text-muted marker:content-none hover:text-text">
-          <span className="inline-block transition-transform group-open:rotate-90">▸</span> Timeline
-          — split &amp; rearrange this clip into pieces
-        </summary>
-        <div className="px-3">{timelineOpen && <SequenceEditor clipId={clip.id} />}</div>
-      </details>
+      {/* Non-linear timeline. Opening it once creates the sequence, seeded with
+          this clip's window; a clip whose timeline is never opened renders
+          exactly as before. */}
+      <div className="rounded-xl border border-accent/40 bg-surface-raised">
+        <button
+          type="button"
+          onClick={() => setTimelineOpen((v) => !v)}
+          aria-expanded={timelineOpen}
+          className="flex w-full items-center gap-2 rounded-t-xl px-3 py-2.5 text-sm font-semibold text-accent hover:bg-accent/5"
+        >
+          <span
+            className={`inline-block transition-transform ${timelineOpen ? "rotate-90" : ""}`}
+          >
+            ▸
+          </span>
+          Timeline — split, trim &amp; rearrange this clip into pieces
+          <span className="ml-auto text-xs font-normal text-muted">
+            {timelineOpen ? "hide" : "open editor"}
+          </span>
+        </button>
+        {timelineOpen && (
+          <div className="border-t border-border p-3">
+            <SequenceEditor clipId={clip.id} />
+          </div>
+        )}
+      </div>
 
       <div className="flex flex-col gap-1.5">
         <p className="text-xs font-medium text-muted">
