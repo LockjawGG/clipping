@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { buildCues, toVtt } from "@/lib/captions/layout.ts";
+import type { CaptionConfig } from "./caption-controls";
 
 export interface PreviewWord {
   text: string;
@@ -12,15 +13,14 @@ export interface PreviewWord {
 
 interface Props {
   sourceUrl: string;
-  /** Saved clip window, in source-timeline ms. */
   startMs: number;
   endMs: number;
-  /** Clip-relative words (already rebased to 0 = clip start). */
   words: PreviewWord[];
   captionsOn: boolean;
+  caption: CaptionConfig;
   renderUrl: string | null;
-  /** Fires with the clip-relative playhead position, in ms. */
   onPlayhead: (ms: number) => void;
+  onCaptionLayout: (layout: { positionY: number; alignment: "left" | "center" | "right" }) => void;
 }
 
 type Mode = "source" | "rendered";
@@ -38,25 +38,32 @@ export function ClipPlayer({
   endMs,
   words,
   captionsOn,
+  caption,
   renderUrl,
   onPlayhead,
+  onCaptionLayout,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<Mode>("source");
   const [playing, setPlaying] = useState(false);
   const [posMs, setPosMs] = useState(0);
   const [renderedDurMs, setRenderedDurMs] = useState(0);
+  const [dragging, setDragging] = useState(false);
 
   const spanMs = mode === "source" ? Math.max(1, endMs - startMs) : Math.max(1, renderedDurMs);
   const baseMs = mode === "source" ? startMs : 0;
 
-  // Live caption track — built client-side, no render round-trip.
+  const cues = useMemo(
+    () => buildCues(words as Parameters<typeof buildCues>[0]),
+    [words],
+  );
+  const activeCue = cues.find((c) => posMs >= c.startMs && posMs < c.endMs) ?? null;
+
   const vttUrl = useMemo(() => {
-    if (mode !== "source" || words.length === 0) return null;
-    const cues = buildCues(words as Parameters<typeof buildCues>[0]);
-    if (cues.length === 0) return null;
+    if (mode !== "source" || cues.length === 0) return null;
     return URL.createObjectURL(new Blob([toVtt(cues, 0)], { type: "text/vtt" }));
-  }, [words, mode]);
+  }, [cues, mode]);
 
   useEffect(() => {
     return () => {
@@ -64,15 +71,14 @@ export function ClipPlayer({
     };
   }, [vttUrl]);
 
-  // Toggle the rendered cue track without reloading the video.
+  // The browser <track> is a plain-text fallback; the styled DOM overlay is the
+  // real WYSIWYG, so keep the native cues hidden.
   useEffect(() => {
     const v = videoRef.current;
-    if (!v) return;
-    const track = v.textTracks[0];
-    if (track) track.mode = captionsOn && mode === "source" ? "showing" : "hidden";
-  }, [captionsOn, mode, vttUrl]);
+    const t = v?.textTracks[0];
+    if (t) t.mode = "hidden";
+  }, [vttUrl]);
 
-  // Re-seek to the window start whenever the source/window/mode changes.
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -84,13 +90,12 @@ export function ClipPlayer({
     };
     if (v.readyState >= 1) seek();
     else v.addEventListener("loadedmetadata", seek, { once: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- baseMs derives from these
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceUrl, renderUrl, mode, startMs, endMs]);
 
   function onTimeUpdate() {
     const v = videoRef.current;
     if (!v) return;
-    const rel = v.currentTime * 1000 - baseMs;
     if (mode === "source" && v.currentTime >= endMs / 1000) {
       v.pause();
       v.currentTime = startMs / 1000;
@@ -99,7 +104,7 @@ export function ClipPlayer({
       onPlayhead(0);
       return;
     }
-    const bounded = Math.min(Math.max(0, rel), spanMs);
+    const bounded = Math.min(Math.max(0, v.currentTime * 1000 - baseMs), spanMs);
     setPosMs(bounded);
     onPlayhead(bounded);
   }
@@ -127,13 +132,37 @@ export function ClipPlayer({
     onPlayhead(relMs);
   }
 
+  // --- caption drag ---
+  function onOverlayPointerDown(e: React.PointerEvent) {
+    if (mode !== "source") return;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    setDragging(true);
+  }
+  function onOverlayPointerMove(e: React.PointerEvent) {
+    if (!dragging || !boxRef.current) return;
+    const rect = boxRef.current.getBoundingClientRect();
+    const y = (e.clientY - rect.top) / rect.height;
+    const x = (e.clientX - rect.left) / rect.width;
+    const positionY = Math.min(0.97, Math.max(0.03, y));
+    const alignment = x < 0.34 ? "left" : x > 0.66 ? "right" : "center";
+    onCaptionLayout({ positionY, alignment });
+  }
+  function onOverlayPointerUp(e: React.PointerEvent) {
+    (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
+    setDragging(false);
+  }
+
   const src = mode === "rendered" && renderUrl ? renderUrl : sourceUrl;
+  const scale = (boxRef.current?.clientHeight ?? 480) / 1920;
+  const showOverlay = mode === "source" && captionsOn && activeCue;
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-center overflow-hidden rounded-lg bg-black">
+      <div
+        ref={boxRef}
+        className="relative flex items-center justify-center overflow-hidden rounded-lg bg-black"
+      >
         <video
-          // key forces a fresh element (and track) when the src changes
           key={src}
           ref={videoRef}
           src={src}
@@ -145,10 +174,47 @@ export function ClipPlayer({
           }}
           onEnded={() => setPlaying(false)}
           onClick={togglePlay}
-          className="max-h-[60vh] w-auto max-w-full cursor-pointer"
+          className="max-h-[58vh] w-auto max-w-full cursor-pointer"
         >
-          {vttUrl && <track kind="subtitles" src={vttUrl} default label="Captions" />}
+          {vttUrl && <track kind="subtitles" src={vttUrl} label="Captions" />}
         </video>
+
+        {dragging && (
+          <div className="pointer-events-none absolute inset-x-0 border-t border-dashed border-white/70" />
+        )}
+
+        {showOverlay && (
+          <div
+            onPointerDown={onOverlayPointerDown}
+            onPointerMove={onOverlayPointerMove}
+            onPointerUp={onOverlayPointerUp}
+            style={{
+              position: "absolute",
+              top: `${caption.positionY * 100}%`,
+              left: caption.alignment === "left" ? "6%" : caption.alignment === "right" ? "auto" : "50%",
+              right: caption.alignment === "right" ? "6%" : "auto",
+              transform: caption.alignment === "center" ? "translate(-50%, -50%)" : "translateY(-50%)",
+              maxWidth: "88%",
+              textAlign: caption.alignment,
+              fontFamily: `"${caption.fontFamily}", Inter, sans-serif`,
+              fontWeight: caption.fontWeight,
+              fontSize: Math.max(11, caption.fontSizePx * scale),
+              lineHeight: 1.15,
+              color: caption.textColor,
+              WebkitTextStroke: `${Math.max(0, caption.outlineWidthPx * scale)}px ${caption.outlineColor}`,
+              paintOrder: "stroke fill",
+              background: caption.backgroundColor ?? "transparent",
+              padding: caption.backgroundColor ? "0.15em 0.4em" : 0,
+              borderRadius: caption.backgroundColor ? "0.15em" : 0,
+              textShadow: caption.backgroundColor ? "none" : "0 3px 12px rgba(0,0,0,0.6)",
+              cursor: "grab",
+              touchAction: "none",
+              userSelect: "none",
+            }}
+          >
+            {(caption.uppercase ? activeCue!.lines.join(" ").toUpperCase() : activeCue!.lines.join(" "))}
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-3">
@@ -176,16 +242,9 @@ export function ClipPlayer({
       </div>
 
       {renderUrl && (
-        <div className="flex items-center gap-1 self-start rounded-lg border border-border bg-surface p-0.5 text-xs">
+        <div className="seg self-start">
           {(["source", "rendered"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMode(m)}
-              className={`rounded-md px-2.5 py-1 font-medium capitalize transition-colors ${
-                mode === m ? "bg-accent text-accent-fg" : "text-muted hover:text-text"
-              }`}
-            >
+            <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}>
               {m}
             </button>
           ))}

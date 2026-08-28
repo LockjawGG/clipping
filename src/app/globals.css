@@ -100,6 +100,55 @@ body {
   .switch[aria-checked="true"]::after {
     transform: translateX(1.25rem);
   }
+
+  /* Workspace rails ----------------------------------------------------- */
+  .rail {
+    @apply flex h-full min-h-0 flex-col overflow-y-auto border-border bg-bg;
+  }
+  .rail-item {
+    @apply flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm
+      text-text transition-colors hover:bg-surface-raised focus-visible:outline-none
+      focus-visible:ring-2 focus-visible:ring-accent/60;
+  }
+  .rail-item[aria-current="true"] {
+    @apply bg-surface-raised font-medium;
+  }
+  .rail-heading {
+    @apply px-2.5 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-muted;
+  }
+
+  /* Tabs -------------------------------------------------------------------- */
+  .tabs {
+    @apply inline-flex gap-1 rounded-lg border border-border bg-surface p-0.5;
+  }
+  .tab {
+    @apply rounded-md px-3 py-1 text-xs font-medium text-muted transition-colors
+      hover:text-text focus-visible:outline-none;
+  }
+  .tab[aria-selected="true"] {
+    @apply bg-accent text-accent-fg;
+  }
+
+  /* Segmented control ----------------------------------------------------- */
+  .seg {
+    @apply inline-flex overflow-hidden rounded-lg border border-border text-xs;
+  }
+  .seg > button {
+    @apply px-2.5 py-1 font-medium text-muted transition-colors hover:text-text;
+  }
+  .seg > button[aria-pressed="true"] {
+    @apply bg-accent text-accent-fg;
+  }
+
+  /* Popover menu --------------------------------------------------------- */
+  .menu {
+    @apply absolute z-20 min-w-[10rem] rounded-lg border border-border bg-surface p-1
+      shadow-card;
+  }
+  .menu button {
+    @apply flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm
+      text-text transition-colors hover:bg-surface-raised;
+  }
 }
 
 /* Range inputs pick up the brand hue */

@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import {
   ASPECT_DIMENSIONS,
   type AspectRatio,
+  type CaptionBurnStyle,
   buildCutArgs,
   buildExtractAudioArgs,
   buildProbeArgs,
@@ -99,6 +100,7 @@ export interface ReframeOptions {
   focalX?: number;
   focalY?: number;
   subtitlePath?: string;
+  subtitleStyle?: CaptionBurnStyle;
   blurredBackground?: boolean;
 }
 
@@ -112,6 +114,7 @@ export interface TrackedReframeOptions {
   /** Smoothed/resampled focal-point keyframes; 2+ points. */
   track: FocalPoint[];
   subtitlePath?: string;
+  subtitleStyle?: CaptionBurnStyle;
 }
 
 /** The ffmpeg operations the pipeline needs. Fakeable in tests. */
@@ -201,6 +204,7 @@ export class FfmpegRunner implements Ffmpeg {
         cropX: x,
         cropY: y,
         subtitlePath: opts.subtitlePath,
+        subtitleStyle: opts.subtitleStyle,
       }),
       signal,
     );

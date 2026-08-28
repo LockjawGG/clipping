@@ -91,14 +91,24 @@ function makeDeps(
             focalX: 0.5,
             focalY: 0.4,
             accepted: false,
+            favoritedAt: null,
             caption: null,
             thumbnailKey: "clips/clip1/thumb.jpg",
             subtitleConfig: {
               preset: "CLASSIC",
               animation: "POP",
+              fontFamily: "Inter",
+              fontSizePx: 64,
+              fontWeight: 700,
               textColor: "#FFFFFF",
               highlightColor: "#FFE600",
+              outlineColor: "#000000",
+              outlineWidthPx: 6,
+              backgroundColor: null,
+              alignment: "center",
               positionY: 0.78,
+              maxLines: 2,
+              maxWordsPerCue: 7,
               uppercase: false,
             },
             renders: [{ id: "r1", status: "COMPLETED", progress: 1, outputKey: "renders/r1/output.mp4" }],
@@ -134,7 +144,9 @@ function makeDeps(
   const deps: ClipServiceDeps = {
     db,
     storage: fakeStorage(),
-    ensureProject: async () => "proj1",
+    assertProjectOwned: async (projectId: string) => {
+      if (projectId !== "proj1") throw new ApiError(404, "not found");
+    },
     enqueue: async (input) => {
       enqueued.push(input);
       return `job-${enqueued.length}`;

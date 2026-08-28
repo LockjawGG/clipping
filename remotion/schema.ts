@@ -8,6 +8,8 @@ export const captionStyleSchema = z.object({
   highlightColor: z.string(),
   outlineColor: z.string(),
   outlineWidthPx: z.number(),
+  backgroundColor: z.string().nullable().default(null),
+  alignment: z.enum(["left", "center", "right"]).default("center"),
   positionY: z.number(),
   uppercase: z.boolean(),
 });
@@ -32,6 +34,8 @@ export const captionPresetSchema = z.enum([
   "bounce",
   "fade",
   "karaoke",
+  "slide-up",
+  "typewriter",
 ]);
 
 export const captionedClipSchema = z.object({
@@ -64,6 +68,8 @@ export const DEFAULT_CAPTIONED_CLIP_PROPS: CaptionedClipProps = {
     highlightColor: "#FFE600",
     outlineColor: "#000000",
     outlineWidthPx: 6,
+    backgroundColor: null,
+    alignment: "center",
     positionY: 0.78,
     uppercase: false,
   },

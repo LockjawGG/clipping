@@ -3,11 +3,15 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+export interface TranscriptWord {
+  id: string;
+  text: string;
+}
 export interface TranscriptRow {
   startMs: number;
   endMs: number;
-  text: string;
   speaker: string | null;
+  words: TranscriptWord[];
 }
 
 const secs = (ms: number) => (ms / 1000).toFixed(1);
@@ -15,6 +19,62 @@ const timecode = (ms: number) => {
   const t = Math.round(ms / 1000);
   return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
 };
+
+/** One transcript word: click to correct a typo. Timings are never touched. */
+function EditableWord({ word }: { word: TranscriptWord }) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(word.text);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setEditing(false);
+    const next = value.trim();
+    if (!next || next === word.text) {
+      setValue(word.text);
+      return;
+    }
+    setBusy(true);
+    const res = await fetch(`/api/transcript/words/${word.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: next }),
+    });
+    setBusy(false);
+    if (res.ok) router.refresh();
+    else setValue(word.text);
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") save();
+          if (e.key === "Escape") {
+            setValue(word.text);
+            setEditing(false);
+          }
+        }}
+        size={Math.max(value.length, 2)}
+        className="mx-0.5 rounded border border-accent/60 bg-surface px-1 py-0 text-sm outline-none"
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      className={`rounded px-0.5 hover:bg-accent/15 ${busy ? "opacity-50" : ""}`}
+      title="Click to edit"
+    >
+      {value}
+    </button>
+  );
+}
 
 export function ClipComposer({ videoId, rows }: { videoId: string; rows: TranscriptRow[] }) {
   const router = useRouter();
@@ -47,17 +107,6 @@ export function ClipComposer({ videoId, rows }: { videoId: string; rows: Transcr
       setError(err instanceof Error ? err.message : "something went wrong");
     } finally {
       setBusy(false);
-    }
-  }
-
-  function pick(row: TranscriptRow) {
-    // First click sets the start (and a provisional end); adjust end by clicking
-    // a later line, or edit the fields directly.
-    if (!start || Number(end) <= Number(secs(row.startMs))) {
-      setStart(secs(row.startMs));
-      setEnd(secs(row.endMs));
-    } else {
-      setEnd(secs(row.endMs));
     }
   }
 
@@ -108,24 +157,27 @@ export function ClipComposer({ videoId, rows }: { videoId: string; rows: Transcr
       {rows.length > 0 && (
         <div className="flex flex-col gap-1.5">
           <p className="text-xs text-muted">
-            Transcript — click a line to load its time into the form.
+            Transcript — click a word to fix a typo, or a timecode to load it into the form.
           </p>
-          <ol className="max-h-80 overflow-y-auto rounded-lg border border-border">
+          <ol className="max-h-96 overflow-y-auto rounded-lg border border-border">
             {rows.map((row, i) => (
-              <li key={i}>
+              <li key={i} className="flex gap-3 px-3 py-1.5 text-sm leading-relaxed">
                 <button
                   type="button"
-                  onClick={() => pick(row)}
-                  className="flex w-full gap-3 px-3 py-1.5 text-left text-sm hover:bg-surface-raised"
+                  onClick={() => {
+                    setStart(secs(row.startMs));
+                    setEnd(secs(row.endMs));
+                  }}
+                  className="shrink-0 self-start rounded px-1 font-mono text-xs tabular-nums text-muted hover:bg-surface-raised"
                 >
-                  <span className="shrink-0 font-mono text-xs tabular-nums text-muted">
-                    {timecode(row.startMs)}
-                  </span>
-                  <span>
-                    {row.speaker ? <span className="text-muted">{row.speaker}: </span> : null}
-                    {row.text}
-                  </span>
+                  {timecode(row.startMs)}
                 </button>
+                <span>
+                  {row.speaker ? <span className="text-muted">{row.speaker}: </span> : null}
+                  {row.words.map((w) => (
+                    <EditableWord key={w.id} word={w} />
+                  ))}
+                </span>
               </li>
             ))}
           </ol>

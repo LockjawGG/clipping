@@ -24,6 +24,7 @@ export const createUploadSchema = z.object({
     .regex(/^[-\w.]+\/[-\w.+]+$/, "not a MIME type")
     .refine((v) => v.startsWith("video/"), "must be a video/* content type"),
   sizeBytes: z.number().int().positive(),
+  projectId: z.string().min(1).optional(),
 });
 export type CreateUploadInput = z.infer<typeof createUploadSchema>;
 
@@ -33,6 +34,11 @@ export const createFromUrlSchema = z.object({
     .url()
     .refine((v) => /^https?:\/\//i.test(v), "must be an http(s) URL")
     .refine((v) => v.length <= 2000, "URL is too long"),
+  projectId: z.string().min(1).optional(),
+});
+
+export const updateVideoSchema = z.object({
+  projectId: z.string().min(1),
 });
 
 /** Minimal slice of the Prisma client the upload flow needs. */
@@ -66,9 +72,20 @@ export interface VideoServiceDeps {
   db: VideoDb;
   storage: StorageProvider;
   maxUploadBytes: number;
-  /** Returns the project id new videos are attached to (auth replaces this). */
-  ensureProject: () => Promise<string>;
+  /** The user's default project — new videos land here when none is given. */
+  defaultProjectId: () => Promise<string>;
+  /** Throws 404 unless the project is owned by the signed-in user. */
+  assertProjectOwned: (projectId: string) => Promise<void>;
   enqueue: (input: { videoId: string; kind: JobKind; payload?: unknown }) => Promise<string>;
+}
+
+/** Resolve the target project: validate an explicit one, else the default. */
+async function resolveProjectId(deps: VideoServiceDeps, projectId?: string): Promise<string> {
+  if (projectId) {
+    await deps.assertProjectOwned(projectId);
+    return projectId;
+  }
+  return deps.defaultProjectId();
 }
 
 const SAFE_EXT = /^\.[a-z0-9]{1,8}$/;
@@ -84,7 +101,7 @@ export async function createVideoUpload(deps: VideoServiceDeps, input: unknown) 
     throw new ApiError(413, `file is larger than the ${deps.maxUploadBytes}-byte limit`);
   }
 
-  const projectId = await deps.ensureProject();
+  const projectId = await resolveProjectId(deps, parsed.projectId);
   const storageKey = sourceKey(parsed.filename);
   const uploadUrl = await deps.storage.createUploadUrl(storageKey, parsed.contentType);
 
@@ -106,9 +123,9 @@ export async function createVideoUpload(deps: VideoServiceDeps, input: unknown) 
 
 /** Ingest from a URL: create the row, enqueue FETCH (yt-dlp downloads server-side). */
 export async function createVideoFromUrl(deps: VideoServiceDeps, input: unknown) {
-  const { url } = createFromUrlSchema.parse(input);
+  const { url, projectId: wanted } = createFromUrlSchema.parse(input);
 
-  const projectId = await deps.ensureProject();
+  const projectId = await resolveProjectId(deps, wanted);
   const storageKey = `videos/${randomUUID()}/source.mp4`;
 
   const video = await deps.db.video.create({
@@ -124,12 +141,21 @@ export async function createVideoFromUrl(deps: VideoServiceDeps, input: unknown)
   return { videoId: video.id, jobId, status: "FETCHING" as const };
 }
 
-/** 404 (not 403) for a video the caller's project doesn't own — don't leak ids. */
+/** 404 (not 403) for a video the caller doesn't own — don't leak ids. */
 async function ownedVideo(deps: VideoServiceDeps, videoId: string): Promise<VideoRecord> {
   const video = await deps.db.video.findUnique({ where: { id: videoId } });
-  const projectId = await deps.ensureProject();
-  if (!video || video.projectId !== projectId) throw new ApiError(404, "video not found");
+  if (!video) throw new ApiError(404, "video not found");
+  await deps.assertProjectOwned(video.projectId);
   return video;
+}
+
+/** Move a video into another of the user's projects. */
+export async function updateVideo(deps: VideoServiceDeps, videoId: string, input: unknown) {
+  const { projectId } = updateVideoSchema.parse(input);
+  await ownedVideo(deps, videoId);
+  await deps.assertProjectOwned(projectId);
+  await deps.db.video.update({ where: { id: videoId }, data: { projectId } });
+  return { id: videoId, projectId };
 }
 
 export async function confirmUpload(deps: VideoServiceDeps, videoId: string) {

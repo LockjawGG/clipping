@@ -19,10 +19,12 @@ import {
   buildReframeArgs,
   buildTrackedReframeArgs,
   buildExtractAudioArgs,
+  buildForceStyle,
   buildProbeArgs,
   buildThumbnailArgs,
   assertSafePath,
   escapeFilterPath,
+  type CaptionBurnStyle,
 } from "../src/lib/ffmpeg/args.ts";
 import type { Word, Segment } from "../src/lib/providers/types.ts";
 
@@ -143,6 +145,68 @@ test("toVtt clamps rather than emitting a negative timestamp", () => {
   const vtt = toVtt(cues, 10_000);
   assert.ok(!/-\d/.test(vtt), vtt);
   assert.match(vtt, /00:00:00\.000 --> 00:00:00\.000/);
+});
+
+const burnStyle = (over: Partial<CaptionBurnStyle> = {}): CaptionBurnStyle => ({
+  fontName: "Inter",
+  fontSizePx: 64,
+  fontWeight: 700,
+  textColor: "#FFFFFF",
+  outlineColor: "#000000",
+  outlineWidthPx: 6,
+  backgroundColor: null,
+  alignment: "center",
+  positionY: 0.78,
+  ...over,
+});
+
+test("buildForceStyle converts hex to SSA &H00BBGGRR and sets bold from weight", () => {
+  const s = buildForceStyle(burnStyle({ textColor: "#12ab34", fontWeight: 400 }), {
+    width: 1080,
+    height: 1920,
+  });
+  assert.match(s, /PrimaryColour=&H0034AB12/);
+  assert.match(s, /OutlineColour=&H00000000/);
+  assert.match(s, /Bold=0/);
+  assert.match(s, /Alignment=2/);
+});
+
+test("buildForceStyle derives MarginV from positionY (bottom-anchored, PlayResY space)", () => {
+  const near = buildForceStyle(burnStyle({ positionY: 0.9 }), { width: 1080, height: 1920 });
+  const far = buildForceStyle(burnStyle({ positionY: 0.5 }), { width: 1080, height: 1920 });
+  const mv = (s: string) => Number(/MarginV=(\d+)/.exec(s)![1]);
+  assert.equal(mv(near), Math.round(0.1 * 288));
+  assert.ok(mv(far) > mv(near)); // higher up the frame = larger bottom margin
+});
+
+test("buildForceStyle scales font size into the libass script space", () => {
+  const s = buildForceStyle(burnStyle({ fontSizePx: 96 }), { width: 1080, height: 1920 });
+  assert.equal(Number(/FontSize=(\d+)/.exec(s)![1]), Math.round((96 * 288) / 1920));
+});
+
+test("buildForceStyle switches to an opaque box when a background is set", () => {
+  const box = buildForceStyle(burnStyle({ backgroundColor: "#101010" }), {
+    width: 1080,
+    height: 1920,
+  });
+  assert.match(box, /BorderStyle=3/);
+  assert.match(box, /BackColour=&H00101010/);
+  assert.doesNotMatch(buildForceStyle(burnStyle(), { width: 1080, height: 1920 }), /BorderStyle=3/);
+});
+
+test("buildReframeArgs embeds a styled subtitles filter with comma-escaped force_style", () => {
+  const args = buildReframeArgs({
+    inputPath: "/tmp/in.mp4",
+    outputPath: "/tmp/out.mp4",
+    aspect: "9:16",
+    subtitlePath: "/tmp/captions.srt",
+    subtitleStyle: burnStyle({ alignment: "left" }),
+  });
+  const fc = args[args.indexOf("-filter_complex") + 1];
+  assert.match(fc, /subtitles=[^,]*captions\.srt/);
+  assert.match(fc, /force_style='[^']*Alignment=1[^']*'/);
+  // commas inside force_style are escaped so they don't split the filtergraph
+  assert.match(fc, /FontSize=\d+\\,/);
 });
 
 // --- clip boundaries ------------------------------------------------------

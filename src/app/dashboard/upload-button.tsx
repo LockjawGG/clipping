@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 type Phase = "idle" | "creating" | "uploading" | "starting" | "done" | "error";
 
-export function UploadButton() {
+export function UploadButton({ projectId }: { projectId?: string }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -22,6 +22,7 @@ export function UploadButton() {
           filename: file.name,
           contentType: file.type || "video/mp4",
           sizeBytes: file.size,
+          projectId,
         }),
       });
       if (!createRes.ok) throw new Error((await createRes.json()).error ?? "could not start upload");
@@ -51,7 +52,7 @@ export function UploadButton() {
       <button
         onClick={() => inputRef.current?.click()}
         disabled={busy}
-        className="btn btn-primary"
+        className="btn btn-primary w-full"
       >
         {phase === "idle" && "Upload a video"}
         {phase === "creating" && "Preparing…"}

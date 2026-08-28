@@ -5,7 +5,7 @@ import { DEFAULT_SNAP_CONFIG } from "../clips/boundaries.ts";
 import { refineSuggestions } from "../analysis/pipeline.ts";
 import { buildCues, toSrt } from "../captions/layout.ts";
 import { DEFAULT_CAPTION_STYLE, isAnimatedPreset, remotionPreset } from "../captions/presets.ts";
-import { ASPECT_DIMENSIONS } from "../ffmpeg/args.ts";
+import { ASPECT_DIMENSIONS, type CaptionBurnStyle } from "../ffmpeg/args.ts";
 import { type FocalPoint, resampleTrack } from "../faces/track.ts";
 import type { JobHandler } from "../jobs/types.ts";
 import { jobWorkDir, type PipelineDeps, scratchPath, toAspectPreset } from "./deps.ts";
@@ -242,10 +242,23 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     // Static captions burn during the reframe; animated ones are composited by
     // Remotion afterwards, so the reframe gets no subtitle path.
     let subtitlePath: string | undefined;
+    let subtitleStyle: CaptionBurnStyle | undefined;
     if (staticBurn) {
       subtitlePath = scratchPath(work, "captions.srt");
       await mkdir(dirname(subtitlePath), { recursive: true });
       await writeFile(subtitlePath, toSrt(buildCues(words), target.startMs), "utf8");
+      const cs = target.captionStyle ?? DEFAULT_CAPTION_STYLE;
+      subtitleStyle = {
+        fontName: cs.fontFamily,
+        fontSizePx: cs.fontSizePx,
+        fontWeight: cs.fontWeight,
+        textColor: cs.textColor,
+        outlineColor: cs.outlineColor,
+        outlineWidthPx: cs.outlineWidthPx,
+        backgroundColor: cs.backgroundColor,
+        alignment: cs.alignment,
+        positionY: cs.positionY,
+      };
     }
 
     const aspect = toAspectPreset(target.aspectRatio);
@@ -266,7 +279,12 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     const tracked = focalTrack.length >= 2;
 
     if (needsReframe && tracked) {
-      await deps.ffmpeg.reframeTracked(cut, reframed, { aspect, track: focalTrack, subtitlePath }, signal);
+      await deps.ffmpeg.reframeTracked(
+        cut,
+        reframed,
+        { aspect, track: focalTrack, subtitlePath, subtitleStyle },
+        signal,
+      );
     } else if (needsReframe) {
       await deps.ffmpeg.reframe(
         cut,
@@ -276,6 +294,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
           focalX: target.focalX ?? undefined,
           focalY: target.focalY ?? undefined,
           subtitlePath,
+          subtitleStyle,
         },
         signal,
       );

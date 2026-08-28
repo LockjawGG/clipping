@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export function FromUrlForm() {
+export function FromUrlForm({ projectId }: { projectId?: string }) {
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
@@ -17,7 +17,7 @@ export function FromUrlForm() {
       const res = await fetch("/api/videos/from-url", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: url.trim() }),
+        body: JSON.stringify({ url: url.trim(), projectId }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "could not start");
       setUrl("");
@@ -30,20 +30,18 @@ export function FromUrlForm() {
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-1">
-      <div className="flex items-center gap-2">
-        <input
-          type="url"
-          required
-          placeholder="Paste a video link (YouTube, …)"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          className="field w-72"
-        />
-        <button type="submit" disabled={busy || url.trim() === ""} className="btn">
-          {busy ? "…" : "Add from link"}
-        </button>
-      </div>
+    <form onSubmit={submit} className="flex flex-col gap-2">
+      <input
+        type="url"
+        required
+        placeholder="Paste a video link (YouTube, …)"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        className="field w-full"
+      />
+      <button type="submit" disabled={busy || url.trim() === ""} className="btn w-full">
+        {busy ? "Starting…" : "Add from link"}
+      </button>
       {error && <p className="text-sm text-danger">{error}</p>}
     </form>
   );

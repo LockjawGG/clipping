@@ -76,7 +76,10 @@ function makeDeps(over: Partial<VideoServiceDeps> = {}): {
     db,
     storage: fakeStorage(),
     maxUploadBytes: 5_000_000,
-    ensureProject: async () => "proj1",
+    defaultProjectId: async () => "proj1",
+    assertProjectOwned: async (projectId: string) => {
+      if (projectId !== "proj1") throw new ApiError(404, "not found");
+    },
     enqueue: async (input) => {
       enqueued.push(input);
       return `job-${enqueued.length}`;

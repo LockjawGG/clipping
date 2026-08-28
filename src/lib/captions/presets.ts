@@ -12,7 +12,9 @@ export type CaptionAnimation =
   | "SCALE"
   | "BOUNCE"
   | "FADE"
-  | "KARAOKE";
+  | "KARAOKE"
+  | "SLIDE_UP"
+  | "TYPEWRITER";
 
 export const CAPTION_ANIMATIONS: readonly CaptionAnimation[] = [
   "NONE",
@@ -22,6 +24,8 @@ export const CAPTION_ANIMATIONS: readonly CaptionAnimation[] = [
   "BOUNCE",
   "FADE",
   "KARAOKE",
+  "SLIDE_UP",
+  "TYPEWRITER",
 ] as const;
 
 /** True when the preset needs the Remotion path rather than the ffmpeg burn. */
@@ -29,8 +33,18 @@ export function isAnimatedPreset(animation: string | null | undefined): boolean 
   return animation !== null && animation !== undefined && animation !== "NONE";
 }
 
+export type RemotionCaptionPreset =
+  | "word-by-word"
+  | "pop"
+  | "scale"
+  | "bounce"
+  | "fade"
+  | "karaoke"
+  | "slide-up"
+  | "typewriter";
+
 /** The string the Remotion `CaptionedClip` composition expects. */
-export function remotionPreset(animation: string): "word-by-word" | "pop" | "scale" | "bounce" | "fade" | "karaoke" {
+export function remotionPreset(animation: string): RemotionCaptionPreset {
   switch (animation) {
     case "POP":
       return "pop";
@@ -42,6 +56,10 @@ export function remotionPreset(animation: string): "word-by-word" | "pop" | "sca
       return "fade";
     case "KARAOKE":
       return "karaoke";
+    case "SLIDE_UP":
+      return "slide-up";
+    case "TYPEWRITER":
+      return "typewriter";
     default:
       return "word-by-word";
   }
@@ -55,6 +73,9 @@ export interface CaptionStyle {
   highlightColor: string;
   outlineColor: string;
   outlineWidthPx: number;
+  /** `#rrggbb` for an opaque caption box, or null for outline-only. */
+  backgroundColor: string | null;
+  alignment: "left" | "center" | "right";
   /** 0..1 from the top of the frame. */
   positionY: number;
   uppercase: boolean;
@@ -68,6 +89,8 @@ export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   highlightColor: "#FFE600",
   outlineColor: "#000000",
   outlineWidthPx: 6,
+  backgroundColor: null,
+  alignment: "center",
   positionY: 0.78,
   uppercase: false,
 };

@@ -60,6 +60,78 @@ export function escapeFilterPath(path: string): string {
     .replace(/\]/g, "\\]");
 }
 
+/** Style for the burned-in (static) caption path — mapped to libass force_style. */
+export interface CaptionBurnStyle {
+  fontName: string;
+  fontSizePx: number;
+  /** >= 700 renders bold. */
+  fontWeight: number;
+  textColor: string;
+  outlineColor: string;
+  outlineWidthPx: number;
+  /** `#rrggbb` for an opaque caption box, or null for outline-only. */
+  backgroundColor: string | null;
+  alignment: "left" | "center" | "right";
+  /** 0 = top of frame, 1 = bottom. */
+  positionY: number;
+}
+
+/** `#RRGGBB` → SSA `&H00BBGGRR` (alpha 00 = fully opaque). */
+function hexToAss(hex: string): string {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+  const rgb = m ? m[1] : "FFFFFF";
+  const r = rgb.slice(0, 2);
+  const g = rgb.slice(2, 4);
+  const b = rgb.slice(4, 6);
+  return `&H00${b}${g}${r}`.toUpperCase();
+}
+
+const ASS_ALIGNMENT: Record<CaptionBurnStyle["alignment"], number> = {
+  left: 1,
+  center: 2,
+  right: 3,
+};
+
+/**
+ * libass renders an SRT in its default script space (PlayResY = 288) and scales
+ * that up to the frame, so `force_style` sizes/margins are expressed there, not
+ * in output pixels. We convert the caller's pixel-space values with this factor.
+ */
+const PLAY_RES_Y = 288;
+
+/** Build a libass `force_style=` value from a pixel-space caption style. */
+export function buildForceStyle(
+  style: CaptionBurnStyle,
+  dims: { width: number; height: number },
+): string {
+  const k = PLAY_RES_Y / dims.height;
+  // Bottom-anchored: distance of the text from the bottom edge.
+  const marginV = Math.max(
+    4,
+    Math.min(PLAY_RES_Y - 4, Math.round((1 - style.positionY) * PLAY_RES_Y)),
+  );
+  const parts: Array<[string, string | number]> = [
+    ["FontName", style.fontName],
+    ["FontSize", Math.max(6, Math.round(style.fontSizePx * k))],
+    ["PrimaryColour", hexToAss(style.textColor)],
+    ["OutlineColour", hexToAss(style.outlineColor)],
+    ["Bold", style.fontWeight >= 700 ? -1 : 0],
+    ["Outline", Math.max(0, Math.round(style.outlineWidthPx * k))],
+    ["Shadow", 0],
+    ["Alignment", ASS_ALIGNMENT[style.alignment]],
+    ["MarginV", marginV],
+    ["MarginL", Math.round(48 * k)],
+    ["MarginR", Math.round(48 * k)],
+  ];
+  if (style.backgroundColor) {
+    // BorderStyle 3 draws an opaque box behind the text.
+    parts.push(["BorderStyle", 3], ["BackColour", hexToAss(style.backgroundColor)]);
+  } else {
+    parts.push(["BorderStyle", 1]);
+  }
+  return parts.map(([key, v]) => `${key}=${v}`).join(",");
+}
+
 function msToTimestamp(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) throw new Error(`invalid timestamp: ${ms}`);
   const totalSeconds = ms / 1000;
@@ -148,7 +220,26 @@ export interface ReframeArgs {
   focalX?: number;
   focalY?: number;
   subtitlePath?: string;
+  /** Applied to `subtitlePath` as libass `force_style`. */
+  subtitleStyle?: CaptionBurnStyle;
   blurredBackground?: boolean;
+}
+
+/** The `subtitles=` filter entry, styled when a `CaptionBurnStyle` is given. */
+function subtitlesFilter(
+  subtitlePath: string,
+  dims: { width: number; height: number },
+  style?: CaptionBurnStyle,
+): string {
+  assertSafePath(subtitlePath);
+  let f = `subtitles=${escapeFilterPath(subtitlePath)}`;
+  if (style) {
+    // The commas inside force_style would otherwise be read as filtergraph
+    // separators (the surrounding quotes are not enough inside -filter_complex).
+    const forced = buildForceStyle(style, dims).replace(/,/g, "\\,");
+    f += `:force_style='${forced}'`;
+  }
+  return f;
 }
 
 /**
@@ -165,6 +256,7 @@ export function buildReframeArgs({
   focalX = 0.5,
   focalY = 0.5,
   subtitlePath,
+  subtitleStyle,
   blurredBackground = false,
 }: ReframeArgs): string[] {
   assertSafePath(inputPath);
@@ -197,8 +289,7 @@ export function buildReframeArgs({
   filters.push("setsar=1");
 
   if (subtitlePath) {
-    assertSafePath(subtitlePath);
-    filters.push(`subtitles=${escapeFilterPath(subtitlePath)}`);
+    filters.push(subtitlesFilter(subtitlePath, { width, height }, subtitleStyle));
   }
 
   return [
@@ -223,6 +314,8 @@ export interface TrackedReframeArgs {
   cropX: string;
   cropY: string;
   subtitlePath?: string;
+  /** Applied to `subtitlePath` as libass `force_style`. */
+  subtitleStyle?: CaptionBurnStyle;
 }
 
 /**
@@ -238,6 +331,7 @@ export function buildTrackedReframeArgs({
   cropX,
   cropY,
   subtitlePath,
+  subtitleStyle,
 }: TrackedReframeArgs): string[] {
   assertSafePath(inputPath);
   assertSafePath(outputPath);
@@ -256,8 +350,7 @@ export function buildTrackedReframeArgs({
     "setsar=1",
   ];
   if (subtitlePath) {
-    assertSafePath(subtitlePath);
-    filters.push(`subtitles=${escapeFilterPath(subtitlePath)}`);
+    filters.push(subtitlesFilter(subtitlePath, { width, height }, subtitleStyle));
   }
 
   return [

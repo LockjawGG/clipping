@@ -3,8 +3,22 @@ import { db } from "../db.ts";
 import { getStorage } from "../storage/index.ts";
 import { enqueueJob } from "../jobs/prisma-store.ts";
 import { getOrCreateProject } from "../auth/session.ts";
+import { ApiError } from "./http.ts";
 import type { VideoServiceDeps } from "./videos.ts";
 import type { ClipServiceDeps } from "./clips.ts";
+import type { ProjectServiceDeps } from "./projects.ts";
+import type { TranscriptServiceDeps } from "./transcript.ts";
+
+/** Throws 404 unless `projectId` belongs to `userId`. Shared by every service. */
+function ownsProject(userId: string) {
+  return async (projectId: string): Promise<void> => {
+    const project = await db.project.findUnique({
+      where: { id: projectId },
+      select: { userId: true },
+    });
+    if (!project || project.userId !== userId) throw new ApiError(404, "not found");
+  };
+}
 
 /** Video-service deps scoped to the signed-in user. */
 export function videoService(userId: string): VideoServiceDeps {
@@ -12,7 +26,8 @@ export function videoService(userId: string): VideoServiceDeps {
     db: db as unknown as VideoServiceDeps["db"],
     storage: getStorage(),
     maxUploadBytes: env.MAX_UPLOAD_BYTES,
-    ensureProject: () => getOrCreateProject(db, userId),
+    defaultProjectId: () => getOrCreateProject(db, userId),
+    assertProjectOwned: ownsProject(userId),
     enqueue: (input) => enqueueJob(db, input),
   };
 }
@@ -22,7 +37,20 @@ export function clipService(userId: string): ClipServiceDeps {
   return {
     db: db as unknown as ClipServiceDeps["db"],
     storage: getStorage(),
-    ensureProject: () => getOrCreateProject(db, userId),
+    assertProjectOwned: ownsProject(userId),
     enqueue: (input) => enqueueJob(db, input),
+  };
+}
+
+/** Project-service deps scoped to the signed-in user. */
+export function projectService(userId: string): ProjectServiceDeps {
+  return { db: db as unknown as ProjectServiceDeps["db"], userId };
+}
+
+/** Transcript-editing deps scoped to the signed-in user. */
+export function transcriptService(userId: string): TranscriptServiceDeps {
+  return {
+    db: db as unknown as TranscriptServiceDeps["db"],
+    assertProjectOwned: ownsProject(userId),
   };
 }

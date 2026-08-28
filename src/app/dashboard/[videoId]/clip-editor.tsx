@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { CaptionControls, type CaptionConfig } from "./caption-controls";
+import { CaptionControls, CAPTION_DEFAULTS, type CaptionConfig } from "./caption-controls";
 import { ClipPlayer, type PreviewWord } from "./clip-player";
 
 const ASPECTS = [
@@ -24,6 +24,7 @@ export interface ClipData {
   focalX: number | null;
   focalY: number | null;
   accepted: boolean;
+  favorited: boolean;
   captions: CaptionConfig | null;
   thumbnailUrl: string | null;
   render: { id: string; status: string; progress: number; downloadUrl: string | null } | null;
@@ -43,10 +44,11 @@ export function ClipEditor({
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState(clip);
-  const [busy, setBusy] = useState<"save" | "render" | "delete" | "thumb" | null>(null);
+  const [busy, setBusy] = useState<"save" | "render" | "delete" | "thumb" | "star" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playheadMs, setPlayheadMs] = useState(0);
   const [captionsOn, setCaptionsOn] = useState(clip.captions !== null);
+  const [captionDraft, setCaptionDraft] = useState<CaptionConfig>(clip.captions ?? CAPTION_DEFAULTS);
 
   const rendering = clip.render?.status === "QUEUED" || clip.render?.status === "PROCESSING";
 
@@ -59,7 +61,7 @@ export function ClipEditor({
     draft.focalY !== clip.focalY ||
     draft.accepted !== clip.accepted;
 
-  async function call(kind: "save" | "render" | "delete" | "thumb", req: () => Promise<Response>) {
+  async function call(kind: NonNullable<typeof busy>, req: () => Promise<Response>) {
     setBusy(kind);
     setError(null);
     try {
@@ -100,8 +102,15 @@ export function ClipEditor({
   const remove = () => call("delete", () => fetch(`/api/clips/${clip.id}`, { method: "DELETE" }));
   const thumbnail = () =>
     call("thumb", () => fetch(`/api/clips/${clip.id}/thumbnail`, { method: "POST" }));
+  const toggleStar = () =>
+    call("star", () =>
+      fetch(`/api/clips/${clip.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ favorite: !clip.favorited }),
+      }),
+    );
 
-  /** Set a boundary to `clip.start + playhead`, keeping a minimum length. */
   const setStartToPlayhead = () =>
     setDraft((d) => ({
       ...d,
@@ -122,7 +131,6 @@ export function ClipEditor({
 
   return (
     <div className="card flex flex-col gap-4 p-4">
-      {/* Header */}
       <div className="flex items-start gap-3">
         {/* eslint-disable-next-line @next/next/no-img-element -- signed storage URL */}
         <img
@@ -141,6 +149,16 @@ export function ClipEditor({
         </span>
         <button
           type="button"
+          onClick={toggleStar}
+          disabled={busy !== null}
+          aria-pressed={clip.favorited}
+          aria-label={clip.favorited ? "Unstar clip" : "Star clip"}
+          className={`btn btn-ghost btn-sm shrink-0 ${clip.favorited ? "text-accent" : ""}`}
+        >
+          {clip.favorited ? "★" : "☆"}
+        </button>
+        <button
+          type="button"
           onClick={thumbnail}
           disabled={busy !== null}
           className="btn btn-ghost btn-sm shrink-0"
@@ -149,18 +167,18 @@ export function ClipEditor({
         </button>
       </div>
 
-      {/* Player */}
       <ClipPlayer
         sourceUrl={sourceUrl}
         startMs={clip.startMs}
         endMs={clip.endMs}
         words={words}
         captionsOn={captionsOn}
+        caption={captionDraft}
         renderUrl={clip.render?.downloadUrl ?? null}
         onPlayhead={setPlayheadMs}
+        onCaptionLayout={(l) => setCaptionDraft((d) => ({ ...d, ...l }))}
       />
 
-      {/* Trim toolbar */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-surface-raised px-3 py-2 text-sm">
         <button type="button" onClick={setStartToPlayhead} className="btn btn-sm">
           ⇤ Set start
@@ -218,7 +236,6 @@ export function ClipEditor({
         </span>
       </div>
 
-      {/* Framing */}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-3 text-sm">
         <label className="flex items-center gap-1.5">
           aspect
@@ -262,23 +279,20 @@ export function ClipEditor({
 
       <CaptionControls
         clipId={clip.id}
-        current={clip.captions}
+        exists={clip.captions !== null}
         captionsOn={captionsOn}
         onCaptionsOnChange={setCaptionsOn}
+        value={captionDraft}
+        onChange={setCaptionDraft}
       />
 
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      {/* Actions */}
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <button onClick={save} disabled={!dirty || busy !== null} className="btn btn-primary">
           {busy === "save" ? "…" : "Save"}
         </button>
-        <button
-          onClick={saveAndRender}
-          disabled={busy !== null || rendering}
-          className="btn"
-        >
+        <button onClick={saveAndRender} disabled={busy !== null || rendering} className="btn">
           {busy === "render" || rendering ? "Rendering…" : "Save & render"}
         </button>
         <button

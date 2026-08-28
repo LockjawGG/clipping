@@ -183,6 +183,8 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
                   highlightColor: true,
                   outlineColor: true,
                   outlineWidthPx: true,
+                  backgroundColor: true,
+                  alignment: true,
                   positionY: true,
                   uppercase: true,
                 },
@@ -215,6 +217,10 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
               highlightColor: sc.highlightColor,
               outlineColor: sc.outlineColor,
               outlineWidthPx: sc.outlineWidthPx,
+              backgroundColor: sc.backgroundColor,
+              alignment: (sc.alignment === "left" || sc.alignment === "right"
+                ? sc.alignment
+                : "center") as "left" | "center" | "right",
               positionY: sc.positionY,
               uppercase: sc.uppercase,
             }

@@ -31,6 +31,8 @@ export const updateClipSchema = z
     volume: z.number().min(0).max(2),
     playbackRate: z.number().min(0.25).max(4),
     accepted: z.boolean(),
+    /** Star / un-star for the "Saved clips" rail. */
+    favorite: z.boolean(),
   })
   .partial()
   .strict();
@@ -53,8 +55,12 @@ export const captionConfigSchema = z
     textColor: hexColor,
     highlightColor: hexColor,
     outlineColor: hexColor,
-    outlineWidthPx: z.number().int().min(0).max(30),
+    outlineWidthPx: z.number().int().min(0).max(24),
+    backgroundColor: hexColor.nullable(),
+    alignment: z.enum(["left", "center", "right"]),
     positionY: z.number().min(0).max(1),
+    maxLines: z.number().int().min(1).max(3),
+    maxWordsPerCue: z.number().int().min(2).max(12),
     uppercase: z.boolean(),
   })
   .partial()
@@ -78,14 +84,24 @@ interface ClipListRow {
   focalX: number | null;
   focalY: number | null;
   accepted: boolean;
+  favoritedAt: Date | null;
   caption: string | null;
   thumbnailKey: string | null;
   subtitleConfig: {
     preset: string;
     animation: string;
+    fontFamily: string;
+    fontSizePx: number;
+    fontWeight: number;
     textColor: string;
     highlightColor: string;
+    outlineColor: string;
+    outlineWidthPx: number;
+    backgroundColor: string | null;
+    alignment: string;
     positionY: number;
+    maxLines: number;
+    maxWordsPerCue: number;
     uppercase: boolean;
   } | null;
   renders: Array<{ id: string; status: string; progress: number; outputKey: string | null }>;
@@ -132,7 +148,8 @@ export interface ClipDb {
 export interface ClipServiceDeps {
   db: ClipDb;
   storage: StorageProvider;
-  ensureProject: () => Promise<string>;
+  /** Throws 404 unless the project is owned by the signed-in user. */
+  assertProjectOwned: (projectId: string) => Promise<void>;
   enqueue: (input: {
     videoId: string;
     kind: "RENDER" | "THUMBNAIL";
@@ -141,9 +158,8 @@ export interface ClipServiceDeps {
 }
 
 async function assertOwnsProject(deps: ClipServiceDeps, projectId: string | undefined | null): Promise<void> {
-  if (!projectId || projectId !== (await deps.ensureProject())) {
-    throw new ApiError(404, "not found");
-  }
+  if (!projectId) throw new ApiError(404, "not found");
+  await deps.assertProjectOwned(projectId);
 }
 
 async function ownedClip(deps: ClipServiceDeps, clipId: string): Promise<ClipRow> {
@@ -201,7 +217,11 @@ export async function updateClip(deps: ClipServiceDeps, clipId: string, input: u
   const endMs = patch.endMs ?? clip.endMs;
   if (endMs <= startMs) throw new ApiError(400, "endMs must be after startMs");
 
-  await deps.db.clip.update({ where: { id: clipId }, data: patch });
+  const { favorite, ...rest } = patch;
+  const data: Record<string, unknown> = { ...rest };
+  if (favorite !== undefined) data.favoritedAt = favorite ? new Date() : null;
+
+  await deps.db.clip.update({ where: { id: clipId }, data });
   return { id: clipId, ...patch, startMs, endMs };
 }
 
@@ -255,9 +275,18 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
         select: {
           preset: true,
           animation: true,
+          fontFamily: true,
+          fontSizePx: true,
+          fontWeight: true,
           textColor: true,
           highlightColor: true,
+          outlineColor: true,
+          outlineWidthPx: true,
+          backgroundColor: true,
+          alignment: true,
           positionY: true,
+          maxLines: true,
+          maxWordsPerCue: true,
           uppercase: true,
         },
       },
@@ -288,8 +317,16 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
         focalX: c.focalX,
         focalY: c.focalY,
         accepted: c.accepted,
+        favorited: c.favoritedAt !== null,
         caption: c.caption,
-        captions: c.subtitleConfig,
+        captions: c.subtitleConfig
+          ? {
+              ...c.subtitleConfig,
+              alignment: (["left", "right"].includes(c.subtitleConfig.alignment)
+                ? c.subtitleConfig.alignment
+                : "center") as "left" | "center" | "right",
+            }
+          : null,
         thumbnailUrl,
         render: latest
           ? { id: latest.id, status: latest.status, progress: latest.progress, downloadUrl }
