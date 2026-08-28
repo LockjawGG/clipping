@@ -19,20 +19,35 @@
   --c-danger: 217 60 62; /* #d93c3e */
 }
 
+/* Dark tokens. Applied when the system is dark (unless the user forced light),
+ * or whenever the user explicitly chose dark. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --c-bg: 58 60 67; /* #3a3c43 — grey backdrop */
-    --c-surface: 49 51 56; /* #313338 — cards, rails */
-    --c-surface-raised: 41 43 47; /* #292b2f — inputs, deep insets */
-    --c-elevated: 74 77 85; /* #4a4d55 — buttons */
-    --c-elevated-hover: 86 89 99; /* hover state */
-    --c-border: 67 69 77; /* #43454d */
-    --c-text: 227 229 232; /* #e3e5e8 */
-    --c-muted: 163 168 176; /* #a3a8b0 */
-    --c-accent: 88 101 242; /* #5865f2 blurple */
+  :root:not([data-theme="light"]) {
+    --c-bg: 58 60 67;
+    --c-surface: 49 51 56;
+    --c-surface-raised: 41 43 47;
+    --c-elevated: 74 77 85;
+    --c-elevated-hover: 86 89 99;
+    --c-border: 67 69 77;
+    --c-text: 227 229 232;
+    --c-muted: 163 168 176;
+    --c-accent: 88 101 242;
     --c-accent-fg: 255 255 255;
-    --c-danger: 242 63 67; /* #f23f43 */
+    --c-danger: 242 63 67;
   }
+}
+:root[data-theme="dark"] {
+  --c-bg: 58 60 67; /* #3a3c43 — grey backdrop */
+  --c-surface: 49 51 56; /* #313338 — cards, rails */
+  --c-surface-raised: 41 43 47; /* #292b2f — inputs, deep insets */
+  --c-elevated: 74 77 85; /* #4a4d55 — buttons */
+  --c-elevated-hover: 86 89 99; /* hover state */
+  --c-border: 67 69 77; /* #43454d */
+  --c-text: 227 229 232; /* #e3e5e8 */
+  --c-muted: 163 168 176; /* #a3a8b0 */
+  --c-accent: 88 101 242; /* #5865f2 blurple */
+  --c-accent-fg: 255 255 255;
+  --c-danger: 242 63 67; /* #f23f43 */
 }
 
 body {

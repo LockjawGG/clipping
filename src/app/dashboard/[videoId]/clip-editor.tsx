@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { CaptionControls, CAPTION_DEFAULTS, type CaptionConfig } from "./caption-controls";
 import { ClipPlayer, type PreviewWord } from "./clip-player";
+import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
 
 const ASPECTS = [
   ["VERTICAL_9_16", "9:16"],
@@ -37,11 +38,13 @@ export function ClipEditor({
   clip,
   sourceUrl,
   words,
+  transcript,
   projects,
 }: {
   clip: ClipData;
   sourceUrl: string;
   words: PreviewWord[];
+  transcript: TranscriptRow[];
   projects: Array<{ id: string; name: string }>;
 }) {
   const router = useRouter();
@@ -364,6 +367,11 @@ export function ClipEditor({
         value={captionDraft}
         onChange={setCaptionDraft}
       />
+
+      <div className="flex flex-col gap-1.5">
+        <p className="text-xs font-medium text-muted">Transcript for this clip</p>
+        <EditableTranscript rows={transcript} />
+      </div>
 
       {error && <p className="text-sm text-danger">{error}</p>}
 

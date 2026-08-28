@@ -25,6 +25,7 @@ export function EditorPane({
   clips,
   wordsByClip,
   transcriptRows,
+  transcriptByClip,
   projects,
 }: {
   video: EditorVideo;
@@ -32,6 +33,7 @@ export function EditorPane({
   clips: ClipData[];
   wordsByClip: Record<string, PreviewWord[]>;
   transcriptRows: TranscriptRow[];
+  transcriptByClip: Record<string, TranscriptRow[]>;
   projects: Array<{ id: string; name: string }>;
 }) {
   return (
@@ -65,6 +67,7 @@ export function EditorPane({
                   clip={c}
                   sourceUrl={sourceUrl}
                   words={wordsByClip[c.id] ?? []}
+                  transcript={transcriptByClip[c.id] ?? []}
                   projects={projects}
                 />
               </div>

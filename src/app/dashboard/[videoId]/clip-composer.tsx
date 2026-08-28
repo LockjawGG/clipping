@@ -3,78 +3,15 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export interface TranscriptWord {
-  id: string;
-  text: string;
-}
-export interface TranscriptRow {
-  startMs: number;
-  endMs: number;
-  speaker: string | null;
-  words: TranscriptWord[];
-}
+import { EditableWord, type TranscriptRow } from "./editable-transcript";
+
+export type { TranscriptRow } from "./editable-transcript";
 
 const secs = (ms: number) => (ms / 1000).toFixed(1);
 const timecode = (ms: number) => {
   const t = Math.round(ms / 1000);
   return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
 };
-
-/** One transcript word: click to correct a typo. Timings are never touched. */
-function EditableWord({ word }: { word: TranscriptWord }) {
-  const router = useRouter();
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(word.text);
-  const [busy, setBusy] = useState(false);
-
-  async function save() {
-    setEditing(false);
-    const next = value.trim();
-    if (!next || next === word.text) {
-      setValue(word.text);
-      return;
-    }
-    setBusy(true);
-    const res = await fetch(`/api/transcript/words/${word.id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: next }),
-    });
-    setBusy(false);
-    if (res.ok) router.refresh();
-    else setValue(word.text);
-  }
-
-  if (editing) {
-    return (
-      <input
-        autoFocus
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={save}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") save();
-          if (e.key === "Escape") {
-            setValue(word.text);
-            setEditing(false);
-          }
-        }}
-        size={Math.max(value.length, 2)}
-        className="mx-0.5 rounded border border-accent/60 bg-surface px-1 py-0 text-sm outline-none"
-      />
-    );
-  }
-  return (
-    <button
-      type="button"
-      onClick={() => setEditing(true)}
-      className={`rounded px-0.5 hover:bg-accent/15 ${busy ? "opacity-50" : ""}`}
-      title="Click to edit"
-    >
-      {value}
-    </button>
-  );
-}
 
 export function ClipComposer({ videoId, rows }: { videoId: string; rows: TranscriptRow[] }) {
   const router = useRouter();

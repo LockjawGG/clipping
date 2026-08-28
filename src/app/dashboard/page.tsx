@@ -145,6 +145,13 @@ export default async function DashboardPage({
         speaker: s.speaker,
         words: s.words.map((w) => ({ id: w.id, text: w.text })),
       }));
+      /** Segments that overlap each clip's window — the clip's own transcript. */
+      const transcriptByClip = Object.fromEntries(
+        clips.map((c) => [
+          c.id,
+          transcriptRows.filter((r) => r.endMs > c.startMs && r.startMs < c.endMs),
+        ]),
+      );
 
       editor = (
         <EditorPane
@@ -158,6 +165,7 @@ export default async function DashboardPage({
           clips={clips}
           wordsByClip={wordsByClip}
           transcriptRows={transcriptRows}
+          transcriptByClip={transcriptByClip}
           projects={projects.map((p) => ({ id: p.id, name: p.name }))}
         />
       );
