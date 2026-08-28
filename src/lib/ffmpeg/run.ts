@@ -7,8 +7,10 @@ import {
   ASPECT_DIMENSIONS,
   type AspectRatio,
   type CaptionBurnStyle,
+  type OverlayCompositeItem,
   buildCutArgs,
   buildExtractAudioArgs,
+  buildOverlayCompositeArgs,
   buildProbeArgs,
   buildReframeArgs,
   buildThumbnailArgs,
@@ -117,6 +119,12 @@ export interface TrackedReframeOptions {
   subtitleStyle?: CaptionBurnStyle;
 }
 
+export interface OverlayCompositeOptions {
+  /** Frame width of `inputPath`; overlay sizes scale off it. */
+  frameWidth: number;
+  items: OverlayCompositeItem[];
+}
+
 /** The ffmpeg operations the pipeline needs. Fakeable in tests. */
 export interface Ffmpeg {
   probe(inputPath: string, signal?: AbortSignal): Promise<MediaInfo>;
@@ -134,6 +142,13 @@ export interface Ffmpeg {
   ): Promise<void>;
   /** Grab a single frame as a JPEG. */
   thumbnail(inputPath: string, outputPath: string, opts: ThumbnailOptions, signal?: AbortSignal): Promise<void>;
+  /** Composite library images/GIFs onto the video, each within its time window. */
+  composeOverlays(
+    inputPath: string,
+    outputPath: string,
+    opts: OverlayCompositeOptions,
+    signal?: AbortSignal,
+  ): Promise<void>;
 }
 
 export interface FfmpegRunnerOptions {
@@ -220,6 +235,25 @@ export class FfmpegRunner implements Ffmpeg {
     await this.exec(
       this.ffmpegPath,
       buildThumbnailArgs({ inputPath, outputPath, atMs: opts.atMs, width: opts.width }),
+      signal,
+    );
+  }
+
+  async composeOverlays(
+    inputPath: string,
+    outputPath: string,
+    opts: OverlayCompositeOptions,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await this.exec(
+      this.ffmpegPath,
+      buildOverlayCompositeArgs({
+        inputPath,
+        outputPath,
+        frameWidth: opts.frameWidth,
+        items: opts.items,
+      }),
       signal,
     );
   }

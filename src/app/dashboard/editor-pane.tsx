@@ -1,6 +1,8 @@
 import { ClipEditor, type ClipData } from "./[videoId]/clip-editor";
-import { ClipComposer, type TranscriptRow } from "./[videoId]/clip-composer";
+import { ClipComposer } from "./[videoId]/clip-composer";
+import type { TranscriptRow, WordStyle } from "./[videoId]/editable-transcript";
 import type { PreviewWord } from "./[videoId]/clip-player";
+import type { OverlayView } from "./[videoId]/overlay-panel";
 
 export interface EditorVideo {
   id: string;
@@ -24,16 +26,18 @@ export function EditorPane({
   sourceUrl,
   clips,
   wordsByClip,
-  transcriptRows,
   transcriptByClip,
+  overlaysByClip,
+  wordStylesByClip,
   projects,
 }: {
   video: EditorVideo;
   sourceUrl: string;
   clips: ClipData[];
   wordsByClip: Record<string, PreviewWord[]>;
-  transcriptRows: TranscriptRow[];
   transcriptByClip: Record<string, TranscriptRow[]>;
+  overlaysByClip: Record<string, OverlayView[]>;
+  wordStylesByClip: Record<string, Record<string, WordStyle>>;
   projects: Array<{ id: string; name: string }>;
 }) {
   return (
@@ -68,6 +72,8 @@ export function EditorPane({
                   sourceUrl={sourceUrl}
                   words={wordsByClip[c.id] ?? []}
                   transcript={transcriptByClip[c.id] ?? []}
+                  overlays={overlaysByClip[c.id] ?? []}
+                  wordStyles={wordStylesByClip[c.id] ?? {}}
                   projects={projects}
                 />
               </div>
@@ -76,7 +82,7 @@ export function EditorPane({
         )}
       </section>
 
-      <ClipComposer videoId={video.id} rows={transcriptRows} />
+      <ClipComposer videoId={video.id} />
     </div>
   );
 }

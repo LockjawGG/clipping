@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { JobContext, JobRecord } from "../src/lib/jobs/types.ts";
-import type { CutOptions, MediaInfo, ReframeOptions } from "../src/lib/ffmpeg/run.ts";
+import type {
+  CutOptions,
+  MediaInfo,
+  OverlayCompositeOptions,
+  ReframeOptions,
+} from "../src/lib/ffmpeg/run.ts";
 import type { PipelineDeps, RenderTarget } from "../src/lib/pipeline/deps.ts";
 import { renderHandler } from "../src/lib/pipeline/handlers.ts";
 import type { Segment } from "../src/lib/providers/types.ts";
@@ -29,10 +34,10 @@ const WORDS: Segment[] = [
     endMs: 40_000,
     text: "one two three four",
     words: [
-      { text: "one", startMs: 10_500, endMs: 10_900 },
-      { text: "two", startMs: 11_000, endMs: 11_400 },
-      { text: "three", startMs: 11_500, endMs: 11_900 },
-      { text: "four", startMs: 39_000, endMs: 39_500 }, // outside a 10s..38s clip
+      { id: "wa", text: "one", startMs: 10_500, endMs: 10_900 },
+      { id: "wb", text: "two", startMs: 11_000, endMs: 11_400 },
+      { id: "wc", text: "three", startMs: 11_500, endMs: 11_900 },
+      { id: "wd", text: "four", startMs: 39_000, endMs: 39_500 }, // outside a 10s..38s clip
     ],
   },
 ];
@@ -47,6 +52,7 @@ interface Spy {
   probed: string[];
   puts: string[];
   captioned: Array<{ preset: string; videoPath: string; cueCount: number }>;
+  composed: OverlayCompositeOptions[];
   evicted: string[];
 }
 
@@ -62,6 +68,7 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
     probed: [],
     puts: [],
     captioned: [],
+    composed: [],
     evicted: [],
   };
   const deps = {
@@ -82,6 +89,9 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
         spy.trackedReframes++;
       },
       thumbnail: async () => {},
+      composeOverlays: async (_i: string, _o: string, opts: OverlayCompositeOptions) => {
+        spy.composed.push(opts);
+      },
     },
     storage: {
       name: "fake",
@@ -172,6 +182,8 @@ function target(over: Partial<RenderTarget> = {}): RenderTarget {
     burnCaptions: false,
     captionAnimation: "NONE",
     captionStyle: null,
+    overlays: [],
+    wordStyles: {},
     ...over,
   };
 }
@@ -205,6 +217,43 @@ test("quality maps to the cut crf", async () => {
   assert.equal(spy.cuts[0].crf, 24);
 });
 
+test("clip overlays trigger a composite pass with clip-relative seconds", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "render-ov-"));
+  try {
+    const { deps, spy } = makeDeps(
+      target({
+        overlays: [
+          { storageKey: "assets/image/a.png", animated: false, x: 0.5, y: 0.2, scale: 1, opacity: 0.8, startMs: 2000, endMs: 6000 },
+          { storageKey: "assets/gif/b.gif", animated: true, x: 0.1, y: 0.9, scale: 0.5, opacity: 1, startMs: null, endMs: null },
+        ],
+      }),
+      { tempDir: dir } as Partial<PipelineDeps>,
+    );
+    await renderHandler(ctx(deps, { renderId: "r-ov" }));
+
+    assert.equal(spy.composed.length, 1);
+    const c = spy.composed[0];
+    assert.equal(c.frameWidth, 1080); // from the probe
+    assert.equal(c.items.length, 2);
+    assert.deepEqual(
+      c.items.map((i) => [i.startSec, i.endSec, i.loop]),
+      [
+        [2, 6, false],
+        [null, null, true],
+      ],
+    );
+    assert.equal(spy.puts[0], "renders/r-ov/output.mp4");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("no overlays -> no composite pass", async () => {
+  const { deps, spy } = makeDeps(target());
+  await renderHandler(ctx(deps, { renderId: "r-noov" }));
+  assert.equal(spy.composed.length, 0);
+});
+
 test("static captions (NONE): an SRT is burned during reframe, Remotion is not used", async () => {
   const dir = await mkdtemp(join(tmpdir(), "render-caps-"));
   try {
@@ -218,6 +267,27 @@ test("static captions (NONE): an SRT is burned during reframe, Remotion is not u
     assert.match(srt, /00:00:00,\d{3} --> /); // rebased onto the clip timeline
     assert.match(srt, /one two three/i);
     assert.doesNotMatch(srt, /\bfour\b/i); // the 39s word is outside the 10..38s clip
+    assert.equal(spy.captioned.length, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("per-word styles are burned as inline SRT tags on the static path", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "render-ws-"));
+  try {
+    const { deps, spy } = makeDeps(
+      target({
+        burnCaptions: true,
+        wordStyles: { wa: { color: "#FFE600", bold: true, italic: null } },
+      }),
+      { tempDir: dir } as Partial<PipelineDeps>,
+    );
+    await renderHandler(ctx(deps, { renderId: "r-ws" }));
+
+    const srt = await readFile(spy.reframes[0].subtitlePath!, "utf8");
+    assert.match(srt, /<font color="#FFE600"><b>one<\/b><\/font>/);
+    assert.match(srt, /\btwo three\b/); // unstyled words stay plain
     assert.equal(spy.captioned.length, 0);
   } finally {
     await rm(dir, { recursive: true, force: true });

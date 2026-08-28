@@ -64,6 +64,23 @@ export interface RenderTarget {
   /** Prisma CaptionAnimation enum value; "NONE" means a static ffmpeg burn. */
   captionAnimation: string;
   captionStyle: CaptionStyle | null;
+  /** Library images/GIFs pinned onto this clip, bottom-to-top. */
+  overlays: RenderOverlay[];
+  /** Per-word caption overrides, keyed by transcript word id. */
+  wordStyles: Record<string, { color: string | null; bold: boolean | null; italic: boolean | null }>;
+}
+
+/** One image/GIF overlay on a clip. Times are clip-relative ms; null = clip edge. */
+export interface RenderOverlay {
+  storageKey: string;
+  /** True for animated GIFs, so the compositor loops the source. */
+  animated: boolean;
+  x: number;
+  y: number;
+  scale: number;
+  opacity: number;
+  startMs: number | null;
+  endMs: number | null;
 }
 
 export interface RenderResult {

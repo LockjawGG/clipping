@@ -9,6 +9,9 @@
  */
 
 export interface Word {
+  /** DB id, present once the word has been persisted. Used to attach per-word
+   *  caption styling; absent on fresh provider output. */
+  id?: string;
   text: string;
   startMs: number;
   endMs: number;

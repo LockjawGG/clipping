@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export interface TranscriptWord {
@@ -14,13 +14,45 @@ export interface TranscriptRow {
   words: TranscriptWord[];
 }
 
+/** Per-word caption style override. `null` = attribute not set. */
+export interface WordStyle {
+  color: string | null;
+  bold: boolean | null;
+  italic: boolean | null;
+  sizeScale: number | null;
+}
+export type WordStylePatch = Partial<WordStyle>;
+
 const timecode = (ms: number) => {
   const t = Math.round(ms / 1000);
   return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
 };
 
-/** One transcript word: click to correct a typo. Timings are never touched. */
-export function EditableWord({ word }: { word: TranscriptWord }) {
+const SWATCHES = ["#FFFFFF", "#FFE600", "#00E5FF", "#FF4D4D", "#7CFF6B", "#FF7AF0"];
+
+/** CSS for a word span from its style override. */
+export function wordSpanCss(s: WordStyle | undefined): React.CSSProperties {
+  if (!s) return {};
+  return {
+    color: s.color ?? undefined,
+    fontWeight: s.bold ? 700 : undefined,
+    fontStyle: s.italic ? "italic" : undefined,
+    fontSize: s.sizeScale ? `${s.sizeScale}em` : undefined,
+  };
+}
+
+/** One transcript word: single-click selects it, double-click edits its text. */
+const Word = memo(function Word({
+  word,
+  style,
+  selected,
+  onToggleSelect,
+}: {
+  word: TranscriptWord;
+  style: WordStyle | undefined;
+  selected: boolean;
+  onToggleSelect: (id: string) => void;
+}) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(word.text);
@@ -66,35 +98,127 @@ export function EditableWord({ word }: { word: TranscriptWord }) {
   return (
     <button
       type="button"
-      onClick={() => setEditing(true)}
-      className={`rounded px-0.5 hover:bg-accent/15 ${busy ? "opacity-50" : ""}`}
-      title="Click to edit"
+      onClick={() => onToggleSelect(word.id)}
+      onDoubleClick={() => setEditing(true)}
+      aria-pressed={selected}
+      style={wordSpanCss(style)}
+      className={`rounded px-0.5 ${busy ? "opacity-50" : ""} ${
+        selected ? "bg-accent/30 ring-1 ring-accent" : "hover:bg-accent/15"
+      }`}
+      title="Click to select · double-click to fix a typo"
     >
       {value}
     </button>
   );
+});
+
+interface Props {
+  rows: TranscriptRow[];
+  styles: Record<string, WordStyle>;
+  selectedIds: Set<string>;
+  onToggleSelect: (wordId: string) => void;
+  onApplyStyle: (patch: WordStylePatch) => void;
+  onReset: () => void;
+  onClearSelection: () => void;
 }
 
-/** Read-only-layout transcript with click-to-edit words. */
-export function EditableTranscript({ rows }: { rows: TranscriptRow[] }) {
+/**
+ * The clip transcript, doubling as a caption-styling surface. Words are the
+ * source text (double-click to correct) AND selectable spans that can be given
+ * a colour / bold / italic / size that overrides the clip's base caption style.
+ * Memoised so caption-slider and playhead changes upstream don't re-render it.
+ */
+export const EditableTranscript = memo(function EditableTranscript({
+  rows,
+  styles,
+  selectedIds,
+  onToggleSelect,
+  onApplyStyle,
+  onReset,
+  onClearSelection,
+}: Props) {
   if (rows.length === 0) {
     return <p className="text-xs text-muted">No transcript for this range.</p>;
   }
+  const count = selectedIds.size;
+
   return (
-    <ol className="max-h-64 overflow-y-auto rounded-lg border border-border bg-surface-raised">
-      {rows.map((row, i) => (
-        <li key={i} className="flex gap-3 px-3 py-1.5 text-sm leading-relaxed">
-          <span className="shrink-0 self-start font-mono text-xs tabular-nums text-muted">
-            {timecode(row.startMs)}
+    <div className="overflow-hidden rounded-lg border border-border bg-surface-raised">
+      {count > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2 text-xs">
+          <span className="font-medium text-muted">
+            {count} word{count > 1 ? "s" : ""}
           </span>
-          <span>
-            {row.speaker ? <span className="text-muted">{row.speaker}: </span> : null}
-            {row.words.map((w) => (
-              <EditableWord key={w.id} word={w} />
+          <span className="flex items-center gap-1">
+            {SWATCHES.map((c) => (
+              <button
+                key={c}
+                type="button"
+                aria-label={`Colour ${c}`}
+                onClick={() => onApplyStyle({ color: c })}
+                style={{ background: c }}
+                className="h-5 w-5 rounded border border-border"
+              />
             ))}
+            <input
+              type="color"
+              aria-label="Custom colour"
+              onChange={(e) => onApplyStyle({ color: e.target.value.toUpperCase() })}
+              className="h-5 w-6 rounded border border-border bg-surface"
+            />
           </span>
-        </li>
-      ))}
-    </ol>
+          <button type="button" onClick={() => onApplyStyle({ bold: true })} className="btn btn-ghost btn-sm font-bold">
+            B
+          </button>
+          <button type="button" onClick={() => onApplyStyle({ italic: true })} className="btn btn-ghost btn-sm italic">
+            I
+          </button>
+          <button
+            type="button"
+            title="Smaller"
+            onClick={() => onApplyStyle({ sizeScale: 0.85 })}
+            className="btn btn-ghost btn-sm"
+          >
+            A−
+          </button>
+          <button
+            type="button"
+            title="Bigger"
+            onClick={() => onApplyStyle({ sizeScale: 1.4 })}
+            className="btn btn-ghost btn-sm"
+          >
+            A+
+          </button>
+          <button type="button" onClick={onReset} className="btn btn-ghost btn-sm text-muted hover:text-danger">
+            Reset
+          </button>
+          <button type="button" onClick={onClearSelection} className="btn btn-ghost btn-sm ml-auto">
+            Done
+          </button>
+        </div>
+      )}
+
+      <ol className="max-h-64 overflow-y-auto">
+        {rows.map((row, i) => (
+          <li key={i} className="flex gap-3 px-3 py-1.5 text-sm leading-relaxed">
+            <span className="shrink-0 self-start font-mono text-xs tabular-nums text-muted">
+              {timecode(row.startMs)}
+            </span>
+            <span>
+              {row.speaker ? <span className="text-muted">{row.speaker}: </span> : null}
+              {row.words.map((w) => (
+                <Word
+                  key={w.id}
+                  word={w}
+                  style={styles[w.id]}
+                  selected={selectedIds.has(w.id)}
+                  onToggleSelect={onToggleSelect}
+                />
+              ))}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
-}
+});

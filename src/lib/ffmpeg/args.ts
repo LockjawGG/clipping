@@ -367,6 +367,100 @@ export function buildTrackedReframeArgs({
   ];
 }
 
+export interface OverlayCompositeItem {
+  /** Absolute local path to the image/GIF. */
+  path: string;
+  /** Normalised 0..1 centre of the overlay within the frame. */
+  x: number;
+  y: number;
+  /** Width as a fraction of the frame width (before the 30% baseline). 1 ≈ 30%. */
+  scale: number;
+  /** 0..1. */
+  opacity: number;
+  /** Clip-relative seconds; null = that edge of the clip. */
+  startSec: number | null;
+  endSec: number | null;
+  /** Loop the source (animated GIFs). */
+  loop?: boolean;
+}
+
+export interface OverlayCompositeArgs {
+  inputPath: string;
+  outputPath: string;
+  frameWidth: number;
+  items: OverlayCompositeItem[];
+}
+
+/** A number that is safe to drop straight into a filtergraph (finite, bounded). */
+function fgNum(n: number, lo: number, hi: number): string {
+  if (!Number.isFinite(n)) throw new Error(`non-finite filter value: ${n}`);
+  return String(Math.min(hi, Math.max(lo, n)));
+}
+
+/**
+ * Composite one or more still images / GIFs onto a video, each within its own
+ * time window. Position is normalised so the same overlay lands sensibly on any
+ * aspect ratio. Audio is passed through untouched.
+ */
+export function buildOverlayCompositeArgs({
+  inputPath,
+  outputPath,
+  frameWidth,
+  items,
+}: OverlayCompositeArgs): string[] {
+  assertSafePath(inputPath);
+  assertSafePath(outputPath);
+  if (items.length === 0) throw new Error("no overlay items");
+  if (!Number.isFinite(frameWidth) || frameWidth <= 0) {
+    throw new Error(`bad frameWidth: ${frameWidth}`);
+  }
+
+  const inputs: string[] = ["-y", "-i", inputPath];
+  const chains: string[] = [];
+  let prev = "0:v";
+
+  items.forEach((it, i) => {
+    assertSafePath(it.path);
+    if (it.loop) inputs.push("-ignore_loop", "0");
+    inputs.push("-i", it.path);
+
+    const idx = i + 1;
+    const w = Math.max(8, Math.round(frameWidth * 0.3 * Math.min(4, Math.max(0.02, it.scale))));
+    const aa = fgNum(it.opacity, 0, 1);
+    chains.push(
+      `[${idx}:v]scale=${w}:-1,format=rgba,colorchannelmixer=aa=${aa}[ov${i}]`,
+    );
+
+    const x = `(W-w)*${fgNum(it.x, 0, 1)}`;
+    const y = `(H-h)*${fgNum(it.y, 0, 1)}`;
+    let enable = "";
+    if (it.startSec !== null || it.endSec !== null) {
+      const s = fgNum(it.startSec ?? 0, 0, 1e6);
+      const e = it.endSec !== null ? fgNum(it.endSec, 0, 1e6) : null;
+      enable = e !== null ? `:enable='between(t,${s},${e})'` : `:enable='gte(t,${s})'`;
+    }
+    const out = i === items.length - 1 ? "vout" : `b${i}`;
+    chains.push(
+      `[${prev}][ov${i}]overlay=x='${x}':y='${y}':eof_action=pass${enable}[${out}]`,
+    );
+    prev = out;
+  });
+
+  return [
+    ...inputs,
+    "-filter_complex", chains.join(";"),
+    "-map", "[vout]",
+    "-map", "0:a?",
+    "-c:v", "libx264",
+    "-preset", "fast",
+    "-crf", "20",
+    "-pix_fmt", "yuv420p",
+    "-c:a", "copy",
+    "-movflags", "+faststart",
+    outputPath,
+  ];
+}
+
 export interface ThumbnailArgs {
   inputPath: string;
   outputPath: string;

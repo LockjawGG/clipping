@@ -32,6 +32,15 @@ export interface SignParams {
   key: string;
   /** Seconds from now until the token expires. */
   expiresInSec: number;
+  /**
+   * Round the expiry up to a multiple of this many seconds. Repeated calls for
+   * the same key inside one `bucketSec` window then produce a byte-identical
+   * token, so a URL passed to React as a prop stays referentially stable across
+   * re-renders (no `<video>` remount on every ingest poll). The token stays
+   * valid for at least `expiresInSec` and at most `expiresInSec + bucketSec`.
+   * Omit for a fresh token every call.
+   */
+  bucketSec?: number;
   /** Clock injection point for tests. */
   now?: () => number;
 }
@@ -41,6 +50,7 @@ export function signStorageToken({
   action,
   key,
   expiresInSec,
+  bucketSec,
   now = Date.now,
 }: SignParams): string {
   if (!secret) throw new Error("a signing secret is required");
@@ -48,7 +58,9 @@ export function signStorageToken({
   if (!Number.isFinite(expiresInSec) || expiresInSec <= 0) {
     throw new Error(`invalid expiry: ${expiresInSec}`);
   }
-  const expSec = Math.floor(now() / 1000) + Math.floor(expiresInSec);
+  const rawExp = Math.floor(now() / 1000) + Math.floor(expiresInSec);
+  const expSec =
+    bucketSec && bucketSec > 0 ? Math.ceil(rawExp / bucketSec) * bucketSec : rawExp;
   return `${expSec}${SEP}${b64url(mac(secret, action, key, expSec))}`;
 }
 

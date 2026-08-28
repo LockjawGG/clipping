@@ -41,6 +41,8 @@ export interface Cue {
   startMs: number;
   endMs: number;
   lines: string[];
+  /** The same words split into the wrapped display lines (parallel to `lines`). */
+  lineGroups: Word[][];
   /** Retained for karaoke/highlight animation; timings are absolute. */
   words: Word[];
 }
@@ -48,53 +50,68 @@ export interface Cue {
 const SENTENCE_END = /[.!?]["')\]]?$/;
 const CLAUSE_END = /[,;:—-]$/;
 
-/** Greedy line packing that prefers clause boundaries over raw character fit. */
-export function packLines(words: Word[], maxCharsPerLine: number, maxLines: number): string[] {
-  const lines: string[] = [];
-  let current = "";
+/**
+ * Greedy line packing that prefers clause boundaries over raw character fit.
+ * Returns the words grouped per display line (word objects retained so per-word
+ * styling can survive into the render).
+ */
+export function packLineGroups(
+  words: Word[],
+  maxCharsPerLine: number,
+  maxLines: number,
+): Word[][] {
+  const lines: Word[][] = [];
+  let current: Word[] = [];
+  let len = 0;
+  const flush = () => {
+    if (current.length) lines.push(current);
+    current = [];
+    len = 0;
+  };
 
   for (const word of words) {
-    const candidate = current ? `${current} ${word.text}` : word.text;
-
-    if (candidate.length <= maxCharsPerLine) {
-      current = candidate;
-      // A clause boundary near the end of the line is a better break than
-      // wherever the next word happens to overflow.
-      if (CLAUSE_END.test(word.text) && current.length >= maxCharsPerLine * 0.6) {
-        lines.push(current);
-        current = "";
-      }
+    const candidate = (len ? len + 1 : 0) + word.text.length;
+    if (candidate <= maxCharsPerLine) {
+      current.push(word);
+      len = candidate;
+      if (CLAUSE_END.test(word.text) && len >= maxCharsPerLine * 0.6) flush();
       continue;
     }
-
-    if (current) lines.push(current);
-    current = word.text;
+    flush();
+    current = [word];
+    len = word.text.length;
   }
+  flush();
 
-  if (current) lines.push(current);
-
-  // If clause-preference produced more lines than allowed, re-pack the overflow
-  // purely on width so we never drop words.
+  // Clause-preference produced more lines than allowed — re-pack purely on
+  // width so we never drop words, keeping the word objects.
   if (lines.length > maxLines) {
-    return repackHard(lines.join(" ").split(/\s+/), maxCharsPerLine);
+    const flat = lines.flat();
+    const hard: Word[][] = [];
+    let cur: Word[] = [];
+    let l = 0;
+    for (const w of flat) {
+      const c = (l ? l + 1 : 0) + w.text.length;
+      if (c <= maxCharsPerLine) {
+        cur.push(w);
+        l = c;
+      } else {
+        if (cur.length) hard.push(cur);
+        cur = [w];
+        l = w.text.length;
+      }
+    }
+    if (cur.length) hard.push(cur);
+    return hard;
   }
   return lines;
 }
 
-function repackHard(tokens: string[], maxCharsPerLine: number): string[] {
-  const lines: string[] = [];
-  let current = "";
-  for (const token of tokens) {
-    const candidate = current ? `${current} ${token}` : token;
-    if (candidate.length <= maxCharsPerLine) {
-      current = candidate;
-    } else {
-      if (current) lines.push(current);
-      current = token;
-    }
-  }
-  if (current) lines.push(current);
-  return lines;
+/** String form of {@link packLineGroups}. */
+export function packLines(words: Word[], maxCharsPerLine: number, maxLines: number): string[] {
+  return packLineGroups(words, maxCharsPerLine, maxLines).map((g) =>
+    g.map((w) => w.text).join(" "),
+  );
 }
 
 /** Splits the word stream into groups that will each become one cue. */
@@ -142,10 +159,12 @@ export function buildCues(words: Word[], config: CaptionConfig = DEFAULT_CAPTION
     const text = config.uppercase
       ? group.map((w) => ({ ...w, text: w.text.toUpperCase() }))
       : group;
+    const lineGroups = packLineGroups(text, config.maxCharsPerLine, config.maxLines);
     return {
       startMs: group[0].startMs,
       endMs: group[group.length - 1].endMs,
-      lines: packLines(text, config.maxCharsPerLine, config.maxLines),
+      lines: lineGroups.map((g) => g.map((w) => w.text).join(" ")),
+      lineGroups,
       words: text,
     };
   });
@@ -187,6 +206,46 @@ export function toSrt(cues: Cue[], offsetMs = 0): string {
       const start = Math.max(0, cue.startMs - offsetMs);
       const end = Math.max(0, cue.endMs - offsetMs);
       return `${i + 1}\n${srtTime(start)} --> ${srtTime(end)}\n${cue.lines.join("\n")}\n`;
+    })
+    .join("\n");
+}
+
+/** Per-word style attributes that libass can burn from an SRT tag. */
+export interface SrtWordStyle {
+  color?: string | null;
+  bold?: boolean | null;
+  italic?: boolean | null;
+}
+
+function styleWord(text: string, s: SrtWordStyle | undefined): string {
+  if (!s || (!s.color && !s.bold && !s.italic)) return text;
+  let out = text;
+  if (s.italic) out = `<i>${out}</i>`;
+  if (s.bold) out = `<b>${out}</b>`;
+  if (s.color) out = `<font color="${s.color}">${out}</font>`;
+  return out;
+}
+
+/**
+ * Like {@link toSrt}, but wraps individual words in libass-supported SRT tags
+ * (`<font color>`, `<b>`, `<i>`) from `styles`, keyed by word id. Words with no
+ * override, and cues with no styled words, are emitted exactly as `toSrt` would.
+ */
+export function toStyledSrt(
+  cues: Cue[],
+  offsetMs: number,
+  styles: Record<string, SrtWordStyle>,
+): string {
+  return cues
+    .map((cue, i) => {
+      const start = Math.max(0, cue.startMs - offsetMs);
+      const end = Math.max(0, cue.endMs - offsetMs);
+      const body = cue.lineGroups
+        .map((line) =>
+          line.map((w) => styleWord(w.text, w.id ? styles[w.id] : undefined)).join(" "),
+        )
+        .join("\n");
+      return `${i + 1}\n${srtTime(start)} --> ${srtTime(end)}\n${body}\n`;
     })
     .join("\n");
 }

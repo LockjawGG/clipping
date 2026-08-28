@@ -4,7 +4,9 @@ import assert from "node:assert/strict";
 import {
   buildCues,
   packLines,
+  packLineGroups,
   toSrt,
+  toStyledSrt,
   toVtt,
   DEFAULT_CAPTION_CONFIG,
 } from "../src/lib/captions/layout.ts";
@@ -20,6 +22,7 @@ import {
   buildTrackedReframeArgs,
   buildExtractAudioArgs,
   buildForceStyle,
+  buildOverlayCompositeArgs,
   buildProbeArgs,
   buildThumbnailArgs,
   assertSafePath,
@@ -34,6 +37,7 @@ function words(spec: Array<[string, number, number]>): Word[] {
 
 function evenWords(text: string, startMs: number, perWordMs: number): Word[] {
   return text.split(" ").map((t, i) => ({
+    id: `w${i}`,
     text: t,
     startMs: startMs + i * perWordMs,
     endMs: startMs + (i + 1) * perWordMs - 20,
@@ -147,6 +151,52 @@ test("toVtt clamps rather than emitting a negative timestamp", () => {
   assert.match(vtt, /00:00:00\.000 --> 00:00:00\.000/);
 });
 
+// --- per-word caption styling in the burn -------------------------------
+
+test("packLineGroups returns the same words as packLines, grouped per line", () => {
+  const words = evenWords("the quick brown fox jumps over the lazy dog again", 0, 300);
+  const groups = packLineGroups(words, 20, 2);
+  assert.deepEqual(
+    groups.map((g) => g.map((w) => w.text).join(" ")),
+    packLines(words, 20, 2),
+  );
+  // every word is preserved exactly once, in order
+  assert.deepEqual(
+    groups.flat().map((w) => w.text),
+    words.map((w) => w.text),
+  );
+});
+
+test("toStyledSrt wraps only styled words and leaves the rest identical to toSrt", () => {
+  const cues = buildCues(evenWords("today we use AI to caption", 0, 400));
+  const plain = toSrt(cues, 0);
+  const styled = toStyledSrt(cues, 0, {
+    w3: { color: "#FFE600", bold: true, italic: null },
+  });
+  // "AI" (w3) gets font + bold tags; nesting is <font><b>…</b></font>
+  assert.match(styled, /<font color="#FFE600"><b>AI<\/b><\/font>/);
+  // unstyled words untouched
+  assert.match(styled, /\btoday\b/);
+  assert.doesNotMatch(styled.replace(/<[^>]+>/g, ""), /</);
+  // stripping the tags reproduces the plain SRT exactly
+  assert.equal(styled.replace(/<\/?(font[^>]*|b|i)>/g, ""), plain);
+});
+
+test("toStyledSrt with no matching styles equals toSrt", () => {
+  const cues = buildCues(evenWords("nothing styled here at all", 0, 400));
+  assert.equal(toStyledSrt(cues, 0, { unknownWord: { color: "#FF0000" } }), toSrt(cues, 0));
+});
+
+test("toStyledSrt emits italic-only and colour-only correctly", () => {
+  const cues = buildCues(evenWords("make this word italic", 0, 400));
+  const s = toStyledSrt(cues, 0, {
+    w1: { italic: true },
+    w3: { color: "#00E5FF" },
+  });
+  assert.match(s, /<i>this<\/i>/);
+  assert.match(s, /<font color="#00E5FF">italic<\/font>/);
+});
+
 const burnStyle = (over: Partial<CaptionBurnStyle> = {}): CaptionBurnStyle => ({
   fontName: "Inter",
   fontSizePx: 64,
@@ -207,6 +257,78 @@ test("buildReframeArgs embeds a styled subtitles filter with comma-escaped force
   assert.match(fc, /force_style='[^']*Alignment=1[^']*'/);
   // commas inside force_style are escaped so they don't split the filtergraph
   assert.match(fc, /FontSize=\d+\\,/);
+});
+
+// --- overlay compositing -----------------------------------------------
+
+test("buildOverlayCompositeArgs adds one input per overlay and a chained filtergraph", () => {
+  const args = buildOverlayCompositeArgs({
+    inputPath: "/w/in.mp4",
+    outputPath: "/w/out.mp4",
+    frameWidth: 1080,
+    items: [
+      { path: "/w/o0.png", x: 0.5, y: 0.5, scale: 1, opacity: 1, startSec: null, endSec: null },
+      { path: "/w/o1.gif", x: 0, y: 1, scale: 0.5, opacity: 0.4, startSec: 1, endSec: 3, loop: true },
+    ],
+  });
+  // base video + 2 overlay inputs
+  assert.equal(args.filter((a) => a === "-i").length, 3);
+  assert.deepEqual(
+    args.filter((_, i) => args[i - 1] === "-i"),
+    ["/w/in.mp4", "/w/o0.png", "/w/o1.gif"],
+  );
+  // gif overlay is looped
+  assert.ok(args.includes("-ignore_loop"));
+  const fc = args[args.indexOf("-filter_complex") + 1];
+  // first overlay: no enable window, full opacity
+  assert.match(fc, /\[1:v\]scale=\d+:-1,format=rgba,colorchannelmixer=aa=1\[ov0\]/);
+  assert.match(fc, /\[0:v\]\[ov0\]overlay=x='\(W-w\)\*0\.5':y='\(H-h\)\*0\.5':eof_action=pass\[b0\]/);
+  // second overlay: timed window + reduced opacity, writes the final [vout]
+  assert.match(fc, /aa=0\.4\[ov1\]/);
+  assert.match(fc, /\[b0\]\[ov1\]overlay=[^;]*enable='between\(t,1,3\)'\[vout\]/);
+  // final video stream mapped, audio passed through untouched, video re-encoded
+  assert.equal(args[args.indexOf("-map") + 1], "[vout]");
+  assert.ok(args.includes("0:a?"));
+  assert.equal(args[args.indexOf("-c:a") + 1], "copy");
+  assert.equal(args[args.indexOf("-c:v") + 1], "libx264");
+  assert.equal(args.at(-1), "/w/out.mp4");
+});
+
+test("buildOverlayCompositeArgs clamps out-of-range position and opacity", () => {
+  const args = buildOverlayCompositeArgs({
+    inputPath: "/w/in.mp4",
+    outputPath: "/w/out.mp4",
+    frameWidth: 1080,
+    items: [{ path: "/w/o.png", x: 5, y: -2, scale: 99, opacity: 2, startSec: null, endSec: null }],
+  });
+  const fc = args[args.indexOf("-filter_complex") + 1];
+  assert.match(fc, /x='\(W-w\)\*1':y='\(H-h\)\*0'/);
+  assert.match(fc, /aa=1\[ov0\]/);
+});
+
+test("buildOverlayCompositeArgs rejects an empty item list and non-absolute paths", () => {
+  assert.throws(() =>
+    buildOverlayCompositeArgs({ inputPath: "/w/in.mp4", outputPath: "/w/out.mp4", frameWidth: 1080, items: [] }),
+  );
+  assert.throws(() =>
+    buildOverlayCompositeArgs({
+      inputPath: "relative.mp4",
+      outputPath: "/w/out.mp4",
+      frameWidth: 1080,
+      items: [{ path: "/w/o.png", x: 0.5, y: 0.5, scale: 1, opacity: 1, startSec: null, endSec: null }],
+    }),
+  );
+});
+
+test("buildOverlayCompositeArgs uses gte(t,..) when only a start is given", () => {
+  const args = buildOverlayCompositeArgs({
+    inputPath: "/w/in.mp4",
+    outputPath: "/w/out.mp4",
+    frameWidth: 720,
+    items: [{ path: "/w/o.png", x: 0.5, y: 0.5, scale: 1, opacity: 1, startSec: 2, endSec: null }],
+  });
+  const fc = args[args.indexOf("-filter_complex") + 1];
+  assert.match(fc, /enable='gte\(t,2\)'/);
 });
 
 // --- clip boundaries ------------------------------------------------------

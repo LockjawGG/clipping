@@ -67,21 +67,26 @@ export function prismaVideoRepo(client: PrismaClient): VideoRepo {
 export function prismaTranscriptRepo(client: PrismaClient): TranscriptRepo {
   return {
     async save(videoId, result) {
-      return client.$transaction(async (tx) => {
-        await tx.transcript.deleteMany({ where: { videoId } });
-        const transcript = await tx.transcript.create({
-          data: {
-            videoId,
-            provider: result.provider,
-            model: result.model ?? null,
-            language: result.language,
-            confidence: result.confidence ?? null,
-          },
-        });
-        for (let i = 0; i < result.segments.length; i++) {
-          const seg = result.segments[i];
-          await tx.transcriptSegment.create({
+      // A full-length transcript is hundreds of segments and thousands of
+      // words. One `create` per segment blows past the default interactive-
+      // transaction timeout against a hosted DB ("Transaction already closed"),
+      // so: bulk-insert with `createMany`, and give the transaction real time.
+      const CHUNK = 1000;
+      return client.$transaction(
+        async (tx) => {
+          await tx.transcript.deleteMany({ where: { videoId } });
+          const transcript = await tx.transcript.create({
             data: {
+              videoId,
+              provider: result.provider,
+              model: result.model ?? null,
+              language: result.language,
+              confidence: result.confidence ?? null,
+            },
+          });
+
+          await tx.transcriptSegment.createMany({
+            data: result.segments.map((seg, i) => ({
               transcriptId: transcript.id,
               index: i,
               startMs: seg.startMs,
@@ -89,22 +94,35 @@ export function prismaTranscriptRepo(client: PrismaClient): TranscriptRepo {
               text: seg.text,
               speaker: seg.speaker ?? null,
               confidence: seg.confidence ?? null,
-              words: {
-                createMany: {
-                  data: seg.words.map((w, wi) => ({
-                    index: wi,
-                    startMs: w.startMs,
-                    endMs: w.endMs,
-                    text: w.text,
-                    confidence: w.confidence ?? null,
-                  })),
-                },
-              },
-            },
+            })),
           });
-        }
-        return { segmentCount: result.segments.length };
-      });
+
+          // Read the ids back in index order so words can be linked without a
+          // round-trip per segment.
+          const segRows = await tx.transcriptSegment.findMany({
+            where: { transcriptId: transcript.id },
+            orderBy: { index: "asc" },
+            select: { id: true },
+          });
+
+          const words = result.segments.flatMap((seg, i) =>
+            seg.words.map((w, wi) => ({
+              segmentId: segRows[i].id,
+              index: wi,
+              startMs: w.startMs,
+              endMs: w.endMs,
+              text: w.text,
+              confidence: w.confidence ?? null,
+            })),
+          );
+          for (let i = 0; i < words.length; i += CHUNK) {
+            await tx.transcriptWord.createMany({ data: words.slice(i, i + CHUNK) });
+          }
+
+          return { segmentCount: result.segments.length };
+        },
+        { timeout: 120_000, maxWait: 10_000 },
+      );
     },
     async loadSegments(videoId) {
       const rows = await client.transcriptSegment.findMany({
@@ -119,6 +137,7 @@ export function prismaTranscriptRepo(client: PrismaClient): TranscriptRepo {
         speaker: r.speaker ?? undefined,
         confidence: r.confidence ?? undefined,
         words: r.words.map((w) => ({
+          id: w.id,
           text: w.text,
           startMs: w.startMs,
           endMs: w.endMs,
@@ -190,6 +209,22 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
                 },
               },
               video: { select: { storageKey: true } },
+              overlays: {
+                orderBy: { zIndex: "asc" },
+                select: {
+                  x: true,
+                  y: true,
+                  scale: true,
+                  opacity: true,
+                  startMs: true,
+                  endMs: true,
+                  hidden: true,
+                  asset: { select: { storageKey: true, kind: true } },
+                },
+              },
+              wordStyles: {
+                select: { wordId: true, color: true, bold: true, italic: true },
+              },
             },
           },
         },
@@ -207,6 +242,24 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
         focalY: render.clip.focalY,
         quality: render.quality as "P720" | "P1080" | "ORIGINAL",
         burnCaptions: sc !== null,
+        overlays: render.clip.overlays
+          .filter((o) => !o.hidden && o.asset && (o.asset.kind === "IMAGE" || o.asset.kind === "GIF"))
+          .map((o) => ({
+            storageKey: o.asset!.storageKey,
+            animated: o.asset!.kind === "GIF",
+            x: o.x,
+            y: o.y,
+            scale: o.scale,
+            opacity: o.opacity,
+            startMs: o.startMs,
+            endMs: o.endMs,
+          })),
+        wordStyles: Object.fromEntries(
+          render.clip.wordStyles.map((s) => [
+            s.wordId,
+            { color: s.color, bold: s.bold, italic: s.italic },
+          ]),
+        ),
         captionAnimation: sc?.animation ?? "NONE",
         captionStyle: sc
           ? {

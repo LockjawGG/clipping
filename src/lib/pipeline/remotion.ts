@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import type { Cue } from "../captions/layout.ts";
 import type { CaptionStyle } from "../captions/presets.ts";
@@ -59,7 +60,11 @@ export class RemotionCaptionRenderer implements CaptionRenderer {
     const fps = input.fps > 0 ? input.fps : 30;
     const durationInFrames = Math.max(1, Math.round((input.durationMs / 1000) * fps));
     const inputProps = {
-      videoSrc: input.videoPath.startsWith("file://") ? input.videoPath : `file://${input.videoPath}`,
+      // `file://${path}` is malformed on Windows (`file://C:/…` — Remotion wants
+      // `file:///C:/…`). pathToFileURL builds a valid URL on every platform.
+      videoSrc: input.videoPath.startsWith("file:")
+        ? input.videoPath
+        : pathToFileURL(input.videoPath).href,
       cues: input.cues,
       preset: input.preset,
       style: input.style,

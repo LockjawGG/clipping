@@ -9,6 +9,8 @@ import type { ClipServiceDeps } from "./clips.ts";
 import type { ProjectServiceDeps } from "./projects.ts";
 import type { TranscriptServiceDeps } from "./transcript.ts";
 import type { AssetServiceDeps } from "./assets.ts";
+import type { OverlayServiceDeps } from "./overlays.ts";
+import type { CaptionStyleServiceDeps } from "./caption-styles.ts";
 
 /** Throws 404 unless `projectId` belongs to `userId`. Shared by every service. */
 function ownsProject(userId: string) {
@@ -62,6 +64,23 @@ export function assetService(userId: string): AssetServiceDeps {
     db: db as unknown as AssetServiceDeps["db"],
     storage: getStorage(),
     maxUploadBytes: env.MAX_UPLOAD_BYTES,
+    assertProjectOwned: ownsProject(userId),
+  };
+}
+
+/** Clip-overlay deps scoped to the signed-in user. */
+export function overlayService(userId: string): OverlayServiceDeps {
+  return {
+    db: db as unknown as OverlayServiceDeps["db"],
+    storage: getStorage(),
+    assertProjectOwned: ownsProject(userId),
+  };
+}
+
+/** Per-word caption-styling deps scoped to the signed-in user. */
+export function captionStyleService(userId: string): CaptionStyleServiceDeps {
+  return {
+    db: db as unknown as CaptionStyleServiceDeps["db"],
     assertProjectOwned: ownsProject(userId),
   };
 }

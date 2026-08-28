@@ -48,9 +48,14 @@ export class LocalStorageProvider implements StorageProvider {
     return full;
   }
 
-  private url(key: string, action: "put" | "get", expiresInSec: number): string {
+  private url(
+    key: string,
+    action: "put" | "get",
+    expiresInSec: number,
+    bucketSec?: number,
+  ): string {
     assertSafeKey(key);
-    const token = signStorageToken({ secret: this.secret, action, key, expiresInSec });
+    const token = signStorageToken({ secret: this.secret, action, key, expiresInSec, bucketSec });
     const path = key.split("/").map(encodeURIComponent).join("/");
     return `${this.publicBaseUrl}/api/storage/local/${path}?action=${action}&token=${token}`;
   }
@@ -60,7 +65,10 @@ export class LocalStorageProvider implements StorageProvider {
   }
 
   async createDownloadUrl(key: string, expiresInSec = this.defaultExpiresInSec): Promise<string> {
-    return this.url(key, "get", expiresInSec);
+    // Bucket the issue time to 5 min so a URL handed to the client is stable
+    // across the dashboard's ingest polling — otherwise every `router.refresh()`
+    // yields a new token and the <video> element remounts, jumping the page.
+    return this.url(key, "get", expiresInSec, 300);
   }
 
   async putFile(key: string, localPath: string, _contentType: string): Promise<void> {

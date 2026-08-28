@@ -35,9 +35,13 @@ export const updateAssetSchema = z
   .object({
     name: z.string().trim().min(1).max(300),
     favorite: z.boolean(),
+    kind: z.enum(KINDS),
   })
   .partial()
-  .refine((v) => v.name !== undefined || v.favorite !== undefined, "nothing to update");
+  .refine(
+    (v) => v.name !== undefined || v.favorite !== undefined || v.kind !== undefined,
+    "nothing to update",
+  );
 
 interface AssetRow {
   id: string;
@@ -160,6 +164,7 @@ export async function updateAsset(deps: AssetServiceDeps, assetId: string, input
   const data: Record<string, unknown> = {};
   if (patch.name !== undefined) data.name = patch.name;
   if (patch.favorite !== undefined) data.favoritedAt = patch.favorite ? new Date() : null;
+  if (patch.kind !== undefined) data.kind = patch.kind;
   const updated = await deps.db.asset.update({ where: { id: assetId }, data });
   return toView(updated, await deps.storage.createDownloadUrl(updated.storageKey));
 }

@@ -173,11 +173,36 @@ model TranscriptWord {
   text       String
   confidence Float?
 
-  segment TranscriptSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  segment    TranscriptSegment  @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  wordStyles CaptionWordStyle[]
 
   @@unique([segmentId, index])
   @@index([segmentId, startMs])
   @@map("transcript_words")
+}
+
+/// Per-word caption styling for one clip: colour / bold / italic / size that
+/// overrides the clip's base SubtitleConfig for a single transcript word.
+/// Keyed by word id so it survives text corrections; cascades away if the
+/// transcript is regenerated (the word ids change).
+model CaptionWordStyle {
+  id        String   @id @default(cuid())
+  clipId    String
+  wordId    String
+  color     String?
+  bold      Boolean?
+  italic    Boolean?
+  /// Multiplier on the base font size, e.g. 1.4. Applied in preview + Remotion.
+  sizeScale Float?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clip Clip           @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  word TranscriptWord @relation(fields: [wordId], references: [id], onDelete: Cascade)
+
+  @@unique([clipId, wordId])
+  @@index([clipId])
+  @@map("caption_word_styles")
 }
 
 enum ClipOrigin {
@@ -237,6 +262,7 @@ model Clip {
   subtitleConfig SubtitleConfig?
   overlays       Overlay[]
   renders        Render[]
+  wordStyles     CaptionWordStyle[]
 
   @@index([videoId, startMs])
   @@index([savedToProjectId])
@@ -317,7 +343,12 @@ model Overlay {
   opacity Float @default(1.0)
   startMs Int?
   endMs   Int?
+  // Stacking order within the clip; higher sits on top. The editor's "layer
+  // strip" is this list, sorted by zIndex.
   zIndex  Int   @default(0)
+  // Hidden layers stay in the project but are skipped in the preview and the
+  // render (the eye toggle in the layer strip).
+  hidden  Boolean @default(false)
 
   clip  Clip   @relation(fields: [clipId], references: [id], onDelete: Cascade)
   asset Asset? @relation(fields: [assetId], references: [id], onDelete: Cascade)

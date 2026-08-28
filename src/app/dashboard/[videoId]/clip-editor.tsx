@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { CaptionControls, CAPTION_DEFAULTS, type CaptionConfig } from "./caption-controls";
 import { ClipPlayer, type PreviewWord } from "./clip-player";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
+import { OverlayPanel, type OverlayView } from "./overlay-panel";
+import type { WordStyle, WordStylePatch } from "./editable-transcript";
+import { ASSET_DND_MIME } from "../media-library";
 
 const ASPECTS = [
   ["VERTICAL_9_16", "9:16"],
@@ -39,12 +42,16 @@ export function ClipEditor({
   sourceUrl,
   words,
   transcript,
+  overlays: serverOverlays,
+  wordStyles: serverWordStyles,
   projects,
 }: {
   clip: ClipData;
   sourceUrl: string;
   words: PreviewWord[];
   transcript: TranscriptRow[];
+  overlays: OverlayView[];
+  wordStyles: Record<string, WordStyle>;
   projects: Array<{ id: string; name: string }>;
 }) {
   const router = useRouter();
@@ -52,9 +59,155 @@ export function ClipEditor({
   const [busy, setBusy] = useState<"save" | "render" | "delete" | "thumb" | "save-to" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playheadMs, setPlayheadMs] = useState(0);
+  const [dropActive, setDropActive] = useState(false);
+  const [overlayError, setOverlayError] = useState<string | null>(null);
+  const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
+  const clipLenMs = Math.max(1, clip.endMs - clip.startMs);
+
+  // Overlays are edited optimistically: every move/resize/hide/reorder updates
+  // this list instantly and the server write happens in the background (slider
+  // drags are coalesced). We only re-seed from the server when the set of
+  // overlay ids changes (navigation, or an add/delete we didn't do locally).
+  const [overlays, setOverlays] = useState<OverlayView[]>(serverOverlays);
+  const serverIds = serverOverlays.map((o) => o.id).join(",");
+  const lastSeeded = useRef(serverIds);
+  if (serverIds !== lastSeeded.current) {
+    lastSeeded.current = serverIds;
+    setOverlays(serverOverlays);
+  }
+
+  const patchQueue = useRef(new Map<string, Record<string, unknown>>());
+  const patchTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const flushPatch = useCallback((id: string) => {
+    const body = patchQueue.current.get(id);
+    patchQueue.current.delete(id);
+    patchTimers.current.delete(id);
+    if (!body || Object.keys(body).length === 0) return;
+    void fetch(`/api/overlays/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then((r) => {
+        if (!r.ok) setOverlayError("couldn't save that change — try again");
+      })
+      .catch(() => setOverlayError("couldn't save that change — try again"));
+  }, []);
+
+  /** Optimistic overlay edit: update the list now, write in the background. */
+  const editOverlay = useCallback(
+    (id: string, patch: Record<string, unknown>, opts?: { coalesceMs?: number }) => {
+      setOverlayError(null);
+      setOverlays((list) => list.map((o) => (o.id === id ? { ...o, ...patch } : o)));
+      patchQueue.current.set(id, { ...(patchQueue.current.get(id) ?? {}), ...patch });
+      clearTimeout(patchTimers.current.get(id));
+      const ms = opts?.coalesceMs ?? 0;
+      if (ms === 0) flushPatch(id);
+      else patchTimers.current.set(id, setTimeout(() => flushPatch(id), ms));
+    },
+    [flushPatch],
+  );
+
+  const reorderOverlayLocal = useCallback((id: string, direction: "up" | "down") => {
+    setOverlays((list) => {
+      const sorted = [...list].sort((a, b) => a.zIndex - b.zIndex);
+      const i = sorted.findIndex((o) => o.id === id);
+      const j = direction === "up" ? i + 1 : i - 1;
+      if (i === -1 || j < 0 || j >= sorted.length) return list;
+      const zi = sorted[i].zIndex;
+      const zj = sorted[j].zIndex;
+      return list.map((o) =>
+        o.id === sorted[i].id ? { ...o, zIndex: zj } : o.id === sorted[j].id ? { ...o, zIndex: zi } : o,
+      );
+    });
+    void fetch(`/api/overlays/${id}/reorder`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ direction }),
+    }).catch(() => setOverlayError("couldn't reorder — try again"));
+  }, []);
+
+  const deleteOverlayLocal = useCallback((id: string) => {
+    setSelectedOverlayId((cur) => (cur === id ? null : cur));
+    setOverlays((list) => list.filter((o) => o.id !== id));
+    void fetch(`/api/overlays/${id}`, { method: "DELETE" }).catch(() => {
+      setOverlayError("couldn't remove that layer — refresh to retry");
+    });
+  }, []);
+
+  // --- per-word caption styling (the 4th layer: overrides SubtitleConfig for
+  // individual words; keyed by word id so text edits keep the styling). ---
+  const [wordStyles, setWordStyles] = useState<Record<string, WordStyle>>(serverWordStyles);
+  const [selectedWords, setSelectedWords] = useState<Set<string>>(() => new Set());
+  const styleKeys = Object.keys(serverWordStyles).sort().join(",");
+  const lastStyleKeys = useRef(styleKeys);
+  if (styleKeys !== lastStyleKeys.current) {
+    lastStyleKeys.current = styleKeys;
+    setWordStyles(serverWordStyles);
+  }
+
+  const toggleWordSelect = useCallback((id: string) => {
+    setSelectedWords((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }, []);
+  const clearWordSelection = useCallback(() => setSelectedWords(new Set()), []);
+
+  const applyWordStyle = useCallback((patch: WordStylePatch) => {
+    setSelectedWords((sel) => {
+      const ids = [...sel];
+      if (ids.length === 0) return sel;
+      setWordStyles((map) => {
+        const next = { ...map };
+        for (const id of ids) {
+          next[id] = {
+            color: patch.color !== undefined ? patch.color : (map[id]?.color ?? null),
+            bold: patch.bold !== undefined ? patch.bold : (map[id]?.bold ?? null),
+            italic: patch.italic !== undefined ? patch.italic : (map[id]?.italic ?? null),
+            sizeScale: patch.sizeScale !== undefined ? patch.sizeScale : (map[id]?.sizeScale ?? null),
+          };
+        }
+        return next;
+      });
+      void fetch(`/api/clips/${clip.id}/word-styles`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ wordIds: ids, style: patch }),
+      }).catch(() => setError("couldn't save caption styling — try again"));
+      return sel;
+    });
+  }, [clip.id]);
+
+  const resetWordStyle = useCallback(() => {
+    setSelectedWords((sel) => {
+      const ids = [...sel];
+      if (ids.length === 0) return sel;
+      setWordStyles((map) => {
+        const next = { ...map };
+        for (const id of ids) delete next[id];
+        return next;
+      });
+      void fetch(`/api/clips/${clip.id}/word-styles`, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ wordIds: ids }),
+      }).catch(() => setError("couldn't reset caption styling — try again"));
+      return sel;
+    });
+  }, [clip.id]);
   const [captionsOn, setCaptionsOn] = useState(clip.captions !== null);
   const [captionDraft, setCaptionDraft] = useState<CaptionConfig>(clip.captions ?? CAPTION_DEFAULTS);
   const [saveMenu, setSaveMenu] = useState(false);
+
+  const onCaptionLayout = useCallback(
+    (l: { positionY: number; alignment: "left" | "center" | "right" }) =>
+      setCaptionDraft((d) => ({ ...d, ...l })),
+    [],
+  );
 
   const storageKey = `clip-collapsed:${clip.id}`;
   const [collapsed, setCollapsed] = useState(false);
@@ -152,6 +305,55 @@ export function ClipEditor({
     );
   };
 
+  async function dropAsset(e: React.DragEvent) {
+    e.preventDefault();
+    setDropActive(false);
+    setOverlayError(null);
+    const raw = e.dataTransfer.getData(ASSET_DND_MIME);
+    if (!raw) return;
+    let payload: { id?: string; kind?: string };
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!payload.id) return;
+    if (payload.kind && !["IMAGE", "GIF"].includes(payload.kind)) {
+      setOverlayError("Only images and GIFs can be placed on a clip.");
+      return;
+    }
+    try {
+      const res = await fetch(`/api/clips/${clip.id}/overlays`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ assetId: payload.id }),
+      });
+      const created = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(created?.error ?? "could not add overlay");
+      if (created?.id) {
+        setOverlays((list) => [...list, created as OverlayView]);
+        setSelectedOverlayId(created.id); // ready to drag into place
+      }
+    } catch (err) {
+      setOverlayError(err instanceof Error ? err.message : "could not add overlay");
+    }
+  }
+
+  // Delete the selected overlay with the keyboard, unless a field is focused.
+  useEffect(() => {
+    if (!selectedOverlayId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const t = e.target as HTMLElement;
+      if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
+      e.preventDefault();
+      deleteOverlayLocal(selectedOverlayId);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOverlayId]);
+
   const setStartToPlayhead = () =>
     setDraft((d) => ({
       ...d,
@@ -171,7 +373,27 @@ export function ClipEditor({
   const pct = clip.render ? Math.round(clip.render.progress * 100) : 0;
 
   return (
-    <div className="card flex flex-col gap-4 p-4">
+    <div
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes(ASSET_DND_MIME)) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          setDropActive(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropActive(false);
+      }}
+      onDrop={dropAsset}
+      className={`card flex flex-col gap-4 p-4 transition-shadow ${
+        dropActive ? "ring-2 ring-accent" : ""
+      }`}
+    >
+      {dropActive && (
+        <p className="rounded-lg border border-dashed border-accent bg-accent/10 px-3 py-1.5 text-center text-xs text-accent">
+          Drop to add this media as an overlay
+        </p>
+      )}
       <div className="flex items-start gap-3">
         <button
           type="button"
@@ -256,9 +478,14 @@ export function ClipEditor({
         words={words}
         captionsOn={captionsOn}
         caption={captionDraft}
+        wordStyles={wordStyles}
         renderUrl={clip.render?.downloadUrl ?? null}
+        overlays={overlays}
+        selectedOverlayId={selectedOverlayId}
+        onSelectOverlay={setSelectedOverlayId}
+        onOverlayChange={editOverlay}
         onPlayhead={setPlayheadMs}
-        onCaptionLayout={(l) => setCaptionDraft((d) => ({ ...d, ...l }))}
+        onCaptionLayout={onCaptionLayout}
       />
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-surface-raised px-3 py-2 text-sm">
@@ -368,9 +595,32 @@ export function ClipEditor({
         onChange={setCaptionDraft}
       />
 
+      <OverlayPanel
+        overlays={overlays}
+        clipLenMs={clipLenMs}
+        playheadMs={playheadMs}
+        selectedId={selectedOverlayId}
+        onSelect={setSelectedOverlayId}
+        onEdit={editOverlay}
+        onReorder={reorderOverlayLocal}
+        onDelete={deleteOverlayLocal}
+      />
+      {overlayError && <p className="text-sm text-danger">{overlayError}</p>}
+
       <div className="flex flex-col gap-1.5">
-        <p className="text-xs font-medium text-muted">Transcript for this clip</p>
-        <EditableTranscript rows={transcript} />
+        <p className="text-xs font-medium text-muted">
+          Transcript for this clip — double-click a word to fix a typo, or select words to colour /
+          bold them as captions
+        </p>
+        <EditableTranscript
+          rows={transcript}
+          styles={wordStyles}
+          selectedIds={selectedWords}
+          onToggleSelect={toggleWordSelect}
+          onApplyStyle={applyWordStyle}
+          onReset={resetWordStyle}
+          onClearSelection={clearWordSelection}
+        />
       </div>
 
       {error && <p className="text-sm text-danger">{error}</p>}

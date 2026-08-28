@@ -78,6 +78,29 @@ test("an expired token is rejected", () => {
   assert.match((res as { reason: string }).reason, /expired/);
 });
 
+test("bucketed tokens are byte-identical within a bucket and still valid", () => {
+  const base = 1_700_000_000_000;
+  const sign = (nowMs: number) =>
+    signStorageToken({
+      secret: SECRET,
+      action: "get",
+      key: "a/b",
+      expiresInSec: 900,
+      bucketSec: 300,
+      now: () => nowMs,
+    });
+  // Calls a few seconds apart land in the same 5-minute bucket.
+  assert.equal(sign(base), sign(base + 2_000));
+  // A call a full bucket-width later is in the next bucket.
+  assert.notEqual(sign(base), sign(base + 300_000));
+  // Still verifies for at least the full TTL after issue.
+  const token = sign(base);
+  assert.equal(
+    verifyStorageToken({ secret: SECRET, action: "get", key: "a/b", token, now: () => base + 899_000 }).ok,
+    true,
+  );
+});
+
 test("a tampered signature is rejected", () => {
   const token = signStorageToken({ secret: SECRET, action: "put", key: "a/b", expiresInSec: 300 });
   const tampered = token.slice(0, -1) + (token.endsWith("A") ? "B" : "A");

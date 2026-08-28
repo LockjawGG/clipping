@@ -3,17 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { EditableWord, type TranscriptRow } from "./editable-transcript";
-
 export type { TranscriptRow } from "./editable-transcript";
 
-const secs = (ms: number) => (ms / 1000).toFixed(1);
-const timecode = (ms: number) => {
-  const t = Math.round(ms / 1000);
-  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
-};
-
-export function ClipComposer({ videoId, rows }: { videoId: string; rows: TranscriptRow[] }) {
+export function ClipComposer({ videoId }: { videoId: string }) {
   const router = useRouter();
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
@@ -90,36 +82,6 @@ export function ClipComposer({ videoId, rows }: { videoId: string; rows: Transcr
         </button>
         {error && <p className="w-full text-danger">{error}</p>}
       </form>
-
-      {rows.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          <p className="text-xs text-muted">
-            Transcript — click a word to fix a typo, or a timecode to load it into the form.
-          </p>
-          <ol className="max-h-96 overflow-y-auto rounded-lg border border-border">
-            {rows.map((row, i) => (
-              <li key={i} className="flex gap-3 px-3 py-1.5 text-sm leading-relaxed">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStart(secs(row.startMs));
-                    setEnd(secs(row.endMs));
-                  }}
-                  className="shrink-0 self-start rounded px-1 font-mono text-xs tabular-nums text-muted hover:bg-surface-raised"
-                >
-                  {timecode(row.startMs)}
-                </button>
-                <span>
-                  {row.speaker ? <span className="text-muted">{row.speaker}: </span> : null}
-                  {row.words.map((w) => (
-                    <EditableWord key={w.id} word={w} />
-                  ))}
-                </span>
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
     </section>
   );
 }

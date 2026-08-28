@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const ANIMATIONS = [
@@ -84,7 +84,7 @@ interface Props {
   onChange: (next: CaptionConfig) => void;
 }
 
-export function CaptionControls({
+export const CaptionControls = memo(function CaptionControls({
   clipId,
   exists,
   captionsOn,
@@ -366,4 +366,4 @@ export function CaptionControls({
       )}
     </div>
   );
-}
+});

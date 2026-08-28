@@ -9,6 +9,7 @@ import {
   deleteAsset,
   listAssets,
   updateAsset,
+  updateAssetSchema,
 } from "../src/lib/api/assets.ts";
 import { ApiError } from "../src/lib/api/http.ts";
 
@@ -131,6 +132,81 @@ test("updateAsset renames and toggles favorite; listAssets returns URLs", async 
   assert.equal(list[0].name, "brand.png");
   assert.equal(list[0].favorited, true);
   assert.match(list[0].url!, /^https:\/\/dl\.example\//);
+});
+
+test("updateAssetSchema: field rules", () => {
+  // a lone kind is a valid patch
+  assert.deepEqual(updateAssetSchema.parse({ kind: "SFX" }), { kind: "SFX" });
+  // name + favorite + kind together
+  assert.deepEqual(
+    updateAssetSchema.parse({ name: "x", favorite: false, kind: "GIF" }),
+    { name: "x", favorite: false, kind: "GIF" },
+  );
+  // empty patch is rejected
+  assert.throws(() => updateAssetSchema.parse({}), /nothing to update/);
+  // unknown kind is rejected
+  assert.throws(() => updateAssetSchema.parse({ kind: "VIDEO" }));
+  // blank name is rejected
+  assert.throws(() => updateAssetSchema.parse({ name: "   " }));
+});
+
+test("updateAsset changes kind and it survives listAssets", async () => {
+  const { deps, rows } = makeDeps();
+  const { assetId } = await createAssetUpload(deps, {
+    ...upload,
+    kind: "AUDIO",
+    name: "clap.wav",
+    mimeType: "audio/wav",
+  });
+  assert.equal(rows.get(assetId)!.kind, "AUDIO");
+
+  const view = await updateAsset(deps, assetId, { kind: "SFX" });
+  assert.equal(view.kind, "SFX");
+  assert.equal(view.name, "clap.wav", "kind-only patch leaves name untouched");
+  assert.equal(rows.get(assetId)!.kind, "SFX");
+
+  const list = await listAssets(deps, "p1");
+  assert.equal(list[0].kind, "SFX");
+});
+
+test("updateAsset applies name, favorite and kind in one call", async () => {
+  const { deps, rows } = makeDeps();
+  const { assetId } = await createAssetUpload(deps, upload); // IMAGE
+  const view = await updateAsset(deps, assetId, {
+    name: "hero.gif",
+    favorite: true,
+    kind: "GIF",
+  });
+  assert.equal(view.name, "hero.gif");
+  assert.equal(view.kind, "GIF");
+  assert.equal(view.favorited, true);
+  const row = rows.get(assetId)!;
+  assert.equal(row.name, "hero.gif");
+  assert.equal(row.kind, "GIF");
+  assert.ok(row.favoritedAt instanceof Date);
+});
+
+test("updateAsset 404s for an unknown asset and a foreign project", async () => {
+  const { deps } = makeDeps();
+  await assert.rejects(
+    () => updateAsset(deps, "nope", { kind: "SFX" }),
+    (e: unknown) => e instanceof ApiError && e.status === 404,
+  );
+  // asset that exists but whose project the caller doesn't own
+  const foreign = makeDeps();
+  const { assetId } = await createAssetUpload(foreign.deps, upload);
+  foreign.rows.get(assetId)!.projectId = "someone-else";
+  await assert.rejects(
+    () => updateAsset(foreign.deps, assetId, { name: "x" }),
+    (e: unknown) => e instanceof ApiError && e.status === 404,
+  );
+});
+
+test("updateAsset rejects an invalid patch before touching the row", async () => {
+  const { deps } = makeDeps();
+  const { assetId } = await createAssetUpload(deps, upload);
+  await assert.rejects(() => updateAsset(deps, assetId, {}));
+  await assert.rejects(() => updateAsset(deps, assetId, { kind: "NOPE" }));
 });
 
 test("deleteAsset removes the row and the stored file", async () => {

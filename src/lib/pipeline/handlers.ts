@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 
 import { DEFAULT_SNAP_CONFIG } from "../clips/boundaries.ts";
 import { refineSuggestions } from "../analysis/pipeline.ts";
-import { buildCues, toSrt } from "../captions/layout.ts";
+import { buildCues, toSrt, toStyledSrt } from "../captions/layout.ts";
 import { DEFAULT_CAPTION_STYLE, isAnimatedPreset, remotionPreset } from "../captions/presets.ts";
 import { ASPECT_DIMENSIONS, type CaptionBurnStyle } from "../ffmpeg/args.ts";
 import { type FocalPoint, resampleTrack } from "../faces/track.ts";
@@ -276,7 +276,11 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     if (staticBurn) {
       subtitlePath = scratchPath(work, "captions.srt");
       await mkdir(dirname(subtitlePath), { recursive: true });
-      await writeFile(subtitlePath, toSrt(buildCues(words), target.startMs), "utf8");
+      const cues = buildCues(words);
+      const srt = Object.keys(target.wordStyles).length
+        ? toStyledSrt(cues, target.startMs, target.wordStyles)
+        : toSrt(cues, target.startMs);
+      await writeFile(subtitlePath, srt, "utf8");
       const cs = target.captionStyle ?? DEFAULT_CAPTION_STYLE;
       subtitleStyle = {
         fontName: cs.fontFamily,
@@ -349,6 +353,35 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
         signal,
       });
       output = captioned;
+    }
+    if (target.overlays.length > 0) {
+      const pre = await deps.ffmpeg.probe(output, signal);
+      const overlaid = scratchPath(work, "overlaid.mp4");
+      const items = await Promise.all(
+        target.overlays.map(async (o, i) => {
+          const ext = o.animated ? "gif" : "png";
+          const local = scratchPath(work, `overlay-${i}.${ext}`);
+          await mkdir(dirname(local), { recursive: true });
+          await deps.storage.getToFile(o.storageKey, local);
+          return {
+            path: local,
+            x: o.x,
+            y: o.y,
+            scale: o.scale,
+            opacity: o.opacity,
+            startSec: o.startMs === null ? null : o.startMs / 1000,
+            endSec: o.endMs === null ? null : o.endMs / 1000,
+            loop: o.animated,
+          };
+        }),
+      );
+      await deps.ffmpeg.composeOverlays(
+        output,
+        overlaid,
+        { frameWidth: pre.width ?? 1080, items },
+        signal,
+      );
+      output = overlaid;
     }
     await setProgress(0.9);
 
