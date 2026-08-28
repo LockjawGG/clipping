@@ -2,31 +2,36 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Discord-flavoured palette. Dark is the reference; light is a muted grey. */
 :root {
   color-scheme: light dark;
 
-  --c-bg: 251 251 250;
-  --c-surface: 255 255 255;
-  --c-surface-raised: 244 244 245;
-  --c-border: 228 228 231;
-  --c-text: 24 24 27;
-  --c-muted: 113 113 122;
-  --c-accent: 109 40 217;
+  --c-bg: 242 243 245; /* #f2f3f5 */
+  --c-surface: 255 255 255; /* #ffffff — cards, rails */
+  --c-surface-raised: 228 230 233; /* #e4e6e9 — inputs, insets, chips */
+  --c-elevated: 233 234 237; /* #e9eaed — buttons */
+  --c-elevated-hover: 220 222 226; /* hover state */
+  --c-border: 214 216 220; /* #d6d8dc */
+  --c-text: 33 35 40; /* #212328 */
+  --c-muted: 91 94 102; /* #5b5e66 */
+  --c-accent: 88 101 242; /* #5865f2 blurple */
   --c-accent-fg: 255 255 255;
-  --c-danger: 220 38 38;
+  --c-danger: 217 60 62; /* #d93c3e */
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --c-bg: 10 10 11;
-    --c-surface: 20 20 22;
-    --c-surface-raised: 30 30 33;
-    --c-border: 42 42 47;
-    --c-text: 250 250 250;
-    --c-muted: 161 161 170;
-    --c-accent: 139 92 246;
-    --c-accent-fg: 12 12 14;
-    --c-danger: 248 113 113;
+    --c-bg: 49 51 56; /* #313338 — main content */
+    --c-surface: 43 45 49; /* #2b2d31 — cards, rails */
+    --c-surface-raised: 30 31 34; /* #1e1f22 — inputs, deep insets */
+    --c-elevated: 63 66 72; /* #3f4248 — buttons */
+    --c-elevated-hover: 78 81 88; /* hover state */
+    --c-border: 59 61 68; /* #3b3d44 */
+    --c-text: 219 222 225; /* #dbdee1 */
+    --c-muted: 148 155 164; /* #949ba4 */
+    --c-accent: 88 101 242; /* #5865f2 blurple */
+    --c-accent-fg: 255 255 255;
+    --c-danger: 242 63 67; /* #f23f43 */
   }
 }
 
@@ -41,19 +46,19 @@ body {
 
   /* Buttons ---------------------------------------------------------------- */
   .btn {
-    @apply inline-flex select-none items-center justify-center gap-1.5 rounded-lg border border-border
-      bg-surface px-3 py-1.5 text-sm font-medium text-text transition-colors
-      hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2
+    @apply inline-flex select-none items-center justify-center gap-1.5 rounded-lg border border-transparent
+      bg-elevated px-3 py-1.5 text-sm font-medium text-text transition-colors
+      hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2
       focus-visible:ring-accent/60 disabled:pointer-events-none disabled:opacity-40;
   }
   .btn-primary {
     @apply border-transparent bg-accent text-accent-fg hover:bg-accent/90;
   }
   .btn-ghost {
-    @apply border-transparent bg-transparent hover:bg-surface-raised;
+    @apply border-transparent bg-transparent hover:bg-elevated;
   }
   .btn-danger {
-    @apply border-danger/40 text-danger hover:bg-danger/10;
+    @apply bg-transparent text-danger hover:bg-danger/15;
   }
   .btn-sm {
     @apply px-2 py-1 text-xs;
@@ -61,8 +66,8 @@ body {
 
   /* Inputs / selects ----------------------------------------------------- */
   .field {
-    @apply rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-text
-      shadow-sm transition-colors placeholder:text-muted focus-visible:outline-none
+    @apply rounded-lg border border-border bg-surface-raised px-2.5 py-1.5 text-sm text-text
+      transition-colors placeholder:text-muted focus-visible:outline-none
       focus-visible:ring-2 focus-visible:ring-accent/60;
   }
 
@@ -103,15 +108,15 @@ body {
 
   /* Workspace rails ----------------------------------------------------- */
   .rail {
-    @apply flex h-full min-h-0 flex-col overflow-y-auto border-border bg-bg;
+    @apply flex h-full min-h-0 flex-col overflow-y-auto border-border bg-surface;
   }
   .rail-item {
     @apply flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm
-      text-text transition-colors hover:bg-surface-raised focus-visible:outline-none
+      text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none
       focus-visible:ring-2 focus-visible:ring-accent/60;
   }
   .rail-item[aria-current="true"] {
-    @apply bg-surface-raised font-medium;
+    @apply bg-elevated font-medium text-text;
   }
   .rail-heading {
     @apply px-2.5 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-muted;
@@ -119,7 +124,7 @@ body {
 
   /* Tabs -------------------------------------------------------------------- */
   .tabs {
-    @apply inline-flex gap-1 rounded-lg border border-border bg-surface p-0.5;
+    @apply inline-flex gap-1 rounded-lg border border-border bg-surface-raised p-0.5;
   }
   .tab {
     @apply rounded-md px-3 py-1 text-xs font-medium text-muted transition-colors
@@ -142,12 +147,12 @@ body {
 
   /* Popover menu --------------------------------------------------------- */
   .menu {
-    @apply absolute z-20 min-w-[10rem] rounded-lg border border-border bg-surface p-1
+    @apply absolute z-20 min-w-[10rem] rounded-lg border border-border bg-surface-raised p-1
       shadow-card;
   }
   .menu button {
     @apply flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm
-      text-text transition-colors hover:bg-surface-raised;
+      text-text transition-colors hover:bg-elevated;
   }
 }
 

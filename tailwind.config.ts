@@ -11,6 +11,8 @@ export default {
         bg: token("--c-bg"),
         surface: token("--c-surface"),
         "surface-raised": token("--c-surface-raised"),
+        elevated: token("--c-elevated"),
+        "elevated-hover": token("--c-elevated-hover"),
         border: token("--c-border"),
         text: token("--c-text"),
         muted: token("--c-muted"),

@@ -37,6 +37,7 @@ export function ContentRail({
   const [tab, setTab] = useState<"upload" | "link">("link");
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [subMenu, setSubMenu] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
 
   // Poll while anything is still ingesting so the rail advances on its own.
   useEffect(() => {
@@ -63,6 +64,18 @@ export function ContentRail({
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ projectId }),
+    });
+    router.refresh();
+  }
+
+  async function rename(videoId: string, name: string, original: string) {
+    setRenaming(null);
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === original) return;
+    await fetch(`/api/videos/${videoId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: trimmed }),
     });
     router.refresh();
   }
@@ -111,6 +124,26 @@ export function ContentRail({
             </p>
             {rows.map((v) => (
               <div key={v.id} className="relative">
+                {renaming === v.id ? (
+                  <div className="flex items-center gap-2 px-2.5 py-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- signed storage URL */}
+                    <img
+                      src={v.thumbnailUrl ?? undefined}
+                      alt=""
+                      className="h-9 w-14 shrink-0 rounded bg-surface-raised object-cover"
+                    />
+                    <input
+                      autoFocus
+                      defaultValue={v.name}
+                      className="field min-w-0 flex-1 py-1"
+                      onBlur={(e) => rename(v.id, e.target.value, v.name)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") rename(v.id, (e.target as HTMLInputElement).value, v.name);
+                        if (e.key === "Escape") setRenaming(null);
+                      }}
+                    />
+                  </div>
+                ) : (
                 <button
                   className="rail-item"
                   aria-current={v.id === activeVideoId}
@@ -144,7 +177,7 @@ export function ContentRail({
                     role="button"
                     tabIndex={0}
                     aria-label="Video menu"
-                    className="rounded px-1 text-muted hover:bg-surface hover:text-text"
+                    className="rounded px-1 text-muted hover:bg-elevated hover:text-text"
                     onClick={(e) => {
                       e.stopPropagation();
                       setSubMenu(false);
@@ -154,8 +187,18 @@ export function ContentRail({
                     ⋯
                   </span>
                 </button>
+                )}
                 {menuFor === v.id && (
                   <div className="menu right-2 top-12">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuFor(null);
+                        setRenaming(v.id);
+                      }}
+                    >
+                      Rename
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

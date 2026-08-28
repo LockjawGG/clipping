@@ -37,9 +37,13 @@ export const createFromUrlSchema = z.object({
   projectId: z.string().min(1).optional(),
 });
 
-export const updateVideoSchema = z.object({
-  projectId: z.string().min(1),
-});
+export const updateVideoSchema = z
+  .object({
+    projectId: z.string().min(1),
+    name: z.string().trim().min(1).max(300),
+  })
+  .partial()
+  .refine((v) => v.projectId !== undefined || v.name !== undefined, "nothing to update");
 
 /** Minimal slice of the Prisma client the upload flow needs. */
 export interface VideoDb {
@@ -149,13 +153,20 @@ async function ownedVideo(deps: VideoServiceDeps, videoId: string): Promise<Vide
   return video;
 }
 
-/** Move a video into another of the user's projects. */
+/** Rename a video and/or move it into another of the user's projects. */
 export async function updateVideo(deps: VideoServiceDeps, videoId: string, input: unknown) {
-  const { projectId } = updateVideoSchema.parse(input);
+  const { projectId, name } = updateVideoSchema.parse(input);
   await ownedVideo(deps, videoId);
-  await deps.assertProjectOwned(projectId);
-  await deps.db.video.update({ where: { id: videoId }, data: { projectId } });
-  return { id: videoId, projectId };
+
+  const data: Record<string, unknown> = {};
+  if (name !== undefined) data.originalFilename = name;
+  if (projectId !== undefined) {
+    await deps.assertProjectOwned(projectId);
+    data.projectId = projectId;
+  }
+
+  await deps.db.video.update({ where: { id: videoId }, data });
+  return { id: videoId, ...(name !== undefined ? { name } : {}), ...(projectId ? { projectId } : {}) };
 }
 
 export async function confirmUpload(deps: VideoServiceDeps, videoId: string) {
