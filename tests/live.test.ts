@@ -260,6 +260,7 @@ test("LIVE_FINALIZE reassembles fragments, re-transcribes, and queues ANALYZE", 
         { id: "c0", videoId: "vidL", index: 0, startMs: 0, storageKey: "videos/vidL/chunks/0.webm", status: "DONE" },
         { id: "c1", videoId: "vidL", index: 1, startMs: 8000, storageKey: "videos/vidL/chunks/1.webm", status: "DONE" },
       ],
+      deleteForVideo: async () => calls.push("chunks:deleted"),
     },
     transcription: { transcribe: async () => ({ provider: "fake", language: "en", segments: [] }) },
     transcripts: { save: async () => ({ segmentCount: 0 }) },
@@ -272,4 +273,5 @@ test("LIVE_FINALIZE reassembles fragments, re-transcribes, and queues ANALYZE", 
   assert.ok(calls.includes("put"));
   assert.ok(calls.includes("status:READY"));
   assert.ok(calls.includes("enqueue:ANALYZE"));
+  assert.ok(calls.includes("chunks:deleted"));
 });

@@ -134,8 +134,9 @@ export const liveFinalizeHandler: JobHandler<PipelineDeps> = async ({ job, deps,
   await deps.videos.setStatus(job.videoId, "READY");
   await deps.queue.enqueue({ videoId: job.videoId, kind: "ANALYZE" });
 
-  // Storage cleanup for the now-redundant fragments (best effort).
+  // The fragments are now baked into the source — drop their files and rows.
   for (const c of chunks) await deps.storage.delete(c.storageKey).catch(() => {});
+  await deps.liveChunks.deleteForVideo(job.videoId).catch(() => {});
 
   return { chunks: chunks.length, usedChunks: used, segments: result.segments.length };
 };

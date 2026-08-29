@@ -188,6 +188,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       get: async () => null,
       setStatus: async () => {},
       listForVideo: async () => [],
+      deleteForVideo: async () => {},
     },
     captions: { renderCaptioned: async () => {} },
     faces: { name: "none", detectTrack: async () => [] },

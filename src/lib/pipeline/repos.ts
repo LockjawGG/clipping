@@ -428,6 +428,9 @@ export function prismaLiveChunkRepo(client: PrismaClient): LiveChunkRepo {
         select: shape,
       });
     },
+    async deleteForVideo(videoId) {
+      await client.liveChunk.deleteMany({ where: { videoId } });
+    },
   };
 }
 

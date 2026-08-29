@@ -175,6 +175,8 @@ export interface LiveChunkRepo {
   setStatus(id: string, status: string): Promise<void>;
   /** All chunks of a video, in capture order. */
   listForVideo(videoId: string): Promise<LiveChunkRow[]>;
+  /** Drop a video's chunk rows once they've been reassembled into the source. */
+  deleteForVideo(videoId: string): Promise<void>;
 }
 
 export interface PipelineDeps {
