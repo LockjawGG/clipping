@@ -4,11 +4,13 @@ import assert from "node:assert/strict";
 import {
   resolveTextStyle,
   textStyleToCss,
+  textStyleFromParts,
   styleNeedsRemotion,
   captionNeedsRemotion,
   DEFAULT_TEXT_STYLE,
   type TextStyle,
 } from "../src/lib/captions/text-style.ts";
+import { parseRich, serializeRich } from "../src/lib/captions/rich-extras.ts";
 import {
   applyWordRules,
   isEmphasis,
@@ -177,4 +179,49 @@ test("findTemplate round-trips and gradient templates need Remotion", () => {
   assert.ok(gold);
   assert.equal(styleNeedsRemotion(gold!.style), true);
   assert.equal(findTemplate("nope"), undefined);
+});
+
+// ---------- rich-extras (advanced style editor) ----------
+
+test("parseRich tolerates null / garbage / non-object JSON", () => {
+  assert.deepEqual(parseRich(null), {});
+  assert.deepEqual(parseRich("not json"), {});
+  assert.deepEqual(parseRich("[1,2,3]"), {});
+  assert.deepEqual(parseRich('{"glass":true}'), { glass: true });
+});
+
+test("serializeRich drops defaults so a plain style stays null", () => {
+  assert.equal(serializeRich({}), null);
+  assert.equal(
+    serializeRich({
+      letterSpacingEm: 0,
+      lineHeight: 1.15,
+      textTransform: "none",
+      fill: { kind: "solid" },
+      layers: [],
+      glass: false,
+    }),
+    null,
+  );
+  assert.equal(serializeRich({ letterSpacingEm: 0.2 }), '{"letterSpacingEm":0.2}');
+});
+
+test("serializeRich keeps gradient / layers / glass, and textStyleFromParts consumes it", () => {
+  const json = serializeRich({
+    textTransform: "uppercase",
+    fill: { kind: "linear-gradient", stops: ["#fff", "#00f"], angleDeg: 120 },
+    layers: [{ kind: "neon", color: "#00E5FF", size: 8 }],
+    glass: true,
+  });
+  assert.ok(json);
+  const back = parseRich(json);
+  assert.equal(back.glass, true);
+  assert.equal(back.fill?.kind, "linear-gradient");
+  assert.equal(back.layers?.[0].kind, "neon");
+
+  const resolved = textStyleFromParts({ fontSizePx: 60 }, json);
+  assert.equal(resolved.fontSizePx, 60, "scalar base preserved");
+  assert.equal(resolved.textTransform, "uppercase");
+  assert.equal(resolved.layers[0].kind, "neon");
+  assert.equal(styleNeedsRemotion(resolved), true);
 });
