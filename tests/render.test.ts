@@ -51,7 +51,7 @@ interface Spy {
   trackedReframes: number;
   probed: string[];
   puts: string[];
-  captioned: Array<{ preset: string; videoPath: string; cueCount: number }>;
+  captioned: Array<{ preset: string; videoPath: string; cueCount: number; textOverlayCount: number }>;
   composed: OverlayCompositeOptions[];
   evicted: string[];
 }
@@ -133,8 +133,18 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
     },
     faces: { name: "none", detectTrack: async () => [] },
     captions: {
-      renderCaptioned: async (input: { preset: string; videoPath: string; cues: unknown[] }) => {
-        spy.captioned.push({ preset: input.preset, videoPath: input.videoPath, cueCount: input.cues.length });
+      renderCaptioned: async (input: {
+        preset: string;
+        videoPath: string;
+        cues: unknown[];
+        textOverlays?: unknown[];
+      }) => {
+        spy.captioned.push({
+          preset: input.preset,
+          videoPath: input.videoPath,
+          cueCount: input.cues.length,
+          textOverlayCount: input.textOverlays?.length ?? 0,
+        });
       },
     },
     renders: {
@@ -187,6 +197,7 @@ function target(over: Partial<RenderTarget> = {}): RenderTarget {
     textStyle: null,
     wordRules: [],
     overlays: [],
+    textOverlays: [],
     wordStyles: {},
     ...over,
   };
@@ -312,6 +323,35 @@ test("animated captions: Remotion composites over the reframed clip, no SRT burn
   assert.ok(spy.captioned[0].videoPath.endsWith("reframed.mp4"));
   assert.equal(spy.puts[0], "renders/r6/output.mp4");
   assert.deepEqual(spy.completed, [{ id: "r6", outputKey: "renders/r6/output.mp4" }]);
+});
+
+test("a text overlay drives the Remotion composite pass even with no captions", async () => {
+  const { deps, spy } = makeDeps(
+    target({
+      aspectRatio: "LANDSCAPE_16_9", // no reframe, no captions
+      textOverlays: [
+        {
+          text: "BREAKING",
+          x: 0.5,
+          y: 0.2,
+          scale: 1.4,
+          rotation: 0,
+          opacity: 1,
+          startMs: 1000,
+          endMs: 5000,
+          styleJson: '{"fill":{"kind":"linear-gradient","stops":["#a","#b"]}}',
+        },
+      ],
+    }),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-txt" }));
+
+  assert.equal(spy.reframes.length, 0);
+  assert.equal(spy.captioned.length, 1);
+  assert.equal(spy.captioned[0].cueCount, 0, "no caption cues");
+  assert.equal(spy.captioned[0].textOverlayCount, 1);
+  assert.ok(spy.captioned[0].videoPath.endsWith("cut.mp4"), "composites over the cut, unreframed");
+  assert.equal(spy.puts[0], "renders/r-txt/output.mp4");
 });
 
 test("animated captions with no words in range fall back to a plain render", async () => {

@@ -98,6 +98,8 @@ export interface RenderTarget {
   wordRules: WordRule[];
   /** Library images/GIFs pinned onto this clip, bottom-to-top. */
   overlays: RenderOverlay[];
+  /** Freestanding text elements, composited by Remotion over the reframed clip. */
+  textOverlays: RenderTextOverlay[];
   /** Per-word caption overrides, keyed by transcript word id. */
   wordStyles: Record<string, { color: string | null; bold: boolean | null; italic: boolean | null }>;
 }
@@ -113,6 +115,20 @@ export interface RenderOverlay {
   opacity: number;
   startMs: number | null;
   endMs: number | null;
+}
+
+/** One freestanding text element. Position is a normalised 0..1 centre point. */
+export interface RenderTextOverlay {
+  text: string;
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+  opacity: number;
+  startMs: number | null;
+  endMs: number | null;
+  /** JSON partial TextStyle; null = default style. */
+  styleJson: string | null;
 }
 
 export interface RenderResult {

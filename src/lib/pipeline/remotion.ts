@@ -5,6 +5,7 @@ import type { Cue } from "../captions/layout.ts";
 import type { CaptionStyle } from "../captions/presets.ts";
 import type { TextStyle } from "../captions/text-style.ts";
 import type { WordRule } from "../captions/word-rules.ts";
+import type { RenderTextOverlay } from "./deps.ts";
 
 /**
  * Renders animated (word-timed) captions over an already-reframed clip via the
@@ -22,6 +23,8 @@ export interface CaptionRenderInput {
   textStyle?: TextStyle | null;
   /** Word-level rules (karaoke / highlight / emphasis). */
   wordRules?: WordRule[];
+  /** Freestanding text elements composited over the clip. */
+  textOverlays?: RenderTextOverlay[];
   width: number;
   height: number;
   fps: number;
@@ -76,6 +79,7 @@ export class RemotionCaptionRenderer implements CaptionRenderer {
       style: input.style,
       textStyle: input.textStyle ?? null,
       wordRules: input.wordRules ?? [],
+      textOverlays: input.textOverlays ?? [],
       fps,
       durationInFrames,
       width: input.width,

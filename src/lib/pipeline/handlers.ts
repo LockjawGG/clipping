@@ -347,6 +347,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     const animated =
       words.length > 0 && captionNeedsRemotion(target.captionAnimation, target.textStyle);
     const staticBurn = words.length > 0 && !animated;
+    const hasTextOverlays = target.textOverlays.length > 0;
 
     // Static captions burn during the reframe; animated ones are composited by
     // Remotion afterwards, so the reframe gets no subtitle path.
@@ -416,17 +417,18 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
 
     let output = needsReframe ? reframed : cut;
 
-    if (animated) {
+    if (animated || hasTextOverlays) {
       const { width, height } = ASPECT_DIMENSIONS[aspect];
       const pre = await deps.ffmpeg.probe(output, signal);
       await deps.captions.renderCaptioned({
         videoPath: output,
         outputPath: captioned,
-        cues: buildCues(words),
+        cues: animated ? buildCues(words) : [],
         preset: remotionPreset(target.captionAnimation),
         style: target.captionStyle ?? DEFAULT_CAPTION_STYLE,
         textStyle: target.textStyle,
         wordRules: target.wordRules,
+        textOverlays: target.textOverlays,
         width: pre.width ?? width,
         height: pre.height ?? height,
         fps: pre.fps ?? 30,

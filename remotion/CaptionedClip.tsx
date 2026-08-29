@@ -18,7 +18,12 @@ import {
   type AnimTrack,
   type SpringConfig,
 } from "../src/lib/captions/anim-spec";
-import { resolveTextStyle, textStyleToCss, type TextStyle } from "../src/lib/captions/text-style";
+import {
+  resolveTextStyle,
+  textStyleToCss,
+  parseStylePartial,
+  type TextStyle,
+} from "../src/lib/captions/text-style";
 import { applyWordRules, wordEffectCss, type WordRule } from "../src/lib/captions/word-rules";
 
 /**
@@ -132,6 +137,57 @@ const Word: React.FC<{
   );
 };
 
+interface RenderTextOverlay {
+  text: string;
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+  opacity: number;
+  startMs: number | null;
+  endMs: number | null;
+  styleJson: string | null;
+}
+
+const TextOverlayLayer: React.FC<{ items: RenderTextOverlay[]; tMs: number }> = ({ items, tMs }) => (
+  <>
+    {items.map((o, i) => {
+      const from = o.startMs ?? Number.NEGATIVE_INFINITY;
+      const to = o.endMs ?? Number.POSITIVE_INFINITY;
+      if (tMs < from || tMs > to) return null;
+      const css = textStyleToCss(resolveTextStyle(parseStylePartial(o.styleJson)), {
+        scale: o.scale || 1,
+      });
+      return (
+        <div
+          key={i}
+          style={{
+            position: "absolute",
+            left: `${o.x * 100}%`,
+            top: `${o.y * 100}%`,
+            transform: `translate(-50%, -50%) rotate(${o.rotation}deg)`,
+            maxWidth: "84%",
+            opacity: o.opacity,
+          }}
+        >
+          <span style={(css.panel ?? undefined) as unknown as React.CSSProperties | undefined}>
+            <span
+              style={{
+                ...(css.text as unknown as React.CSSProperties),
+                display: "inline-block",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {o.text}
+            </span>
+          </span>
+        </div>
+      );
+    })}
+  </>
+);
+
 export const CaptionedClip: React.FC<CaptionedClipProps> = ({
   videoSrc,
   cues,
@@ -139,6 +195,7 @@ export const CaptionedClip: React.FC<CaptionedClipProps> = ({
   style,
   textStyle,
   wordRules,
+  textOverlays,
 }) => {
   const frame = useCurrentFrame();
   const { fps, height, width } = useVideoConfig();
@@ -227,6 +284,12 @@ export const CaptionedClip: React.FC<CaptionedClipProps> = ({
               />
             ))}
           </div>
+        </AbsoluteFill>
+      ) : null}
+
+      {Array.isArray(textOverlays) && textOverlays.length > 0 ? (
+        <AbsoluteFill>
+          <TextOverlayLayer items={textOverlays as RenderTextOverlay[]} tMs={tMs} />
         </AbsoluteFill>
       ) : null}
     </AbsoluteFill>

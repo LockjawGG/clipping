@@ -44,6 +44,8 @@ export const captionPresetSchema = z.enum([
 export const textStyleSchema = z.any().nullable().default(null);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const wordRulesSchema = z.array(z.any()).default([]);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const textOverlaysSchema = z.array(z.any()).default([]);
 
 export const captionedClipSchema = z.object({
   /** `file://…` path to the (already reframed) source video. */
@@ -53,6 +55,7 @@ export const captionedClipSchema = z.object({
   style: captionStyleSchema,
   textStyle: textStyleSchema,
   wordRules: wordRulesSchema,
+  textOverlays: textOverlaysSchema,
   fps: z.number(),
   durationInFrames: z.number(),
   width: z.number(),
@@ -84,6 +87,7 @@ export const DEFAULT_CAPTIONED_CLIP_PROPS: CaptionedClipProps = {
   },
   textStyle: null,
   wordRules: [],
+  textOverlays: [],
   fps: 30,
   durationInFrames: 900,
   width: 1080,

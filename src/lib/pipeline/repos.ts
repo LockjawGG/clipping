@@ -328,6 +328,10 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
               overlays: {
                 orderBy: { zIndex: "asc" },
                 select: {
+                  kind: true,
+                  content: true,
+                  rotation: true,
+                  styleJson: true,
                   x: true,
                   y: true,
                   scale: true,
@@ -369,6 +373,19 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
             opacity: o.opacity,
             startMs: o.startMs,
             endMs: o.endMs,
+          })),
+        textOverlays: render.clip.overlays
+          .filter((o) => !o.hidden && o.kind === "TEXT")
+          .map((o) => ({
+            text: o.content,
+            x: o.x,
+            y: o.y,
+            scale: o.scale,
+            rotation: o.rotation,
+            opacity: o.opacity,
+            startMs: o.startMs,
+            endMs: o.endMs,
+            styleJson: o.styleJson,
           })),
         wordStyles: Object.fromEntries(
           render.clip.wordStyles.map((s) => [
