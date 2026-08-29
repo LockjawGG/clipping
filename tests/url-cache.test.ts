@@ -50,3 +50,34 @@ test("sourceUrlHash differs for genuinely different URLs", () => {
     sourceUrlHash("https://youtu.be/xyz"),
   );
 });
+
+test("normalizeSourceUrl folds YouTube's URL forms onto watch?v=<id>", () => {
+  const ID = "dQw4w9WgXcQ";
+  const canonical = `https://youtube.com/watch?v=${ID}`;
+  for (const form of [
+    `https://www.youtube.com/watch?v=${ID}`,
+    `https://youtu.be/${ID}`,
+    `https://youtu.be/${ID}?t=42&si=abc`,
+    `https://www.youtube.com/watch?v=${ID}&list=PLxxxx&index=3`,
+    `https://m.youtube.com/watch?v=${ID}`,
+    `https://music.youtube.com/watch?v=${ID}`,
+    `https://www.youtube.com/shorts/${ID}`,
+    `https://www.youtube.com/live/${ID}`,
+    `https://www.youtube.com/embed/${ID}?autoplay=1`,
+    `HTTPS://YOUTU.BE/${ID}#t=10`,
+  ]) {
+    assert.equal(normalizeSourceUrl(form), canonical, form);
+  }
+});
+
+test("normalizeSourceUrl leaves non-YouTube and malformed-id YouTube URLs alone", () => {
+  assert.equal(
+    normalizeSourceUrl("https://vimeo.com/dQw4w9WgXcQ"),
+    "https://vimeo.com/dQw4w9WgXcQ",
+  );
+  // 'abc' isn't a valid 11-char id -> no rewrite
+  assert.equal(
+    normalizeSourceUrl("https://youtube.com/watch?v=abc"),
+    "https://youtube.com/watch?v=abc",
+  );
+});
