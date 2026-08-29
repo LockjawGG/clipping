@@ -40,9 +40,14 @@ export function GoLive({ projectId }: { projectId?: string }) {
   const audioCtx = useRef<AudioContext | null>(null);
   const chunkIndex = useRef(0);
   const startedAt = useRef(0);
+  // Background tabs throttle setInterval hard (~1/min), which would stall the 8s
+  // chunk cutter and freeze the rolling transcript while you're on another tab.
+  // A Worker timer keeps ticking at full rate when the tab is hidden.
   const chunkTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const chunkWorker = useRef<Worker | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const clockTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const onVisible = useRef<(() => void) | null>(null);
   const recording = useRef(false);
   const lastSeg = useRef(-1);
 
@@ -52,6 +57,12 @@ export function GoLive({ projectId }: { projectId?: string }) {
       if (t.current) clearInterval(t.current);
       t.current = null;
     });
+    chunkWorker.current?.terminate();
+    chunkWorker.current = null;
+    if (onVisible.current) {
+      document.removeEventListener("visibilitychange", onVisible.current);
+      onVisible.current = null;
+    }
     try {
       recorder.current?.stop();
     } catch {
@@ -221,13 +232,34 @@ export function GoLive({ projectId }: { projectId?: string }) {
       startedAt.current = Date.now();
       setElapsedMs(0);
       setPhase("recording");
-      chunkTimer.current = setInterval(() => {
+
+      // Cut a self-contained blob every CHUNK_MS; onstop restarts recording.
+      const cut = () => {
         try {
-          recorder.current?.stop(); // flush a self-contained blob, then onstop restarts
+          recorder.current?.stop();
         } catch {
           /* ignore */
         }
-      }, CHUNK_MS);
+      };
+      try {
+        const src = `let h;onmessage=e=>{if(e.data==='go'){h=setInterval(()=>postMessage(0),${CHUNK_MS})}else{clearInterval(h)}}`;
+        const w = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+        w.onmessage = cut;
+        w.postMessage("go");
+        chunkWorker.current = w;
+      } catch {
+        // Worker blocked (CSP) — fall back to a main-thread timer (throttled in
+        // background tabs, but better than nothing).
+        chunkTimer.current = setInterval(cut, CHUNK_MS);
+      }
+
+      // Returning to the tab can leave a mixing AudioContext suspended — resume it.
+      const vis = () => {
+        if (document.visibilityState === "visible") void audioCtx.current?.resume().catch(() => {});
+      };
+      document.addEventListener("visibilitychange", vis);
+      onVisible.current = vis;
+
       pollTimer.current = setInterval(() => void pollTranscript(), POLL_MS);
       clockTimer.current = setInterval(() => setElapsedMs(Date.now() - startedAt.current), 500);
     } catch (e) {
