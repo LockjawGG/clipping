@@ -24,12 +24,16 @@ export function createPipelineWorker(): JobWorker<PipelineDeps> {
     onError: (job, err) => {
       console.error(`[worker] ${job.id === "-" ? "" : `job ${job.id} (${job.kind}) `}${err}`);
     },
-    // A job that's out of retries leaves its video terminal, so it stops showing
-    // as "processing" forever. "Retry processing" can still requeue it.
+    // An ingest job that's out of retries leaves its video FAILED so it stops
+    // showing as "processing" forever ("Retry processing" can still requeue it).
+    // RENDER / THUMBNAIL failures don't touch the video — a broken export or a
+    // missing poster must not knock a fully-transcribed video offline.
     onJobFailed: async (job, message) => {
+      const INGEST = new Set(["FETCH", "PROBE", "EXTRACT_AUDIO", "TRANSCRIBE", "ANALYZE"]);
+      if (!INGEST.has(job.kind)) return;
       await db.video
-        .update({
-          where: { id: job.videoId },
+        .updateMany({
+          where: { id: job.videoId, status: { not: "READY" } },
           data: { status: "FAILED", errorMessage: message.slice(0, 2000) },
         })
         .catch(() => {});
