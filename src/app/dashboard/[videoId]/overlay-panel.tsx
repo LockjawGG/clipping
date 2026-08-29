@@ -2,6 +2,8 @@
 
 import { memo } from "react";
 
+import { TextOverlayInspector } from "./text-overlay-inspector";
+
 export interface OverlayView {
   id: string;
   clipId: string;
@@ -9,6 +11,8 @@ export interface OverlayView {
   kind: string;
   name: string;
   url: string | null;
+  /** The string for a TEXT overlay; null for image / GIF. */
+  text: string | null;
   x: number;
   y: number;
   scale: number;
@@ -18,6 +22,9 @@ export interface OverlayView {
   endMs: number | null;
   zIndex: number;
   hidden: boolean;
+  styleJson: string | null;
+  animationJson: string | null;
+  role: string;
 }
 
 const secStr = (ms: number | null) => (ms == null ? "" : (ms / 1000).toFixed(1));
@@ -43,6 +50,7 @@ export const OverlayPanel = memo(function OverlayPanel({
   onEdit,
   onReorder,
   onDelete,
+  onAddText,
 }: {
   overlays: OverlayView[];
   clipLenMs: number;
@@ -52,16 +60,21 @@ export const OverlayPanel = memo(function OverlayPanel({
   onEdit: (id: string, patch: Record<string, unknown>, opts?: { coalesceMs?: number }) => void;
   onReorder: (id: string, direction: "up" | "down") => void;
   onDelete: (id: string) => void;
+  onAddText: () => void;
 }) {
   // Top layer first — matches "what's on top" and the canvas stacking.
   const ordered = [...overlays].sort((a, b) => b.zIndex - a.zIndex);
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-xs font-medium text-muted">
-        Layers{overlays.length ? ` (${overlays.length})` : ""} — drag media from the library onto
-        this clip
-      </p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-muted">
+          Layers{overlays.length ? ` (${overlays.length})` : ""} — drag media from the library, or
+        </p>
+        <button type="button" onClick={onAddText} className="btn btn-sm shrink-0">
+          + Add text
+        </button>
+      </div>
 
       {ordered.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border px-3 py-3 text-center text-xs text-muted">
@@ -96,6 +109,8 @@ export const OverlayPanel = memo(function OverlayPanel({
                     {o.url ? (
                       // eslint-disable-next-line @next/next/no-img-element -- signed storage URL
                       <img src={o.url} alt="" className="h-full w-full object-contain" />
+                    ) : o.kind === "TEXT" ? (
+                      <span className="font-bold text-text">T</span>
                     ) : (
                       <span className="text-muted">🖼</span>
                     )}
@@ -141,6 +156,30 @@ export const OverlayPanel = memo(function OverlayPanel({
                     </button>
                   </div>
                 </div>
+
+                {/* text element inspector */}
+                {selected && o.kind === "TEXT" && (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className="border-t border-border px-2 py-2 text-xs"
+                  >
+                    <TextOverlayInspector
+                      text={o.text ?? ""}
+                      role={o.role}
+                      styleJson={o.styleJson}
+                      onEdit={(patch, opts) =>
+                        onEdit(
+                          o.id,
+                          // keep the optimistic row label / inspector text in sync
+                          patch.content !== undefined
+                            ? { ...patch, text: patch.content, name: patch.content }
+                            : patch,
+                          opts,
+                        )
+                      }
+                    />
+                  </div>
+                )}
 
                 {/* expanded controls for the selected layer */}
                 {selected && (

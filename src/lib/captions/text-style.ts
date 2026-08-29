@@ -109,6 +109,57 @@ export function textStyleFromParts(
   return resolveTextStyle({ ...(base ?? {}), ...extra });
 }
 
+/**
+ * Parse a stored full-`TextStyle` blob (a freestanding text element keeps its
+ * whole style here — there are no scalar columns). Malformed -> {}.
+ */
+export function parseStylePartial(json: string | null | undefined): Partial<TextStyle> {
+  if (!json) return {};
+  try {
+    const parsed = JSON.parse(json);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Partial<TextStyle>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+const SCALAR_DEFAULT_KEYS = [
+  "fontFamily",
+  "fontSizePx",
+  "fontWeight",
+  "textColor",
+  "highlightColor",
+  "outlineColor",
+  "outlineWidthPx",
+  "backgroundColor",
+  "alignment",
+  "positionY",
+  "uppercase",
+  "letterSpacingEm",
+  "lineHeight",
+  "textTransform",
+  "glass",
+] as const;
+
+/**
+ * Serialise a full-`TextStyle` partial, dropping any field that equals the
+ * default so an untouched style serialises back to `null`.
+ */
+export function serializeStylePartial(partial: Partial<TextStyle>): string | null {
+  const out: Record<string, unknown> = {};
+  const src = partial as Record<string, unknown>;
+  const def = DEFAULT_TEXT_STYLE as unknown as Record<string, unknown>;
+  for (const k of SCALAR_DEFAULT_KEYS) {
+    const v = src[k];
+    if (v !== undefined && v !== def[k]) out[k] = v;
+  }
+  if (partial.fill && partial.fill.kind !== "solid") out.fill = partial.fill;
+  if (partial.layers && partial.layers.length) out.layers = partial.layers;
+  return Object.keys(out).length ? JSON.stringify(out) : null;
+}
+
 /** Fill in defaults; `fill` and `layers` are replaced wholesale when present. */
 export function resolveTextStyle(partial: Partial<TextStyle> | null | undefined): TextStyle {
   const p = partial ?? {};

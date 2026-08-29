@@ -5,6 +5,8 @@ import {
   resolveTextStyle,
   textStyleToCss,
   textStyleFromParts,
+  parseStylePartial,
+  serializeStylePartial,
   styleNeedsRemotion,
   captionNeedsRemotion,
   DEFAULT_TEXT_STYLE,
@@ -223,6 +225,30 @@ test("serializeRich drops defaults so a plain style stays null", () => {
     null,
   );
   assert.equal(serializeRich({ letterSpacingEm: 0.2 }), '{"letterSpacingEm":0.2}');
+});
+
+test("serializeStylePartial (full-style blob for text elements) drops defaults", () => {
+  assert.equal(serializeStylePartial({}), null);
+  assert.equal(serializeStylePartial({ fontFamily: "Inter", fontWeight: 700 }), null, "all defaults");
+  assert.equal(
+    serializeStylePartial({ fontFamily: "Impact", fontSizePx: 120 }),
+    '{"fontFamily":"Impact","fontSizePx":120}',
+  );
+  const withRich = serializeStylePartial({
+    textColor: "#FF0000",
+    fill: { kind: "linear-gradient", stops: ["#a", "#b"] },
+    layers: [{ kind: "glow" }],
+  });
+  const back = parseStylePartial(withRich);
+  assert.equal(back.textColor, "#FF0000");
+  assert.equal(back.fill?.kind, "linear-gradient");
+  assert.equal(back.layers?.length, 1);
+});
+
+test("parseStylePartial tolerates null / garbage", () => {
+  assert.deepEqual(parseStylePartial(null), {});
+  assert.deepEqual(parseStylePartial("nope"), {});
+  assert.deepEqual(parseStylePartial("[1]"), {});
 });
 
 test("serializeRich keeps gradient / layers / glass, and textStyleFromParts consumes it", () => {

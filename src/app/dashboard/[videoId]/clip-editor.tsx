@@ -597,6 +597,25 @@ export function ClipEditor({
     }
   }
 
+  async function addTextOverlay() {
+    setOverlayError(null);
+    try {
+      const res = await fetch(`/api/clips/${clip.id}/text-overlays`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Text" }),
+      });
+      const created = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(created?.error ?? "could not add text");
+      if (created?.id) {
+        setOverlays((list) => [...list, created as OverlayView]);
+        setSelectedOverlayId(created.id);
+      }
+    } catch (err) {
+      setOverlayError(err instanceof Error ? err.message : "could not add text");
+    }
+  }
+
   // Delete the selected overlay with the keyboard, unless a field is focused.
   useEffect(() => {
     if (!selectedOverlayId) return;
@@ -1062,6 +1081,7 @@ export function ClipEditor({
         onEdit={editOverlay}
         onReorder={reorderOverlayLocal}
         onDelete={deleteOverlayLocal}
+        onAddText={addTextOverlay}
       />
       {overlayError && <p className="text-sm text-danger">{overlayError}</p>}
 

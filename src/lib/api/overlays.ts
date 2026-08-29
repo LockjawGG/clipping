@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { StorageProvider } from "../providers/types.ts";
+import { TEXT_OVERLAY_ROLES } from "../overlays/roles.ts";
 import { ApiError } from "./http.ts";
 
 /**
@@ -10,11 +11,10 @@ import { ApiError } from "./http.ts";
  * start of the clip); null on either side means "run to that edge of the clip".
  */
 
-const unit = z.number().min(0).max(1);
+export { TEXT_OVERLAY_ROLES };
+export type { TextOverlayRole } from "../overlays/roles.ts";
 
-/** Freestanding text elements are grouped by role for the browser / inspector. */
-export const TEXT_OVERLAY_ROLES = ["title", "lowerThird", "callout", "social"] as const;
-export type TextOverlayRole = (typeof TEXT_OVERLAY_ROLES)[number];
+const unit = z.number().min(0).max(1);
 
 export const createOverlaySchema = z.object({
   assetId: z.string().min(1),
