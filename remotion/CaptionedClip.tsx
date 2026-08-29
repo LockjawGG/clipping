@@ -126,12 +126,24 @@ const Word: React.FC<{
 
   const highlighted = active || (anim.highlight === "progressive" && spoken);
   const ruleCss = wordEffectCss(applyWordRules(wordRules, { spoken, active }));
-  const overrideColor = ruleCss.color !== undefined || highlighted;
-  const baseColor = highlighted
-    ? style.highlightColor
-    : gradientFill && !overrideColor
-      ? "inherit"
-      : style.textColor;
+  // The explicit colour this word should show, if any (a highlight beats a rule).
+  const wordColor = (highlighted ? style.highlightColor : ruleCss.color) as string | undefined;
+
+  // Colour handling. On a gradient caption the container sets
+  // `-webkit-text-fill-color: transparent` to clip the gradient; a word that
+  // wants its own colour must override BOTH the fill colour and the clip,
+  // otherwise it renders as an invisible / outline-only "hollow" word.
+  const colorStyle: React.CSSProperties = gradientFill
+    ? wordColor
+      ? {
+          color: wordColor,
+          WebkitTextFillColor: wordColor,
+          backgroundImage: "none",
+          backgroundClip: "border-box",
+          WebkitBackgroundClip: "border-box",
+        }
+      : { color: "inherit", WebkitTextFillColor: "inherit" }
+    : { color: wordColor ?? style.textColor };
 
   // A scaled word overflows its box (transform doesn't reserve layout). Reserve
   // roughly the overflow with horizontal margin so it never collides with the
@@ -148,8 +160,7 @@ const Word: React.FC<{
         transform,
         opacity,
         ...(scaleMx ? { marginLeft: scaleMx, marginRight: scaleMx } : {}),
-        color: baseColor,
-        ...(gradientFill && !overrideColor ? { WebkitTextFillColor: "inherit" } : {}),
+        ...colorStyle,
         ...ruleCss,
       }}
     >

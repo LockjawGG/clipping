@@ -427,8 +427,27 @@ export const ClipPlayer = memo(function ClipPlayer({
                   active: posMs >= w.startMs && posMs < w.endMs,
                 }),
               );
-              const explicitColor =
-                manual.color !== undefined || ruleCss.color !== undefined || anim.highlighted;
+              // The explicit colour this word should show, if any.
+              const wordColor = anim.highlighted
+                ? richStyle.highlightColor
+                : ((manual.color ?? ruleCss.color) as string | undefined);
+              // On a gradient caption the container clips the gradient with
+              // `-webkit-text-fill-color: transparent`; a word with its own
+              // colour must override the fill colour AND the clip or it renders
+              // hollow / invisible.
+              const colorStyle: React.CSSProperties = gradientFill
+                ? wordColor
+                  ? {
+                      color: wordColor,
+                      WebkitTextFillColor: wordColor,
+                      backgroundImage: "none",
+                      backgroundClip: "border-box",
+                      WebkitBackgroundClip: "border-box",
+                    }
+                  : { color: "inherit", WebkitTextFillColor: "inherit" }
+                : wordColor
+                  ? { color: wordColor }
+                  : {};
               // reserve the overflow of a scaled word so it can't collide with
               // the next one (transform:scale doesn't affect layout).
               const sv = Number(anim.css.transform.match(/scale\(([\d.]+)\)/)?.[1] ?? 1);
@@ -444,10 +463,7 @@ export const ClipPlayer = memo(function ClipPlayer({
                       display: "inline-block",
                       ...(anim.css as unknown as React.CSSProperties),
                       ...(scaleMx ? { marginLeft: scaleMx, marginRight: scaleMx } : {}),
-                      ...(anim.highlighted ? { color: richStyle.highlightColor } : {}),
-                      ...(gradientFill && !explicitColor
-                        ? { color: "inherit", WebkitTextFillColor: "inherit" }
-                        : {}),
+                      ...colorStyle,
                       ...(ruleCss as unknown as React.CSSProperties),
                       ...manual,
                     }}
