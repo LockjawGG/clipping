@@ -548,12 +548,13 @@ export function Timeline({
           <div style={{ height: RULER_H, borderBottom: `1px solid ${C.border}` }} />
           <div className="flex flex-col gap-2 p-2">
             {tracks.map((t) => {
+              const isLane = (k: TrackKind) => k === "overlay" || k === "text";
               const overlayIdxs = tracks.reduce<number[]>((a, x, i) => {
-                if (x.kind === "overlay") a.push(i);
+                if (isLane(x.kind)) a.push(i);
                 return a;
               }, []);
               const pos = overlayIdxs.indexOf(tracks.indexOf(t));
-              const reorderable = onReorderTrack && t.kind === "overlay" && overlayIdxs.length > 1;
+              const reorderable = onReorderTrack && isLane(t.kind) && overlayIdxs.length > 1;
               return (
                 <TrackHeader
                   key={t.id}

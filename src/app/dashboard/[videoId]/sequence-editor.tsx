@@ -15,7 +15,7 @@ import type { TimelineClip, TimelineTrack } from "@/components/timeline/timeline
 interface SequenceItemView {
   id: string;
   trackId: string;
-  kind: "video" | "audio" | "image";
+  kind: "video" | "audio" | "image" | "text";
   name: string;
   timelineStart: number;
   sourceIn: number;
@@ -35,7 +35,7 @@ interface SequenceView {
   tracks: Array<{
     id: string;
     index: number;
-    kind: "VIDEO" | "AUDIO" | "OVERLAY";
+    kind: "VIDEO" | "AUDIO" | "OVERLAY" | "TEXT";
     name: string;
     muted: boolean;
     locked: boolean;

@@ -12,7 +12,7 @@ import { ApiError } from "./http.ts";
  * source `Video` or library `Asset`; source bytes are never touched.
  */
 
-export type SequenceTrackKind = "VIDEO" | "AUDIO" | "OVERLAY";
+export type SequenceTrackKind = "VIDEO" | "AUDIO" | "OVERLAY" | "TEXT";
 
 /** Default on-timeline length for a still image dropped onto the timeline. */
 const STILL_IMAGE_MS = 5_000;
@@ -130,6 +130,7 @@ interface AssetLite {
 }
 interface OverlayLite {
   id: string;
+  kind: string;
   assetId: string | null;
   content: string;
   startMs: number | null;
@@ -182,7 +183,7 @@ export interface SequenceServiceDeps {
 export interface SequenceItemView {
   id: string;
   trackId: string;
-  kind: "video" | "audio" | "image";
+  kind: "video" | "audio" | "image" | "text";
   name: string;
   timelineStart: number;
   sourceIn: number;
@@ -321,11 +322,10 @@ async function toView(deps: SequenceServiceDeps, seq: SeqRow): Promise<SequenceV
 /* ----------------------------------------------------- overlay projection */
 
 /**
- * The clip's image / GIF overlays, projected as read-through timeline items —
- * ONE synthetic OVERLAY track per overlay, so each can be trimmed and placed
- * independently over the whole clip without colliding on a shared lane. Hidden
- * overlays and text/emoji overlays (no asset) are skipped. `null` when the clip
- * has no visible overlays.
+ * The clip's overlays — image / GIF *and* inserted text captions — projected as
+ * read-through timeline items, ONE synthetic track per overlay so each can be
+ * trimmed and placed independently over the whole clip. Hidden overlays are
+ * skipped. `null` when the clip has none.
  *
  * Ordering: top layer (highest zIndex) first, matching the Layers panel.
  */
@@ -339,20 +339,22 @@ async function overlayItems(
     orderBy: { zIndex: "asc" },
   });
   // rows come back zIndex-ascending; reverse so the top layer is the top track.
-  const visible = rows.filter((o) => !o.hidden && o.assetId).reverse();
+  const visible = rows.filter((o) => !o.hidden && (o.assetId || o.kind === "TEXT")).reverse();
   if (visible.length === 0) return null;
 
   const tracks: SequenceView["tracks"] = [];
   const items = await Promise.all(
     visible.map(async (o, i): Promise<SequenceItemView> => {
-      const asset = o.assetId ? await deps.db.asset.findUnique({ where: { id: o.assetId } }) : null;
+      const isText = o.kind === "TEXT";
+      const asset =
+        !isText && o.assetId ? await deps.db.asset.findUnique({ where: { id: o.assetId } }) : null;
       const start = Math.max(0, o.startMs ?? 0);
       const end = Math.max(start + 1, o.endMs ?? clipLenMs);
-      const name = asset?.name ?? o.content ?? "overlay";
+      const name = asset?.name ?? o.content ?? (isText ? "caption" : "overlay");
       tracks.push({
         id: OVERLAY_TRACK_PREFIX + o.id,
         index: 1_000 + i, // after every real track, in layer order
-        kind: "OVERLAY",
+        kind: isText ? "TEXT" : "OVERLAY",
         name,
         muted: false,
         locked: false,
@@ -360,7 +362,7 @@ async function overlayItems(
       return {
         id: OVERLAY_ID_PREFIX + o.id,
         trackId: OVERLAY_TRACK_PREFIX + o.id,
-        kind: "image",
+        kind: isText ? "text" : "image",
         name,
         timelineStart: start,
         sourceIn: 0,

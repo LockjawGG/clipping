@@ -410,8 +410,7 @@ export const ClipPlayer = memo(function ClipPlayer({
               );
               if (anim.hidden) {
                 return (
-                  <span key={w.id ?? i} style={{ opacity: 0 }}>
-                    {i > 0 ? " " : ""}
+                  <span key={w.id ?? i} style={{ display: "inline-block", margin: "0 0.18em", opacity: 0 }}>
                     {w.text}
                   </span>
                 );
@@ -430,6 +429,7 @@ export const ClipPlayer = memo(function ClipPlayer({
                   key={w.id ?? i}
                   style={{
                     display: "inline-block",
+                    margin: "0 0.18em",
                     ...(anim.css as unknown as React.CSSProperties),
                     ...(anim.highlighted ? { color: richStyle.highlightColor } : {}),
                     ...(gradientFill && !explicitColor
@@ -439,7 +439,6 @@ export const ClipPlayer = memo(function ClipPlayer({
                     ...manual,
                   }}
                 >
-                  {i > 0 ? " " : ""}
                   {anim.visibleText}
                 </span>
               );

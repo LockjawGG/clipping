@@ -187,6 +187,26 @@ test("getOrCreateClipSequence adds no OVERLAY track when there are no overlays",
   assert.equal(v.tracks.some((t) => t.kind === "OVERLAY"), false);
 });
 
+test("getOrCreateClipSequence projects inserted text captions onto their own TEXT track", async () => {
+  const { deps, overlays } = makeDeps();
+  overlays.push(
+    { id: "t1", clipId: "c1", kind: "TEXT", assetId: null, content: "Breaking news", startMs: 2000, endMs: 6000, hidden: false, zIndex: 1 },
+    { id: "i1", clipId: "c1", kind: "IMAGE", assetId: "img1", content: "logo.png", startMs: null, endMs: null, hidden: false, zIndex: 2 },
+  );
+  const v = await getOrCreateClipSequence(deps, "c1");
+
+  const textTrack = v.tracks.find((t) => t.kind === "TEXT");
+  assert.ok(textTrack, "a TEXT track exists");
+  assert.equal(textTrack!.name, "Breaking news");
+
+  const item = v.items.find((i) => i.id === "ov_t1")!;
+  assert.equal(item.kind, "text");
+  assert.equal(item.name, "Breaking news");
+  assert.equal(item.sourceUrl, null, "text captions have no media url");
+  assert.deepEqual([item.timelineStart, item.sourceOut], [2000, 4000]);
+  assert.equal(v.items.find((i) => i.id === "ov_i1")!.kind, "image");
+});
+
 test("getOrCreateClipSequence is idempotent", async () => {
   const { deps, sequences } = makeDeps();
   await getOrCreateClipSequence(deps, "c1");
