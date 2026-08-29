@@ -185,19 +185,16 @@ export function tracksFor(anim: TextAnimation, scope: AnimScope, phase: AnimPhas
 }
 
 /**
- * Whether a caption needs the Remotion path rather than the fast ffmpeg burn.
- * Phase 1: true whenever there is a real animation. `styleNeedsRemotion` is a
- * stub that Phase 2 fills in for gradient / glass / effect-layer styles.
+ * Whether an animation id needs the Remotion path rather than the fast ffmpeg
+ * burn. The style side of the decision lives in `text-style.ts`
+ * (`styleNeedsRemotion` / `captionNeedsRemotion`) so this module stays
+ * import-free for the Remotion bundle.
  */
-export function styleNeedsRemotion(_style?: unknown): boolean {
-  return false;
-}
-
-export function needsRemotion(animationId: string | null | undefined, style?: unknown): boolean {
-  const animated =
+export function needsRemotion(animationId: string | null | undefined): boolean {
+  return (
     animationId != null &&
     animationId !== "" &&
     animationId !== "NONE" &&
-    animationId !== "none";
-  return animated || styleNeedsRemotion(style);
+    animationId !== "none"
+  );
 }
