@@ -347,3 +347,30 @@ test("cleanup runs after every job, success or failure", async () => {
   await worker.runOnce();
   assert.deepEqual(cleaned.sort(), ["boom", "ok"]);
 });
+
+test("onJobFailed fires once when a job runs out of retries, not on the interim ones", async () => {
+  const store = new MemoryStore();
+  store.add({ id: "j1", kind: "RENDER", maxAttempts: 2 });
+  const failed: Array<{ id: string; message: string }> = [];
+
+  const worker = new JobWorker({
+    store,
+    deps,
+    handlers: {
+      RENDER: async () => {
+        throw new Error("kaput");
+      },
+    },
+    backoff: { baseMs: 0, jitter: 0 },
+    onJobFailed: (job, message) => {
+      failed.push({ id: job.id, message });
+    },
+  });
+
+  await worker.runOnce(); // attempt 1 -> retry (QUEUED)
+  store.rows.get("j1")!.runAfter = new Date(0);
+  await worker.runOnce(); // attempt 2 -> FAILED
+
+  assert.equal(store.rows.get("j1")!.status, "FAILED");
+  assert.deepEqual(failed, [{ id: "j1", message: "kaput" }]);
+});

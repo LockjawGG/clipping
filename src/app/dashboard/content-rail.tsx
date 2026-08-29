@@ -111,7 +111,15 @@ export function ContentRail({
 
   async function cancel(videoId: string) {
     setMenuFor(null);
-    await fetch(`/api/videos/${videoId}/cancel`, { method: "POST" });
+    try {
+      const res = await fetch(`/api/videos/${videoId}/cancel`, { method: "POST" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        alert(`Couldn't cancel: ${body.error ?? `HTTP ${res.status}`}`);
+      }
+    } catch {
+      alert("Couldn't cancel — the server didn't respond.");
+    }
     router.refresh();
   }
 

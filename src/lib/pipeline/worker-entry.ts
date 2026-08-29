@@ -24,5 +24,15 @@ export function createPipelineWorker(): JobWorker<PipelineDeps> {
     onError: (job, err) => {
       console.error(`[worker] ${job.id === "-" ? "" : `job ${job.id} (${job.kind}) `}${err}`);
     },
+    // A job that's out of retries leaves its video terminal, so it stops showing
+    // as "processing" forever. "Retry processing" can still requeue it.
+    onJobFailed: async (job, message) => {
+      await db.video
+        .update({
+          where: { id: job.videoId },
+          data: { status: "FAILED", errorMessage: message.slice(0, 2000) },
+        })
+        .catch(() => {});
+    },
   });
 }

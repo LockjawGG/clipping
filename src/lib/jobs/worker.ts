@@ -20,6 +20,12 @@ export interface WorkerConfig<Deps> {
   /** Clock seam for tests. */
   now?: () => number;
   onError?: (job: JobRecord, err: unknown) => void;
+  /**
+   * Called once a job is permanently FAILED (attempts exhausted) — not on the
+   * intermediate retries. Used to move the job's video into a terminal state so
+   * it stops showing as "processing" forever.
+   */
+  onJobFailed?: (job: JobRecord, message: string) => void | Promise<void>;
 }
 
 const sleep = (ms: number, signal?: AbortSignal) =>
@@ -45,9 +51,9 @@ const sleep = (ms: number, signal?: AbortSignal) =>
  */
 export class JobWorker<Deps> {
   private readonly cfg: Required<
-    Omit<WorkerConfig<Deps>, "backoff" | "onError" | "cleanup">
+    Omit<WorkerConfig<Deps>, "backoff" | "onError" | "cleanup" | "onJobFailed">
   > &
-    Pick<WorkerConfig<Deps>, "backoff" | "onError" | "cleanup">;
+    Pick<WorkerConfig<Deps>, "backoff" | "onError" | "cleanup" | "onJobFailed">;
   private controller = new AbortController();
   private running = false;
   private loopDone: Promise<void> = Promise.resolve();
@@ -66,6 +72,7 @@ export class JobWorker<Deps> {
       backoff: config.backoff,
       onError: config.onError,
       cleanup: config.cleanup,
+      onJobFailed: config.onJobFailed,
     };
   }
 
@@ -154,6 +161,7 @@ export class JobWorker<Deps> {
       const message = err instanceof Error ? err.message : String(err);
       if (job.attempts >= job.maxAttempts) {
         await store.fail(job.id, message);
+        await this.cfg.onJobFailed?.(job, message);
       } else {
         await store.retry(job.id, nextRunAfter(job.attempts, backoff));
       }
