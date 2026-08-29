@@ -26,6 +26,8 @@ interface Props {
   /** Seek the preview to `ms` (clip-relative). `n` changes even on a repeat
    *  request for the same position so the effect re-fires. */
   seekToMs?: { ms: number; n: number } | null;
+  /** Bump `n` to toggle play/pause from outside (a keyboard shortcut). */
+  togglePlayReq?: { n: number } | null;
   overlays: OverlayView[];
   selectedOverlayId: string | null;
   onSelectOverlay: (id: string | null) => void;
@@ -59,6 +61,7 @@ export const ClipPlayer = memo(function ClipPlayer({
   wordStyles,
   renderUrl,
   seekToMs,
+  togglePlayReq,
   overlays,
   selectedOverlayId,
   onSelectOverlay,
@@ -211,6 +214,11 @@ export const ClipPlayer = memo(function ClipPlayer({
     scrub(Math.min(Math.max(0, seekToMs.ms), spanMs));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seekToMs?.n]);
+
+  useEffect(() => {
+    if (togglePlayReq && mode === "source") togglePlay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [togglePlayReq?.n]);
 
   // --- caption drag ---
   function onOverlayPointerDown(e: React.PointerEvent) {

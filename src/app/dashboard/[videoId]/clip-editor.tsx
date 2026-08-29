@@ -46,6 +46,11 @@ export interface ClipData {
   accepted: boolean;
   savedToProjectId: string | null;
   captions: CaptionConfig | null;
+  caption: string | null;
+  hook: string | null;
+  socialTitle: string | null;
+  hashtags: string[];
+  reason: string | null;
   thumbnailUrl: string | null;
   render: {
     id: string;
@@ -218,6 +223,8 @@ export function ClipEditor({
     [clip.startMs, clip.endMs],
   );
   const [previewPlaying, setPreviewPlaying] = useState(false);
+  const [playToggleReq, setPlayToggleReq] = useState<{ n: number } | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   const [dropActive, setDropActive] = useState(false);
   const [overlayError, setOverlayError] = useState<string | null>(null);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
@@ -559,6 +566,47 @@ export function ClipEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOverlayId]);
 
+
+  // Editing shortcuts, scoped to the clip card the pointer is over so multiple
+  // open cards don't all react. Ignored while typing in a field.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
+      if (!cardRef.current?.matches(":hover")) return;
+      const clipLen = Math.max(1, clip.endMs - clip.startMs);
+      const seek = (deltaMs: number) =>
+        setSeekReq({ ms: Math.min(clipLen - 1, Math.max(0, playheadMs + deltaMs)), n: Date.now() });
+      switch (e.key) {
+        case " ":
+          e.preventDefault();
+          setPlayToggleReq({ n: Date.now() });
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          seek(e.shiftKey ? -100 : -1000);
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          seek(e.shiftKey ? 100 : 1000);
+          break;
+        case "i":
+        case "I":
+          e.preventDefault();
+          setStartToPlayhead();
+          break;
+        case "o":
+        case "O":
+          e.preventDefault();
+          setEndToPlayhead();
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playheadMs, clip.startMs, clip.endMs]);
+
   const setStartToPlayhead = () =>
     setDraft((d) => ({
       ...d,
@@ -582,6 +630,7 @@ export function ClipEditor({
 
   return (
     <div
+      ref={cardRef}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes(ASSET_DND_MIME)) {
           e.preventDefault();
@@ -723,6 +772,44 @@ export function ClipEditor({
 
       {!collapsed && (
       <>
+
+      {clip.origin === "AI_SUGGESTED" &&
+        (clip.socialTitle || clip.caption || clip.hashtags.length > 0 || clip.hook) && (
+          <details className="rounded-xl border border-border bg-surface-raised p-3 text-sm">
+            <summary className="cursor-pointer select-none font-semibold">
+              Post copy
+              {clip.score !== null && (
+                <span className="ml-2 text-xs font-normal text-muted">
+                  score {clip.score.toFixed(2)}
+                </span>
+              )}
+            </summary>
+            <div className="mt-2 flex flex-col gap-2">
+              {clip.reason && <p className="text-xs italic text-muted">{clip.reason}</p>}
+              {[
+                ["Title", clip.socialTitle],
+                ["Hook", clip.hook],
+                ["Caption", clip.caption],
+                ["Hashtags", clip.hashtags.length ? clip.hashtags.join(" ") : null],
+              ].map(([label, value]) =>
+                value ? (
+                  <div key={label} className="flex items-start gap-2">
+                    <span className="mt-0.5 w-16 shrink-0 text-xs font-medium text-muted">{label}</span>
+                    <span className="min-w-0 flex-1 break-words">{value}</span>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm shrink-0"
+                      onClick={() => void navigator.clipboard.writeText(value).catch(() => {})}
+                    >
+                      Copy
+                    </button>
+                  </div>
+                ) : null,
+              )}
+            </div>
+          </details>
+        )}
+
       {/* Export — render this clip to an MP4 and save it anywhere on your computer */}
       <div className="rounded-xl border border-border bg-surface-raised p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -802,6 +889,7 @@ export function ClipEditor({
         wordStyles={wordStyles}
         renderUrl={clip.render?.downloadUrl ?? null}
         seekToMs={seekReq}
+        togglePlayReq={playToggleReq}
         overlays={overlays}
         selectedOverlayId={selectedOverlayId}
         onSelectOverlay={setSelectedOverlayId}
@@ -991,6 +1079,35 @@ export function ClipEditor({
             </select>
           </label>
           {langBusy && <span className="text-xs text-accent">Translating…</span>}
+          <span className="flex items-center gap-1">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              title="Copy the transcript as plain text"
+              onClick={async () => {
+                try {
+                  const r = await fetch(
+                    `/api/videos/${videoId}/transcript?format=txt&lang=${selectedTranscript}`,
+                  );
+                  if (r.ok) await navigator.clipboard.writeText(await r.text());
+                } catch {
+                  /* clipboard blocked */
+                }
+              }}
+            >
+              Copy
+            </button>
+            {(["srt", "vtt", "txt"] as const).map((f) => (
+              <a
+                key={f}
+                className="btn btn-ghost btn-sm"
+                href={`/api/videos/${videoId}/transcript?format=${f}&lang=${selectedTranscript}`}
+                download
+              >
+                .{f}
+              </a>
+            ))}
+          </span>
         </div>
         {langError && <p className="text-xs text-danger">{langError}</p>}
         <EditableTranscript

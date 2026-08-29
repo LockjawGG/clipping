@@ -92,7 +92,11 @@ function makeDeps(
             focalY: 0.4,
             accepted: false,
             savedToProjectId: null,
-            caption: null,
+            caption: "A punchy one-liner for socials",
+            hook: "Wait for the twist at the end",
+            socialTitle: "The moment nobody saw coming",
+            hashtags: ["#shorts", "#storytime"],
+            reason: "Self-contained beat with a clear payoff",
             thumbnailKey: "clips/clip1/thumb.jpg",
             subtitleConfig: {
               preset: "CLASSIC",

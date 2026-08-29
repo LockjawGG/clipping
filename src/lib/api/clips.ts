@@ -86,6 +86,10 @@ interface ClipListRow {
   accepted: boolean;
   savedToProjectId: string | null;
   caption: string | null;
+  hook: string | null;
+  socialTitle: string | null;
+  hashtags: string[];
+  reason: string | null;
   thumbnailKey: string | null;
   subtitleConfig: {
     preset: string;
@@ -335,6 +339,10 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
         accepted: c.accepted,
         savedToProjectId: c.savedToProjectId,
         caption: c.caption,
+        hook: c.hook,
+        socialTitle: c.socialTitle,
+        hashtags: c.hashtags,
+        reason: c.reason,
         captions: c.subtitleConfig
           ? {
               ...c.subtitleConfig,
