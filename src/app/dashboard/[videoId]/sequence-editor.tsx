@@ -84,6 +84,7 @@ const parseSec = (s: string): number | null => {
 export function SequenceEditor({
   clipId,
   followPlayheadMs = null,
+  seekToMs = null,
   overlayWindows,
   onOverlayTiming,
   onOverlayDeleted,
@@ -97,6 +98,11 @@ export function SequenceEditor({
    * the timeline then keeps its own playhead and can be scrubbed freely.
    */
   followPlayheadMs?: number | null;
+  /**
+   * A one-shot playhead jump (e.g. clicking a transcript word). `n` changes on
+   * every request so a repeat click on the same word still moves the playhead.
+   */
+  seekToMs?: { ms: number; n: number } | null;
   /**
    * The clip's overlays' current time windows, owned by the editor's Layers
    * panel. Changes here (a "Shows from/to" edit) are reconciled into the
@@ -124,6 +130,13 @@ export function SequenceEditor({
     if (followPlayheadMs == null) return;
     setPlayhead(followPlayheadMs);
   }, [followPlayheadMs]);
+
+  // Jump the playhead when a transcript word is clicked.
+  useEffect(() => {
+    if (seekToMs == null) return;
+    setPlayhead(Math.max(0, seekToMs.ms));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seekToMs?.n]);
 
   // undo / redo — move & trim only; split / delete are structural and reset it.
   const [history, setHistory] = useState<TimelineClip[][]>([]);

@@ -875,6 +875,7 @@ export function ClipEditor({
             <SequenceEditor
               clipId={clip.id}
               followPlayheadMs={previewPlaying ? playheadMs : null}
+              seekToMs={seekReq}
               overlayWindows={overlayWindows}
               onOverlayTiming={applyOverlayTiming}
               onOverlayDeleted={removeOverlayLocal}
