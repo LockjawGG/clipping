@@ -332,6 +332,7 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
                   content: true,
                   rotation: true,
                   styleJson: true,
+                  animationJson: true,
                   x: true,
                   y: true,
                   scale: true,
@@ -386,6 +387,7 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
             startMs: o.startMs,
             endMs: o.endMs,
             styleJson: o.styleJson,
+            animationJson: o.animationJson,
           })),
         wordStyles: Object.fromEntries(
           render.clip.wordStyles.map((s) => [

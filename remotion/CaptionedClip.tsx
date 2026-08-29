@@ -25,6 +25,7 @@ import {
   type TextStyle,
 } from "../src/lib/captions/text-style";
 import { applyWordRules, wordEffectCss, type WordRule } from "../src/lib/captions/word-rules";
+import { sampleElementAnim, parseElementAnim } from "../src/lib/captions/element-anim";
 
 /**
  * The Remotion interpreter for the declarative animation spec (`anim-spec.ts`).
@@ -147,6 +148,7 @@ interface RenderTextOverlay {
   startMs: number | null;
   endMs: number | null;
   styleJson: string | null;
+  animationJson: string | null;
 }
 
 const TextOverlayLayer: React.FC<{ items: RenderTextOverlay[]; tMs: number }> = ({ items, tMs }) => (
@@ -158,6 +160,10 @@ const TextOverlayLayer: React.FC<{ items: RenderTextOverlay[]; tMs: number }> = 
       const css = textStyleToCss(resolveTextStyle(parseStylePartial(o.styleJson)), {
         scale: o.scale || 1,
       });
+      const anim = sampleElementAnim(parseElementAnim(o.animationJson), {
+        elapsedMs: tMs - (o.startMs ?? 0),
+        remainingMs: o.endMs == null ? null : o.endMs - tMs,
+      });
       return (
         <div
           key={i}
@@ -165,9 +171,13 @@ const TextOverlayLayer: React.FC<{ items: RenderTextOverlay[]; tMs: number }> = 
             position: "absolute",
             left: `${o.x * 100}%`,
             top: `${o.y * 100}%`,
-            transform: `translate(-50%, -50%) rotate(${o.rotation}deg)`,
+            transform:
+              anim.transform && anim.transform !== "none"
+                ? `translate(-50%, -50%) rotate(${o.rotation}deg) ${anim.transform}`
+                : `translate(-50%, -50%) rotate(${o.rotation}deg)`,
             maxWidth: "84%",
-            opacity: o.opacity,
+            opacity: o.opacity * anim.opacity,
+            ...(anim.filter ? { filter: anim.filter } : {}),
           }}
         >
           <span style={(css.panel ?? undefined) as unknown as React.CSSProperties | undefined}>

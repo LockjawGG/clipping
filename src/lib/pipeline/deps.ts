@@ -129,6 +129,8 @@ export interface RenderTextOverlay {
   endMs: number | null;
   /** JSON partial TextStyle; null = default style. */
   styleJson: string | null;
+  /** JSON `{ intro?, outro? }` element-animation preset ids; null = static. */
+  animationJson: string | null;
 }
 
 export interface RenderResult {

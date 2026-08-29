@@ -11,6 +11,7 @@ import {
 } from "@/lib/captions/text-style.ts";
 import { parseWordRules, applyWordRules, wordEffectCss } from "@/lib/captions/word-rules.ts";
 import { captionWordAnim, captionCueAnim, NEUTRAL_CAPTION_CSS } from "@/lib/captions/anim-dom.ts";
+import { sampleElementAnim, parseElementAnim } from "@/lib/captions/element-anim.ts";
 import { remotionPreset } from "@/lib/captions/presets.ts";
 import type { CaptionConfig } from "./caption-controls";
 import type { OverlayView } from "./overlay-panel";
@@ -360,6 +361,7 @@ export const ClipPlayer = memo(function ClipPlayer({
               overlay={o}
               boxW={box.w}
               boxH={box.h}
+              posMs={posMs}
               selected={selectedOverlayId === o.id}
               onSelect={() => onSelectOverlay(o.id)}
               onChange={(patch) => onOverlayChange(o.id, patch)}
@@ -496,6 +498,7 @@ function TextOverlayEl({
   overlay,
   boxW,
   boxH,
+  posMs,
   selected,
   onSelect,
   onChange,
@@ -503,6 +506,7 @@ function TextOverlayEl({
   overlay: OverlayView;
   boxW: number;
   boxH: number;
+  posMs: number;
   selected: boolean;
   onSelect: () => void;
   onChange: (patch: { x?: number; y?: number }) => void;
@@ -518,11 +522,24 @@ function TextOverlayEl({
     return textStyleToCss(resolved, { scale: frameScale * clampScale(overlay.scale) });
   }, [overlay.styleJson, overlay.scale, boxH]);
 
+  const animCss = useMemo(
+    () =>
+      sampleElementAnim(parseElementAnim(overlay.animationJson), {
+        elapsedMs: posMs - (overlay.startMs ?? 0),
+        remainingMs: overlay.endMs == null ? null : overlay.endMs - posMs,
+      }),
+    [overlay.animationJson, overlay.startMs, overlay.endMs, posMs],
+  );
+
   if (boxW === 0) return null;
 
   const left = clamp01(overlay.x) * boxW;
   const top = clamp01(overlay.y) * boxH;
   const baseTransform = `translate(-50%, -50%) rotate(${overlay.rotation}deg)`;
+  const restingTransform =
+    animCss.transform && animCss.transform !== "none"
+      ? `${baseTransform} ${animCss.transform}`
+      : baseTransform;
 
   const paint = () => {
     const d = drag.current;
@@ -554,7 +571,7 @@ function TextOverlayEl({
     const el = nodeRef.current;
     if (d?.raf) cancelAnimationFrame(d.raf);
     if (el) {
-      el.style.transform = baseTransform;
+      el.style.transform = restingTransform;
       el.style.willChange = "";
     }
     if (!d || (Math.abs(d.dx) < 2 && Math.abs(d.dy) < 2)) return;
@@ -574,9 +591,10 @@ function TextOverlayEl({
         position: "absolute",
         left,
         top,
-        transform: baseTransform,
+        transform: restingTransform,
         maxWidth: "84%",
-        opacity: overlay.opacity,
+        opacity: overlay.opacity * animCss.opacity,
+        ...(animCss.filter ? { filter: animCss.filter } : {}),
         cursor: selected ? "move" : "pointer",
         touchAction: "none",
         userSelect: "none",

@@ -4,6 +4,12 @@ import { memo, useEffect, useMemo, useState } from "react";
 
 import type { EffectLayer, EffectLayerKind, TextStyle } from "@/lib/captions/text-style.ts";
 import { parseStylePartial, serializeStylePartial } from "@/lib/captions/text-style.ts";
+import {
+  parseElementAnim,
+  serializeElementAnim,
+  ELEMENT_INTRO_OPTIONS,
+  ELEMENT_OUTRO_OPTIONS,
+} from "@/lib/captions/element-anim.ts";
 import { TEXT_OVERLAY_ROLES } from "@/lib/overlays/roles.ts";
 
 const FONTS = ["Inter", "Archivo Black", "Georgia", "Impact", "JetBrains Mono"] as const;
@@ -20,6 +26,7 @@ interface Props {
   text: string;
   role: string;
   styleJson: string | null;
+  animationJson: string | null;
   onEdit: (patch: Record<string, unknown>, opts?: { coalesceMs?: number }) => void;
 }
 
@@ -27,10 +34,15 @@ export const TextOverlayInspector = memo(function TextOverlayInspector({
   text,
   role,
   styleJson,
+  animationJson,
   onEdit,
 }: Props) {
   const [draft, setDraft] = useState(text);
   useEffect(() => setDraft(text), [text]);
+
+  const anim = useMemo(() => parseElementAnim(animationJson), [animationJson]);
+  const setAnim = (p: { intro?: string; outro?: string }) =>
+    onEdit({ animationJson: serializeElementAnim({ ...anim, ...p }) });
 
   const style = useMemo(() => parseStylePartial(styleJson), [styleJson]);
   const setStyle = (p: Partial<TextStyle>, opts?: { coalesceMs?: number }) =>
@@ -144,6 +156,40 @@ export const TextOverlayInspector = memo(function TextOverlayInspector({
               {a}
             </button>
           ))}
+        </span>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <label className="flex items-center gap-1">
+          in
+          <select
+            value={anim.intro ?? "none"}
+            onChange={(e) => setAnim({ intro: e.target.value })}
+            className="field py-0.5"
+          >
+            {ELEMENT_INTRO_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1">
+          out
+          <select
+            value={anim.outro ?? "none"}
+            onChange={(e) => setAnim({ outro: e.target.value })}
+            className="field py-0.5"
+          >
+            {ELEMENT_OUTRO_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="text-[10px] text-muted">
+          an out animation needs a set end time
         </span>
       </div>
 
