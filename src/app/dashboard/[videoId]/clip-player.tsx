@@ -3,7 +3,12 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { buildCues, toVtt } from "@/lib/captions/layout.ts";
-import { textStyleFromParts, textStyleToCss } from "@/lib/captions/text-style.ts";
+import {
+  textStyleFromParts,
+  textStyleToCss,
+  parseStylePartial,
+  resolveTextStyle,
+} from "@/lib/captions/text-style.ts";
 import { parseWordRules, applyWordRules, wordEffectCss } from "@/lib/captions/word-rules.ts";
 import { captionWordAnim, captionCueAnim, NEUTRAL_CAPTION_CSS } from "@/lib/captions/anim-dom.ts";
 import { remotionPreset } from "@/lib/captions/presets.ts";
@@ -290,11 +295,12 @@ export const ClipPlayer = memo(function ClipPlayer({
       : placementTransform;
 
   // Overlays are burned into the rendered file; in source mode preview them as
-  // positioned <img>s that appear only within their clip-relative time window.
+  // positioned elements that appear only within their clip-relative time window.
   const activeOverlays =
     mode === "source"
       ? overlays.filter((o) => {
-          if (!o.url || o.hidden) return false;
+          if (o.hidden) return false;
+          if (o.kind !== "TEXT" && !o.url) return false;
           const s = o.startMs ?? 0;
           const e = o.endMs ?? spanMs;
           return posMs >= s && posMs <= e;
@@ -347,17 +353,29 @@ export const ClipPlayer = memo(function ClipPlayer({
           <div className="pointer-events-none absolute inset-x-0 border-t border-dashed border-white/70" />
         )}
 
-        {activeOverlays.map((o) => (
-          <OverlayImg
-            key={o.id}
-            overlay={o}
-            boxW={box.w}
-            boxH={box.h}
-            selected={selectedOverlayId === o.id}
-            onSelect={() => onSelectOverlay(o.id)}
-            onChange={(patch) => onOverlayChange(o.id, patch)}
-          />
-        ))}
+        {activeOverlays.map((o) =>
+          o.kind === "TEXT" ? (
+            <TextOverlayEl
+              key={o.id}
+              overlay={o}
+              boxW={box.w}
+              boxH={box.h}
+              selected={selectedOverlayId === o.id}
+              onSelect={() => onSelectOverlay(o.id)}
+              onChange={(patch) => onOverlayChange(o.id, patch)}
+            />
+          ) : (
+            <OverlayImg
+              key={o.id}
+              overlay={o}
+              boxW={box.w}
+              boxH={box.h}
+              selected={selectedOverlayId === o.id}
+              onSelect={() => onSelectOverlay(o.id)}
+              onChange={(patch) => onOverlayChange(o.id, patch)}
+            />
+          ),
+        )}
 
         {showOverlay && (
           <div
@@ -467,6 +485,121 @@ export const ClipPlayer = memo(function ClipPlayer({
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 const clampScale = (n: number) => Math.min(4, Math.max(0.05, n));
+
+/**
+ * A freestanding text element previewed over the video. Anchored at its
+ * normalised centre point (x, y); drag to reposition. Styled through the same
+ * `textStyleToCss` the render will use, so it is WYSIWYG. Rotation / scale /
+ * opacity come from the overlay row; size is tuned in the inspector.
+ */
+function TextOverlayEl({
+  overlay,
+  boxW,
+  boxH,
+  selected,
+  onSelect,
+  onChange,
+}: {
+  overlay: OverlayView;
+  boxW: number;
+  boxH: number;
+  selected: boolean;
+  onSelect: () => void;
+  onChange: (patch: { x?: number; y?: number }) => void;
+}) {
+  const nodeRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ startX: number; startY: number; dx: number; dy: number; raf: number } | null>(
+    null,
+  );
+
+  const style = useMemo(() => {
+    const resolved = resolveTextStyle(parseStylePartial(overlay.styleJson));
+    const frameScale = (boxH || 480) / 1920;
+    return textStyleToCss(resolved, { scale: frameScale * clampScale(overlay.scale) });
+  }, [overlay.styleJson, overlay.scale, boxH]);
+
+  if (boxW === 0) return null;
+
+  const left = clamp01(overlay.x) * boxW;
+  const top = clamp01(overlay.y) * boxH;
+  const baseTransform = `translate(-50%, -50%) rotate(${overlay.rotation}deg)`;
+
+  const paint = () => {
+    const d = drag.current;
+    const el = nodeRef.current;
+    if (!d || !el) return;
+    el.style.transform = `${baseTransform} translate(${d.dx}px, ${d.dy}px)`;
+    d.raf = 0;
+  };
+
+  function onPointerDown(e: React.PointerEvent) {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!selected) onSelect();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    drag.current = { startX: e.clientX, startY: e.clientY, dx: 0, dy: 0, raf: 0 };
+    if (nodeRef.current) nodeRef.current.style.willChange = "transform";
+  }
+  function onPointerMove(e: React.PointerEvent) {
+    const d = drag.current;
+    if (!d) return;
+    d.dx = e.clientX - d.startX;
+    d.dy = e.clientY - d.startY;
+    if (!d.raf) d.raf = requestAnimationFrame(paint);
+  }
+  function onPointerUp(e: React.PointerEvent) {
+    (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
+    const d = drag.current;
+    drag.current = null;
+    const el = nodeRef.current;
+    if (d?.raf) cancelAnimationFrame(d.raf);
+    if (el) {
+      el.style.transform = baseTransform;
+      el.style.willChange = "";
+    }
+    if (!d || (Math.abs(d.dx) < 2 && Math.abs(d.dy) < 2)) return;
+    onChange({
+      x: clamp01(overlay.x + d.dx / Math.max(1, boxW)),
+      y: clamp01(overlay.y + d.dy / Math.max(1, boxH)),
+    });
+  }
+
+  return (
+    <div
+      ref={nodeRef}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      style={{
+        position: "absolute",
+        left,
+        top,
+        transform: baseTransform,
+        maxWidth: "84%",
+        opacity: overlay.opacity,
+        cursor: selected ? "move" : "pointer",
+        touchAction: "none",
+        userSelect: "none",
+        outline: selected ? "2px solid rgb(var(--c-accent))" : "1px dashed rgba(255,255,255,0.35)",
+        outlineOffset: 3,
+      }}
+      title={selected ? `${overlay.name} — drag to move` : `${overlay.name} — click to select`}
+    >
+      <span style={(style.panel ?? undefined) as unknown as React.CSSProperties | undefined}>
+        <span
+          style={{
+            ...(style.text as unknown as React.CSSProperties),
+            display: "inline-block",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {overlay.text || "Text"}
+        </span>
+      </span>
+    </div>
+  );
+}
 
 /**
  * One overlay image previewed over the video, directly manipulable: click to
