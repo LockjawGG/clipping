@@ -15,6 +15,7 @@ import type { Segment } from "../providers/types.ts";
 import type {
   ClipRepo,
   DbAspectRatio,
+  LiveChunkRepo,
   PipelineDeps,
   RenderRepo,
   ThumbnailRepo,
@@ -144,6 +145,56 @@ export function prismaTranscriptRepo(client: PrismaClient): TranscriptRepo {
           confidence: w.confidence ?? undefined,
         })),
       }));
+    },
+    async appendSegments(videoId, { provider, language, segments }) {
+      if (segments.length === 0) return { appended: 0, fromIndex: 0 };
+      return client.$transaction(
+        async (tx) => {
+          const transcript =
+            (await tx.transcript.findUnique({ where: { videoId }, select: { id: true } })) ??
+            (await tx.transcript.create({
+              data: { videoId, provider, language },
+              select: { id: true },
+            }));
+
+          const last = await tx.transcriptSegment.aggregate({
+            where: { transcriptId: transcript.id },
+            _max: { index: true },
+          });
+          const fromIndex = (last._max.index ?? -1) + 1;
+
+          await tx.transcriptSegment.createMany({
+            data: segments.map((seg, i) => ({
+              transcriptId: transcript.id,
+              index: fromIndex + i,
+              startMs: seg.startMs,
+              endMs: seg.endMs,
+              text: seg.text,
+              speaker: seg.speaker ?? null,
+              confidence: seg.confidence ?? null,
+            })),
+          });
+          const segRows = await tx.transcriptSegment.findMany({
+            where: { transcriptId: transcript.id, index: { gte: fromIndex } },
+            orderBy: { index: "asc" },
+            select: { id: true },
+          });
+          const words = segments.flatMap((seg, i) =>
+            seg.words.map((w, wi) => ({
+              segmentId: segRows[i].id,
+              index: wi,
+              startMs: w.startMs,
+              endMs: w.endMs,
+              text: w.text,
+              confidence: w.confidence ?? null,
+            })),
+          );
+          if (words.length) await tx.transcriptWord.createMany({ data: words });
+
+          return { appended: segments.length, fromIndex };
+        },
+        { timeout: 60_000, maxWait: 10_000 },
+      );
     },
   };
 }
@@ -354,6 +405,32 @@ export function prismaThumbnailRepo(client: PrismaClient): ThumbnailRepo {
   };
 }
 
+export function prismaLiveChunkRepo(client: PrismaClient): LiveChunkRepo {
+  const shape = {
+    id: true,
+    videoId: true,
+    index: true,
+    startMs: true,
+    storageKey: true,
+    status: true,
+  } as const;
+  return {
+    async get(id) {
+      return client.liveChunk.findUnique({ where: { id }, select: shape });
+    },
+    async setStatus(id, status) {
+      await client.liveChunk.updateMany({ where: { id }, data: { status } });
+    },
+    async listForVideo(videoId) {
+      return client.liveChunk.findMany({
+        where: { videoId },
+        orderBy: { index: "asc" },
+        select: shape,
+      });
+    },
+  };
+}
+
 /** Assemble the live dependency bag for the worker. */
 export function buildPipelineDeps(): PipelineDeps {
   return {
@@ -367,6 +444,7 @@ export function buildPipelineDeps(): PipelineDeps {
     clips: prismaClipRepo(db),
     renders: prismaRenderRepo(db),
     thumbnails: prismaThumbnailRepo(db),
+    liveChunks: prismaLiveChunkRepo(db),
     captions: new RemotionCaptionRenderer(),
     faces: new NullFaceDetector(),
     fetcher: new YtDlpFetcher({

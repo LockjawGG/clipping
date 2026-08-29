@@ -94,6 +94,32 @@ enum VideoStatus {
   TRANSCRIBING
   READY
   FAILED
+  // A live capture in progress (mic / screen audio recorded in the browser,
+  // chunk-uploaded and transcribed as it comes in). Finalised into a normal
+  // clippable video when the user hits Stop.
+  LIVE
+}
+
+/// One ~8s audio slice of a live recording, uploaded from the browser while the
+/// session runs. Each gets a LIVE_TRANSCRIBE job; on Stop they're concatenated
+/// into the video's source and the whole thing is re-transcribed for quality.
+model LiveChunk {
+  id         String   @id @default(cuid())
+  videoId    String
+  index      Int
+  storageKey String   @unique
+  /// Offset of this chunk from the start of the session, in ms.
+  startMs    Int
+  durationMs Int?
+  /// PENDING → DONE / FAILED (rolling transcription of this chunk).
+  status     String   @default("PENDING")
+  createdAt  DateTime @default(now())
+
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([videoId, index])
+  @@index([videoId, index])
+  @@map("live_chunks")
 }
 
 model Video {
@@ -132,6 +158,7 @@ model Video {
   clips         Clip[]
   jobs          Job[]
   sequenceItems SequenceItem[]
+  liveChunks    LiveChunk[]
 
   @@index([projectId, createdAt])
   @@index([sourceUrlHash])
@@ -490,6 +517,11 @@ enum JobKind {
   ANALYZE
   RENDER
   THUMBNAIL
+  // Rolling transcription of one live-capture chunk.
+  LIVE_TRANSCRIBE
+  // Stop pressed: concat the chunks into a source file, then rejoin the normal
+  // chain (probe → full re-transcribe → analyze → thumbnail).
+  LIVE_FINALIZE
 }
 
 model Job {

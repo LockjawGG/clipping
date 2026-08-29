@@ -13,6 +13,7 @@ import type { AssetServiceDeps } from "./assets.ts";
 import type { OverlayServiceDeps } from "./overlays.ts";
 import type { CaptionStyleServiceDeps } from "./caption-styles.ts";
 import type { SequenceServiceDeps } from "./sequence.ts";
+import type { LiveServiceDeps } from "./live.ts";
 
 /** Throws 404 unless `projectId` belongs to `userId`. Shared by every service. */
 function ownsProject(userId: string) {
@@ -58,6 +59,18 @@ export function transcriptService(userId: string): TranscriptServiceDeps {
   return {
     db: db as unknown as TranscriptServiceDeps["db"],
     assertProjectOwned: ownsProject(userId),
+  };
+}
+
+/** Live-capture deps scoped to the signed-in user. */
+export function liveService(userId: string): LiveServiceDeps {
+  return {
+    db: db as unknown as LiveServiceDeps["db"],
+    storage: getStorage(),
+    userId,
+    defaultProjectId: () => getOrCreateProject(db, userId),
+    assertProjectOwned: ownsProject(userId),
+    enqueue: (input) => enqueueJob(db, input),
   };
 }
 

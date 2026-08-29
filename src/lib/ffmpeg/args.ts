@@ -176,6 +176,19 @@ export function buildExtractAudioArgs({ inputPath, outputPath }: ExtractAudioArg
   ];
 }
 
+export interface ConcatAudioArgs {
+  /** A concat-demuxer list file: one `file '<abs path>'` line per input. */
+  listPath: string;
+  outputPath: string;
+}
+
+/** Join self-contained audio chunks (same codec/params) with no re-encode. */
+export function buildConcatAudioArgs({ listPath, outputPath }: ConcatAudioArgs): string[] {
+  assertSafePath(listPath);
+  assertSafePath(outputPath);
+  return ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", outputPath];
+}
+
 export interface CutArgs {
   inputPath: string;
   outputPath: string;

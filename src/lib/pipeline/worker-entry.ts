@@ -29,7 +29,14 @@ export function createPipelineWorker(): JobWorker<PipelineDeps> {
     // RENDER / THUMBNAIL failures don't touch the video — a broken export or a
     // missing poster must not knock a fully-transcribed video offline.
     onJobFailed: async (job, message) => {
-      const INGEST = new Set(["FETCH", "PROBE", "EXTRACT_AUDIO", "TRANSCRIBE", "ANALYZE"]);
+      const INGEST = new Set([
+        "FETCH",
+        "PROBE",
+        "EXTRACT_AUDIO",
+        "TRANSCRIBE",
+        "ANALYZE",
+        "LIVE_FINALIZE",
+      ]);
       if (!INGEST.has(job.kind)) return;
       await db.video
         .updateMany({

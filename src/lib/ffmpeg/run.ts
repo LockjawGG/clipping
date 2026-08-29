@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import {
@@ -8,6 +8,7 @@ import {
   type AspectRatio,
   type CaptionBurnStyle,
   type OverlayCompositeItem,
+  buildConcatAudioArgs,
   buildCutArgs,
   buildExtractAudioArgs,
   buildOverlayCompositeArgs,
@@ -129,6 +130,8 @@ export interface OverlayCompositeOptions {
 export interface Ffmpeg {
   probe(inputPath: string, signal?: AbortSignal): Promise<MediaInfo>;
   extractAudio(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void>;
+  /** Join self-contained audio chunks in order (no re-encode). */
+  concatAudio(inputPaths: string[], outputPath: string, signal?: AbortSignal): Promise<void>;
   /** Frame-accurate trim (re-encode, never stream-copy). */
   cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void>;
   /** Scale/crop to an aspect preset, optionally burning subtitles. */
@@ -180,6 +183,16 @@ export class FfmpegRunner implements Ffmpeg {
   async extractAudio(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void> {
     await mkdir(dirname(outputPath), { recursive: true });
     await this.exec(this.ffmpegPath, buildExtractAudioArgs({ inputPath, outputPath }), signal);
+  }
+
+  async concatAudio(inputPaths: string[], outputPath: string, signal?: AbortSignal): Promise<void> {
+    if (inputPaths.length === 0) throw new Error("concatAudio: no inputs");
+    await mkdir(dirname(outputPath), { recursive: true });
+    const listPath = join(dirname(outputPath), "concat.txt");
+    // concat demuxer: single-quote each path, escaping embedded quotes.
+    const body = inputPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n") + "\n";
+    await writeFile(listPath, body, "utf8");
+    await this.exec(this.ffmpegPath, buildConcatAudioArgs({ listPath, outputPath }), signal);
   }
 
   async cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void> {

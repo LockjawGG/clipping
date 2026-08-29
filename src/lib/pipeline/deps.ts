@@ -40,6 +40,15 @@ export interface TranscriptRepo {
   /** Replace any existing transcript for the video. Returns the segment count. */
   save(videoId: string, result: TranscriptResult): Promise<{ segmentCount: number }>;
   loadSegments(videoId: string): Promise<Segment[]>;
+  /**
+   * Append segments to the video's transcript (creating it if absent) — used by
+   * rolling live transcription. Segment/word start/end are already offset to the
+   * session timeline. Returns the index range written.
+   */
+  appendSegments(
+    videoId: string,
+    input: { provider: string; language: string; segments: Segment[] },
+  ): Promise<{ appended: number; fromIndex: number }>;
 }
 
 export interface ClipRepo {
@@ -152,6 +161,22 @@ export interface SourceCache {
   evict(videoId: string): Promise<void>;
 }
 
+export interface LiveChunkRow {
+  id: string;
+  videoId: string;
+  index: number;
+  startMs: number;
+  storageKey: string;
+  status: string;
+}
+
+export interface LiveChunkRepo {
+  get(id: string): Promise<LiveChunkRow | null>;
+  setStatus(id: string, status: string): Promise<void>;
+  /** All chunks of a video, in capture order. */
+  listForVideo(videoId: string): Promise<LiveChunkRow[]>;
+}
+
 export interface PipelineDeps {
   ffmpeg: Ffmpeg;
   storage: StorageProvider;
@@ -163,6 +188,7 @@ export interface PipelineDeps {
   clips: ClipRepo;
   renders: RenderRepo;
   thumbnails: ThumbnailRepo;
+  liveChunks: LiveChunkRepo;
   captions: CaptionRenderer;
   faces: FaceDetector;
   fetcher: MediaFetcher;

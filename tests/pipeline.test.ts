@@ -89,6 +89,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       extractAudio: async (i, o) => {
         spy.extracted.push([i, o]);
       },
+      concatAudio: async () => {},
       cut: async () => {},
       reframe: async () => {},
       reframeTracked: async () => {},
@@ -160,6 +161,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
         return { segmentCount: result.segments.length };
       },
       loadSegments: async () => spy.savedTranscript?.segments ?? SEGMENTS,
+      appendSegments: async () => ({ appended: 0, fromIndex: 0 }),
     },
     clips: {
       replaceSuggested: async (_id, clips) => {
@@ -179,6 +181,11 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       setKey: async () => {},
       videoPosterTarget: async () => null,
       setVideoKey: async () => {},
+    },
+    liveChunks: {
+      get: async () => null,
+      setStatus: async () => {},
+      listForVideo: async () => [],
     },
     captions: { renderCaptioned: async () => {} },
     faces: { name: "none", detectTrack: async () => [] },
@@ -310,7 +317,7 @@ test("ANALYZE does not queue thumbnails when it produced no clips", async () => 
 
 test("ANALYZE throws when there is no transcript", async () => {
   const { deps } = makeDeps({
-    transcripts: { save: async () => ({ segmentCount: 0 }), loadSegments: async () => [] },
+    transcripts: { save: async () => ({ segmentCount: 0 }), loadSegments: async () => [], appendSegments: async () => ({ appended: 0, fromIndex: 0 }) },
   });
   await assert.rejects(() => analyzeHandler(ctx(deps, "ANALYZE")), /no transcript segments/);
 });

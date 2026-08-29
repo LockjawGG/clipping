@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { UploadButton } from "./upload-button";
 import { FromUrlForm } from "./from-url-form";
+import { GoLive } from "./go-live";
 import { RailThumb } from "./rail-thumb";
 import type { ProjectSummary } from "./project-rail";
 
@@ -26,6 +27,8 @@ const STEP_LABEL: Record<string, string> = {
   TRANSCRIBE: "transcribing",
   ANALYZE: "finding clips",
   THUMBNAIL: "thumbnails",
+  LIVE_TRANSCRIBE: "live — transcribing",
+  LIVE_FINALIZE: "finalising recording",
 };
 
 /**
@@ -61,7 +64,7 @@ export function ContentRail({
   activeVideoId: string | null;
 }) {
   const router = useRouter();
-  const [tab, setTab] = useState<"upload" | "link">("link");
+  const [tab, setTab] = useState<"upload" | "link" | "live">("link");
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [subMenu, setSubMenu] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -162,12 +165,22 @@ export function ContentRail({
         >
           Upload file
         </button>
+        <button
+          role="tab"
+          aria-selected={tab === "live"}
+          className="tab"
+          onClick={() => setTab("live")}
+        >
+          Go live
+        </button>
       </div>
       <div className="mx-2 mb-2">
         {tab === "link" ? (
           <FromUrlForm projectId={activeProjectId} />
-        ) : (
+        ) : tab === "upload" ? (
           <UploadButton projectId={activeProjectId} />
+        ) : (
+          <GoLive projectId={activeProjectId} />
         )}
       </div>
 

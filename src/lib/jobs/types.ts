@@ -21,7 +21,9 @@ export type JobKind =
   | "TRANSCRIBE"
   | "ANALYZE"
   | "RENDER"
-  | "THUMBNAIL";
+  | "THUMBNAIL"
+  | "LIVE_TRANSCRIBE"
+  | "LIVE_FINALIZE";
 
 export interface JobRecord {
   id: string;
