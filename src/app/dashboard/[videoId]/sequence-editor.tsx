@@ -78,13 +78,46 @@ const parseSec = (s: string): number | null => {
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 1000) : null;
 };
 
-export function SequenceEditor({ clipId }: { clipId: string }) {
+export function SequenceEditor({
+  clipId,
+  followPlayheadMs = null,
+  overlayWindows,
+  onOverlayTiming,
+  onOverlayDeleted,
+  onChanged,
+}: {
+  clipId: string;
+  /**
+   * When the main preview is playing, its position (ms from clip start) is
+   * pushed here so the timeline playhead tracks playback. `null` when paused —
+   * the timeline then keeps its own playhead and can be scrubbed freely.
+   */
+  followPlayheadMs?: number | null;
+  /**
+   * The clip's overlays' current time windows, owned by the editor's Layers
+   * panel. Changes here (a "Shows from/to" edit) are reconciled into the
+   * timeline; timeline trims/moves of an overlay call {@link onOverlayTiming}
+   * back so the Layers panel stays in sync. One source of truth, two views.
+   */
+  overlayWindows?: Array<{ id: string; startMs: number | null; endMs: number | null }>;
+  onOverlayTiming?: (overlayId: string, startMs: number, endMs: number) => void;
+  onOverlayDeleted?: (overlayId: string) => void;
+  /** Called after any change lands server-side, so the editor can soft-refresh. */
+  onChanged?: () => void;
+}) {
   const [seq, setSeq] = useState<SequenceView | null>(null);
   const [clips, setClips] = useState<TimelineClip[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [playhead, setPlayhead] = useState(0);
   const [save, setSave] = useState<"idle" | "saving" | "saved">("idle");
+
+  // Follow the main preview while it plays. Cheap: one state set per frame the
+  // player emits (~30fps), and only while playing.
+  useEffect(() => {
+    if (followPlayheadMs == null) return;
+    setPlayhead(followPlayheadMs);
+  }, [followPlayheadMs]);
 
   // undo / redo — move & trim only; split / delete are structural and reset it.
   const [history, setHistory] = useState<TimelineClip[][]>([]);
@@ -120,6 +153,45 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
     void load();
   }, [load]);
 
+  // Reconcile overlay windows edited elsewhere (the Layers panel) into the
+  // timeline. Values the timeline itself just set arrive back unchanged and are
+  // no-ops; a genuinely new overlay id triggers an authoritative refetch.
+  const overlaySig = (overlayWindows ?? [])
+    .map((w) => `${w.id}:${w.startMs ?? ""}:${w.endMs ?? ""}`)
+    .join("|");
+  useEffect(() => {
+    if (!overlayWindows || overlayWindows.length === 0) return;
+    setClips((cur) => {
+      if (cur.length === 0) return cur;
+      const videoEnd =
+        cur.filter((c) => !isOverlay(c.id)).reduce((m, c) => Math.max(m, c.start + c.duration), 0) ||
+        0;
+      const want = new Map(overlayWindows.map((w) => [w.id, w]));
+      const haveIds = new Set(
+        cur.filter((c) => isOverlay(c.id)).map((c) => overlayId(c.id)),
+      );
+      if (overlayWindows.some((w) => !haveIds.has(w.id))) {
+        void load(); // an overlay was added elsewhere — refetch for its name/url
+        return cur;
+      }
+      let changed = false;
+      const next = cur.map((c) => {
+        if (!isOverlay(c.id)) return c;
+        const w = want.get(overlayId(c.id));
+        if (!w) return c;
+        const start = Math.max(0, w.startMs ?? 0);
+        const end = Math.max(start + 1, w.endMs ?? (videoEnd || c.sourceDuration));
+        if (Math.round(c.start) === start && Math.round(c.start + c.duration) === end) return c;
+        changed = true;
+        return { ...c, start, duration: end - start, sourceIn: 0, sourceOut: end - start };
+      });
+      if (!changed) return cur;
+      serverMirror.current = next; // these values are already persisted — don't echo a PATCH
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlaySig]);
+
   const flush = useCallback((id: string) => {
     const body = pending.current.get(id);
     pending.current.delete(id);
@@ -136,9 +208,10 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
         if (!r.ok) throw new Error();
         setSave("saved");
         setTimeout(() => setSave("idle"), 1500);
+        onChanged?.();
       })
       .catch(() => setError("a change didn't save — try again"));
-  }, []);
+  }, [onChanged]);
 
   /** Diff `next` against what's persisted and fire a coalesced PATCH per item. */
   const persist = useCallback(
@@ -166,6 +239,7 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
           pending.current.set(nc.id, { startMs, endMs });
           clearTimeout(timers.current.get(nc.id));
           timers.current.set(nc.id, setTimeout(() => flush(nc.id), 250));
+          onOverlayTiming?.(overlayId(nc.id), startMs, endMs);
           continue;
         }
 
@@ -181,7 +255,7 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
       }
       serverMirror.current = next;
     },
-    [flush],
+    [flush, onOverlayTiming],
   );
 
   /** The component hands us the whole array on any move / trim / delete. */
@@ -200,13 +274,17 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
         setFuture([]);
         for (const c of removed) {
           setSave("saving");
+          if (isOverlay(c.id)) onOverlayDeleted?.(overlayId(c.id));
           const url = isOverlay(c.id)
             ? `/api/overlays/${overlayId(c.id)}`
             : `/api/sequence-items/${c.id}`;
           void fetch(url, { method: "DELETE" })
             .then((r) => {
               setSave(r.ok ? "saved" : "idle");
-              if (r.ok) setTimeout(() => setSave("idle"), 1500);
+              if (r.ok) {
+                setTimeout(() => setSave("idle"), 1500);
+                onChanged?.();
+              }
             })
             .catch(() => setError("delete didn't save"));
         }
@@ -215,7 +293,7 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
       setClips(next);
       persist(next);
     },
-    [clips, persist],
+    [clips, persist, onOverlayDeleted, onChanged],
   );
 
   const undo = useCallback(() => {
@@ -266,12 +344,13 @@ export function SequenceEditor({ clipId }: { clipId: string }) {
         await load(); // authoritative — new item has a server id
         setSave("saved");
         setTimeout(() => setSave("idle"), 1500);
+        onChanged?.();
       } catch (e) {
         setError(e instanceof Error ? e.message : "split failed");
         setSave("idle");
       }
     },
-    [load],
+    [load, onChanged],
   );
 
   const onSnapChange = useCallback(

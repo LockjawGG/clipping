@@ -29,6 +29,8 @@ interface Props {
   /** Commit a moved / resized overlay (fires on pointer-up, not during drag). */
   onOverlayChange: (id: string, patch: { x?: number; y?: number; scale?: number }) => void;
   onPlayhead: (ms: number) => void;
+  /** Fires when playback starts / stops, so a linked timeline can follow along. */
+  onPlayingChange?: (playing: boolean) => void;
   onCaptionLayout: (layout: { positionY: number; alignment: "left" | "center" | "right" }) => void;
 }
 
@@ -55,6 +57,7 @@ export const ClipPlayer = memo(function ClipPlayer({
   onSelectOverlay,
   onOverlayChange,
   onPlayhead,
+  onPlayingChange,
   onCaptionLayout,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -130,10 +133,37 @@ export const ClipPlayer = memo(function ClipPlayer({
       onPlayhead(0);
       return;
     }
+    // While playing, the rAF loop below owns the position (smoother, ~30fps).
+    // `timeupdate` still covers paused seeks and the end-of-clip stop.
+    if (playing) return;
     const bounded = Math.min(Math.max(0, v.currentTime * 1000 - baseMs), spanMs);
     setPosMs(bounded);
     onPlayhead(bounded);
   }
+
+  // Smooth playhead: sample currentTime on animation frames (throttled to ~30fps)
+  // while playing, instead of the browser's coarse ~4Hz `timeupdate`.
+  useEffect(() => {
+    if (!playing) return;
+    let raf = 0;
+    let last = 0;
+    const tick = (t: number) => {
+      raf = requestAnimationFrame(tick);
+      if (t - last < 33) return;
+      last = t;
+      const v = videoRef.current;
+      if (!v) return;
+      const bounded = Math.min(Math.max(0, v.currentTime * 1000 - baseMs), spanMs);
+      setPosMs(bounded);
+      onPlayhead(bounded);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, baseMs, spanMs, onPlayhead]);
+
+  useEffect(() => {
+    onPlayingChange?.(playing);
+  }, [playing, onPlayingChange]);
 
   function togglePlay() {
     const v = videoRef.current;
@@ -218,6 +248,8 @@ export const ClipPlayer = memo(function ClipPlayer({
           onLoadedMetadata={(e) => {
             if (mode === "rendered") setRenderedDurMs(e.currentTarget.duration * 1000);
           }}
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
           onEnded={() => setPlaying(false)}
           onClick={togglePlay}
           className="max-h-[58vh] w-auto max-w-full cursor-pointer"

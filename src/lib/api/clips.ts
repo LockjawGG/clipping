@@ -104,7 +104,15 @@ interface ClipListRow {
     maxWordsPerCue: number;
     uppercase: boolean;
   } | null;
-  renders: Array<{ id: string; status: string; progress: number; outputKey: string | null }>;
+  renders: Array<{
+    id: string;
+    status: string;
+    progress: number;
+    outputKey: string | null;
+    quality: string;
+    sizeBytes: bigint | null;
+    durationMs: number | null;
+  }>;
 }
 
 export interface ClipDb {
@@ -291,7 +299,15 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
       renders: {
         orderBy: { createdAt: "desc" },
         take: 1,
-        select: { id: true, status: true, progress: true, outputKey: true },
+        select: {
+          id: true,
+          status: true,
+          progress: true,
+          outputKey: true,
+          quality: true,
+          sizeBytes: true,
+          durationMs: true,
+        },
       },
     },
   });
@@ -327,7 +343,15 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
           : null,
         thumbnailUrl,
         render: latest
-          ? { id: latest.id, status: latest.status, progress: latest.progress, downloadUrl }
+          ? {
+              id: latest.id,
+              status: latest.status,
+              progress: latest.progress,
+              downloadUrl,
+              quality: latest.quality,
+              sizeBytes: latest.sizeBytes != null ? Number(latest.sizeBytes) : null,
+              durationMs: latest.durationMs,
+            }
           : null,
       };
     }),

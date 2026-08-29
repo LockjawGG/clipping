@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { CaptionControls, CAPTION_DEFAULTS, type CaptionConfig } from "./caption-controls";
@@ -32,11 +32,40 @@ export interface ClipData {
   savedToProjectId: string | null;
   captions: CaptionConfig | null;
   thumbnailUrl: string | null;
-  render: { id: string; status: string; progress: number; downloadUrl: string | null } | null;
+  render: {
+    id: string;
+    status: string;
+    progress: number;
+    downloadUrl: string | null;
+    quality: string;
+    sizeBytes: number | null;
+    durationMs: number | null;
+  } | null;
 }
 
 const s = (ms: number) => (ms / 1000).toFixed(1);
 const MIN_LEN_MS = 100;
+
+/** "4.2 MB" / "812 KB" for the export card. */
+const fmtBytes = (n: number | null) => {
+  if (!n || n <= 0) return null;
+  const mb = n / 1_048_576;
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+};
+/** "1:05" from a millisecond length. */
+const fmtDur = (ms: number) => {
+  const total = Math.round(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+};
+const qualityLabel = (q: string) =>
+  ({ P720: "720p", P1080: "1080p", ORIGINAL: "source quality" })[q] ?? q;
+/** Safe download filename from the clip title. */
+const fileSlug = (title: string) =>
+  title
+    .replace(/[^\w\s.-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .slice(0, 80) || "clip";
 
 export function ClipEditor({
   clip,
@@ -58,10 +87,29 @@ export function ClipEditor({
   defaultTimelineOpen?: boolean;
 }) {
   const router = useRouter();
+
+  // Debounced "soft reset": re-run the server components so an edit or delete the
+  // user just made is reflected everywhere (the preview, other clips, render
+  // state, the rails) without a full reload. Bursts of edits collapse into one.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const softReset = useCallback(() => {
+    // Trailing debounce: a burst of edits (slider drags, rapid trims) collapses
+    // into one server round-trip instead of one refresh per change.
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => router.refresh(), 500);
+  }, [router]);
+  useEffect(
+    () => () => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    },
+    [],
+  );
+
   const [draft, setDraft] = useState(clip);
   const [busy, setBusy] = useState<"save" | "render" | "delete" | "thumb" | "save-to" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playheadMs, setPlayheadMs] = useState(0);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
   const [dropActive, setDropActive] = useState(false);
   const [overlayError, setOverlayError] = useState<string | null>(null);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
@@ -95,9 +143,10 @@ export function ClipEditor({
     })
       .then((r) => {
         if (!r.ok) setOverlayError("couldn't save that change — try again");
+        else softReset();
       })
       .catch(() => setOverlayError("couldn't save that change — try again"));
-  }, []);
+  }, [softReset]);
 
   /** Optimistic overlay edit: update the list now, write in the background. */
   const editOverlay = useCallback(
@@ -129,16 +178,41 @@ export function ClipEditor({
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ direction }),
-    }).catch(() => setOverlayError("couldn't reorder — try again"));
-  }, []);
+    })
+      .then(() => softReset())
+      .catch(() => setOverlayError("couldn't reorder — try again"));
+  }, [softReset]);
 
   const deleteOverlayLocal = useCallback((id: string) => {
     setSelectedOverlayId((cur) => (cur === id ? null : cur));
     setOverlays((list) => list.filter((o) => o.id !== id));
-    void fetch(`/api/overlays/${id}`, { method: "DELETE" }).catch(() => {
-      setOverlayError("couldn't remove that layer — refresh to retry");
-    });
-  }, []);
+    void fetch(`/api/overlays/${id}`, { method: "DELETE" })
+      .then(() => softReset())
+      .catch(() => {
+        setOverlayError("couldn't remove that layer — refresh to retry");
+      });
+  }, [softReset]);
+
+  // Overlay time windows shared with the timeline editor, so a "Shows from/to"
+  // edit here and a trim/move on the Overlays track stay in lock-step.
+  const overlayWindows = useMemo(
+    () => overlays.map((o) => ({ id: o.id, startMs: o.startMs, endMs: o.endMs })),
+    [overlays],
+  );
+  const applyOverlayTiming = useCallback(
+    (id: string, startMs: number, endMs: number) =>
+      setOverlays((list) =>
+        list.map((o) => (o.id === id ? { ...o, startMs, endMs } : o)),
+      ),
+    [],
+  );
+  const removeOverlayLocal = useCallback(
+    (id: string) => {
+      setSelectedOverlayId((cur) => (cur === id ? null : cur));
+      setOverlays((list) => list.filter((o) => o.id !== id));
+    },
+    [],
+  );
 
   // --- per-word caption styling (the 4th layer: overrides SubtitleConfig for
   // individual words; keyed by word id so text edits keep the styling). ---
@@ -181,10 +255,12 @@ export function ClipEditor({
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ wordIds: ids, style: patch }),
-      }).catch(() => setError("couldn't save caption styling — try again"));
+      })
+        .then(() => softReset())
+        .catch(() => setError("couldn't save caption styling — try again"));
       return sel;
     });
-  }, [clip.id]);
+  }, [clip.id, softReset]);
 
   const resetWordStyle = useCallback(() => {
     setSelectedWords((sel) => {
@@ -199,10 +275,12 @@ export function ClipEditor({
         method: "DELETE",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ wordIds: ids }),
-      }).catch(() => setError("couldn't reset caption styling — try again"));
+      })
+        .then(() => softReset())
+        .catch(() => setError("couldn't reset caption styling — try again"));
       return sel;
     });
-  }, [clip.id]);
+  }, [clip.id, softReset]);
   const [captionsOn, setCaptionsOn] = useState(clip.captions !== null);
   const [captionDraft, setCaptionDraft] = useState<CaptionConfig>(clip.captions ?? CAPTION_DEFAULTS);
   const [saveMenu, setSaveMenu] = useState(false);
@@ -290,7 +368,6 @@ export function ClipEditor({
   const renderReq = () => fetch(`/api/clips/${clip.id}/render`, { method: "POST" });
 
   const save = () => call("save", saveReq);
-  const render = () => call("render", renderReq);
   const saveAndRender = async () => {
     const ok = dirty ? await call("save", saveReq) : true;
     if (ok) await call("render", renderReq);
@@ -337,6 +414,7 @@ export function ClipEditor({
       if (created?.id) {
         setOverlays((list) => [...list, created as OverlayView]);
         setSelectedOverlayId(created.id); // ready to drag into place
+        softReset();
       }
     } catch (err) {
       setOverlayError(err instanceof Error ? err.message : "could not add overlay");
@@ -475,6 +553,73 @@ export function ClipEditor({
 
       {!collapsed && (
       <>
+      {/* Export — render this clip to an MP4 and save it anywhere on your computer */}
+      <div className="rounded-xl border border-border bg-surface-raised p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="flex items-center gap-2 text-sm font-semibold">
+            <span aria-hidden>⬇</span> Export clip
+          </span>
+          {clip.render?.downloadUrl && !rendering && (
+            <span className="text-xs text-muted">
+              {[
+                qualityLabel(clip.render.quality),
+                fmtDur(clip.render.durationMs ?? clip.endMs - clip.startMs),
+                fmtBytes(clip.render.sizeBytes),
+              ]
+                .filter(Boolean)
+                .join("  ·  ")}
+            </span>
+          )}
+        </div>
+
+        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+          {rendering ? (
+            <>
+              <div className="h-2 min-w-[140px] flex-1 overflow-hidden rounded-full bg-surface">
+                <div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} />
+              </div>
+              <span className="font-mono text-xs tabular-nums text-muted">Rendering… {pct}%</span>
+            </>
+          ) : clip.render?.downloadUrl ? (
+            <>
+              <a
+                href={clip.render.downloadUrl}
+                download={`${fileSlug(draft.title)}.mp4`}
+                className="btn btn-primary"
+              >
+                ⬇ Download MP4
+              </a>
+              <button
+                onClick={saveAndRender}
+                disabled={busy !== null}
+                className="btn btn-ghost btn-sm"
+              >
+                {dirty ? "Re-render with changes" : "Re-render"}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={saveAndRender}
+                disabled={busy !== null}
+                className="btn btn-primary"
+              >
+                {busy === "render" || busy === "save" ? "Starting…" : "Render & download"}
+              </button>
+              <span className="text-xs text-muted">
+                Builds a shareable MP4 you can save anywhere on your computer.
+              </span>
+            </>
+          )}
+        </div>
+
+        {clip.render && !rendering && !clip.render.downloadUrl && (
+          <p className="mt-2 text-xs text-danger">
+            The last render {clip.render.status.toLowerCase()} — try again.
+          </p>
+        )}
+      </div>
+
       <ClipPlayer
         sourceUrl={sourceUrl}
         startMs={clip.startMs}
@@ -489,6 +634,7 @@ export function ClipEditor({
         onSelectOverlay={setSelectedOverlayId}
         onOverlayChange={editOverlay}
         onPlayhead={setPlayheadMs}
+        onPlayingChange={setPreviewPlaying}
         onCaptionLayout={onCaptionLayout}
       />
 
@@ -633,7 +779,14 @@ export function ClipEditor({
         </button>
         {timelineOpen && (
           <div className="border-t border-border p-3">
-            <SequenceEditor clipId={clip.id} />
+            <SequenceEditor
+              clipId={clip.id}
+              followPlayheadMs={previewPlaying ? playheadMs : null}
+              overlayWindows={overlayWindows}
+              onOverlayTiming={applyOverlayTiming}
+              onOverlayDeleted={removeOverlayLocal}
+              onChanged={softReset}
+            />
           </div>
         )}
       </div>
@@ -660,46 +813,14 @@ export function ClipEditor({
         <button onClick={save} disabled={!dirty || busy !== null} className="btn btn-primary">
           {busy === "save" ? "…" : "Save"}
         </button>
-        <button onClick={saveAndRender} disabled={busy !== null || rendering} className="btn">
-          {busy === "render" || rendering ? "Rendering…" : "Save & render"}
-        </button>
+        {dirty && <span className="text-xs text-muted">Unsaved edits</span>}
         <button
-          onClick={render}
-          disabled={busy !== null || rendering || dirty}
-          className="btn btn-ghost"
-          title={dirty ? "Save first, or use Save & render" : undefined}
+          onClick={remove}
+          disabled={busy !== null}
+          className="btn btn-ghost btn-danger ml-auto"
         >
-          {clip.render ? "Re-render" : "Render"}
-        </button>
-        <button onClick={remove} disabled={busy !== null} className="btn btn-ghost btn-danger">
           Delete
         </button>
-
-        {clip.render && (
-          <div className="ml-auto flex items-center gap-2">
-            <span className="pill">{clip.render.status.toLowerCase()}</span>
-            {rendering && (
-              <div className="h-1.5 w-24 overflow-hidden rounded-full bg-surface-raised">
-                <div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} />
-              </div>
-            )}
-            {clip.render.downloadUrl && (
-              <a
-                href={clip.render.downloadUrl}
-                download={`${
-                  draft.title
-                    .replace(/[^\w\s.-]/g, "")
-                    .trim()
-                    .replace(/\s+/g, "-")
-                    .slice(0, 80) || "clip"
-                }.mp4`}
-                className="text-accent underline"
-              >
-                download
-              </a>
-            )}
-          </div>
-        )}
       </div>
       </>
       )}

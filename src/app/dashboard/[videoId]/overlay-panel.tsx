@@ -155,6 +155,8 @@ export const OverlayPanel = memo(function OverlayPanel({
                         type="number"
                         min={0}
                         step={0.1}
+                        // remount when the value changes elsewhere (timeline trim)
+                        key={`start-${o.startMs ?? "n"}`}
                         defaultValue={secStr(o.startMs)}
                         placeholder="0"
                         onKeyDown={(e) => {
@@ -181,6 +183,7 @@ export const OverlayPanel = memo(function OverlayPanel({
                         type="number"
                         min={0}
                         step={0.1}
+                        key={`end-${o.endMs ?? "n"}`}
                         defaultValue={secStr(o.endMs)}
                         placeholder={(clipLenMs / 1000).toFixed(1)}
                         onKeyDown={(e) => {

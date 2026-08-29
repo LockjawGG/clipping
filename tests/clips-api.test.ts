@@ -111,7 +111,17 @@ function makeDeps(
               maxWordsPerCue: 7,
               uppercase: false,
             },
-            renders: [{ id: "r1", status: "COMPLETED", progress: 1, outputKey: "renders/r1/output.mp4" }],
+            renders: [
+              {
+                id: "r1",
+                status: "COMPLETED",
+                progress: 1,
+                outputKey: "renders/r1/output.mp4",
+                quality: "P1080",
+                sizeBytes: 4_200_000n,
+                durationMs: 26_600,
+              },
+            ],
           },
         ];
       },
