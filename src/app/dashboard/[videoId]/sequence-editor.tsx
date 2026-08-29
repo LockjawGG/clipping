@@ -379,11 +379,15 @@ export function SequenceEditor({
 
   const contentEnd = clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0);
   const sel = clips.find((c) => c.id === selected) ?? null;
+  // Grow with the track count (video + one lane per overlay) so every overlay
+  // lane stays visible; cap it so a clip with many overlays still fits.
+  const tlHeight = Math.min(620, 150 + seq.tracks.length * 84);
 
   return (
     <div className="flex flex-col gap-1.5">
+      <div style={{ height: tlHeight }}>
       <Timeline
-        className="h-[300px]"
+        className="h-full"
         tracks={seq.tracks.map(trackToTrack)}
         clips={clips}
         onClipsChange={onClipsChange}
@@ -401,6 +405,7 @@ export function SequenceEditor({
         canRedo={future.length > 0}
         saveState={save}
       />
+      </div>
 
       {/* precise numeric editing for the selected item (§11) */}
       {sel && (

@@ -572,7 +572,7 @@ export function Timeline({
             if (e.currentTarget === e.target) setDropActive(false);
           }}
           onDrop={handleDrop}
-          className="relative min-w-0 flex-1 overflow-x-auto overflow-y-hidden"
+          className="relative min-w-0 flex-1 overflow-x-auto overflow-y-auto"
         >
           <div style={{ width: contentW, position: "relative" }}>
             {/* ruler */}

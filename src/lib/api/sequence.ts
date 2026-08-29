@@ -24,8 +24,10 @@ const STILL_IMAGE_MS = 5_000;
  * on the clip in one place. Their ids are prefixed so the client routes edits
  * back to `/api/overlays/:id` instead of the sequence-item endpoint.
  */
-export const OVERLAY_TRACK_ID = "ov_track";
 export const OVERLAY_ID_PREFIX = "ov_";
+/** Each overlay gets its own synthetic track so it can be trimmed/placed
+ *  independently over the full clip. Track id = this prefix + the overlay id. */
+export const OVERLAY_TRACK_PREFIX = "ovtrk_";
 
 export const updateSequenceSchema = z
   .object({
@@ -319,33 +321,47 @@ async function toView(deps: SequenceServiceDeps, seq: SeqRow): Promise<SequenceV
 /* ----------------------------------------------------- overlay projection */
 
 /**
- * The clip's image / GIF overlays, projected as read-through timeline items on a
- * synthetic OVERLAY track. Hidden overlays and text/emoji overlays (no asset)
- * are skipped. `null` when the clip has no visible overlays — the caller then
- * adds nothing.
+ * The clip's image / GIF overlays, projected as read-through timeline items —
+ * ONE synthetic OVERLAY track per overlay, so each can be trimmed and placed
+ * independently over the whole clip without colliding on a shared lane. Hidden
+ * overlays and text/emoji overlays (no asset) are skipped. `null` when the clip
+ * has no visible overlays.
+ *
+ * Ordering: top layer (highest zIndex) first, matching the Layers panel.
  */
 async function overlayItems(
   deps: SequenceServiceDeps,
   clipId: string,
   clipLenMs: number,
-): Promise<{ track: SequenceView["tracks"][number]; items: SequenceItemView[] } | null> {
+): Promise<{ tracks: SequenceView["tracks"]; items: SequenceItemView[] } | null> {
   const rows = await deps.db.overlay.findMany({
     where: { clipId },
     orderBy: { zIndex: "asc" },
   });
-  const visible = rows.filter((o) => !o.hidden && o.assetId);
+  // rows come back zIndex-ascending; reverse so the top layer is the top track.
+  const visible = rows.filter((o) => !o.hidden && o.assetId).reverse();
   if (visible.length === 0) return null;
 
+  const tracks: SequenceView["tracks"] = [];
   const items = await Promise.all(
-    visible.map(async (o): Promise<SequenceItemView> => {
+    visible.map(async (o, i): Promise<SequenceItemView> => {
       const asset = o.assetId ? await deps.db.asset.findUnique({ where: { id: o.assetId } }) : null;
       const start = Math.max(0, o.startMs ?? 0);
       const end = Math.max(start + 1, o.endMs ?? clipLenMs);
+      const name = asset?.name ?? o.content ?? "overlay";
+      tracks.push({
+        id: OVERLAY_TRACK_PREFIX + o.id,
+        index: 1_000 + i, // after every real track, in layer order
+        kind: "OVERLAY",
+        name,
+        muted: false,
+        locked: false,
+      });
       return {
         id: OVERLAY_ID_PREFIX + o.id,
-        trackId: OVERLAY_TRACK_ID,
+        trackId: OVERLAY_TRACK_PREFIX + o.id,
         kind: "image",
-        name: asset?.name ?? o.content ?? "overlay",
+        name,
         timelineStart: start,
         sourceIn: 0,
         sourceOut: end - start,
@@ -359,18 +375,7 @@ async function overlayItems(
     }),
   );
 
-  return {
-    track: {
-      id: OVERLAY_TRACK_ID,
-      // after every real track
-      index: 1_000,
-      kind: "OVERLAY",
-      name: "Overlays",
-      muted: false,
-      locked: false,
-    },
-    items,
-  };
+  return { tracks, items };
 }
 
 /** Merge the clip's overlay projection into a freshly built sequence view. */
@@ -383,7 +388,7 @@ async function withOverlays(
   if (!ov) return view;
   return {
     ...view,
-    tracks: [...view.tracks, ov.track],
+    tracks: [...view.tracks, ...ov.tracks],
     items: [...view.items, ...ov.items],
   };
 }
