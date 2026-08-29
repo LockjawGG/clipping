@@ -3,6 +3,9 @@
 import { memo, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import type { CaptionTemplate } from "@/lib/captions/preset-library.ts";
+import { TemplateBrowser, splitTemplate } from "./caption-templates";
+
 const ANIMATIONS = [
   "NONE",
   "WORD_BY_WORD",
@@ -34,6 +37,10 @@ export interface CaptionConfig {
   maxLines: number;
   maxWordsPerCue: number;
   uppercase: boolean;
+  /** Rich extras (fill, effect layers, letterSpacing…) as JSON, or null. */
+  styleJson: string | null;
+  /** WordRule[] as JSON, or null. */
+  wordRulesJson: string | null;
 }
 
 export const CAPTION_DEFAULTS: CaptionConfig = {
@@ -52,6 +59,8 @@ export const CAPTION_DEFAULTS: CaptionConfig = {
   maxLines: 2,
   maxWordsPerCue: 7,
   uppercase: false,
+  styleJson: null,
+  wordRulesJson: null,
 };
 
 /** The subset the caption `PUT` accepts (strips preset-derived noise). */
@@ -72,6 +81,8 @@ function toPayload(c: CaptionConfig) {
     maxLines: c.maxLines,
     maxWordsPerCue: c.maxWordsPerCue,
     uppercase: c.uppercase,
+    styleJson: c.styleJson,
+    wordRulesJson: c.wordRulesJson,
   };
 }
 
@@ -138,6 +149,29 @@ export const CaptionControls = memo(function CaptionControls({
       }),
     );
 
+  const [appliedTemplate, setAppliedTemplate] = useState<string | null>(null);
+
+  const applyTemplate = async (t: CaptionTemplate) => {
+    const { scalar, styleJson, wordRulesJson } = splitTemplate(t);
+    const next = {
+      ...value,
+      ...scalar,
+      animation: t.animation,
+      styleJson,
+      wordRulesJson,
+    } as CaptionConfig;
+    onChange(next);
+    setAppliedTemplate(t.id);
+    const ok = await run("save", () =>
+      fetch(`/api/clips/${clipId}/captions`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(toPayload(next)),
+      }),
+    );
+    if (ok && !captionsOn) onCaptionsOnChange(true);
+  };
+
   return (
     <div className="flex flex-col gap-3 rounded-lg bg-surface-raised p-3 text-sm">
       <div className="flex items-center gap-3">
@@ -160,6 +194,12 @@ export const CaptionControls = memo(function CaptionControls({
         </div>
         {busy === "toggle" && <span className="text-xs text-muted">…</span>}
       </div>
+
+      <TemplateBrowser
+        disabled={busy !== null}
+        activeId={appliedTemplate}
+        onApply={applyTemplate}
+      />
 
       <details className="group rounded-lg border border-border bg-surface open:pb-2">
         <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium text-muted marker:content-none hover:text-text">
