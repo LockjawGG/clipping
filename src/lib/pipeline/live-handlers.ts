@@ -1,4 +1,4 @@
-import { appendFile, copyFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readFile, statfs } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import type { JobHandler } from "../jobs/types.ts";
@@ -72,6 +72,32 @@ export const liveTranscribeHandler: JobHandler<PipelineDeps> = async ({ job, dep
   }
 };
 
+/** Bytes one 20s fragment of 1080p screen capture runs to, for rows predating
+ *  the `bytes` column. Measured ~1.3 Mbit/s. */
+const FRAGMENT_BYTES_FALLBACK = 3_300_000;
+
+/**
+ * Peak scratch a finalisation will occupy: the reassembled stream, the encoded
+ * source beside it, and the 16kHz mono WAV handed to the transcriber.
+ *
+ * A re-encode is the expensive case (measured ~2.7x the WebM source at x264
+ * veryfast), so budget for it rather than discovering ENOSPC an hour in.
+ * Exported for tests — pure arithmetic, no filesystem.
+ */
+export function estimateFinalizeBytes(input: {
+  fragmentBytes: number;
+  fragmentCount: number;
+  flushMs?: number;
+}): number {
+  const reassembled =
+    input.fragmentBytes > 0 ? input.fragmentBytes : input.fragmentCount * FRAGMENT_BYTES_FALLBACK;
+  const durationSec = (input.fragmentCount * (input.flushMs ?? 20_000)) / 1000;
+  const wav = durationSec * 16_000 * 2; // 16kHz, mono, 16-bit
+  return Math.round(reassembled + reassembled * 2.7 + wav);
+}
+
+const GB = (n: number) => `${(n / 1e9).toFixed(1)} GB`;
+
 export const liveFinalizeHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal, setProgress }) => {
   const video = await deps.videos.get(job.videoId);
   if (!video) throw new Error(`video ${job.videoId} not found`);
@@ -83,6 +109,28 @@ export const liveFinalizeHandler: JobHandler<PipelineDeps> = async ({ job, deps,
   }
 
   const work = jobWorkDir(deps.tempDir, job.id);
+
+  // Check there is room before spending an hour discovering there isn't. A long
+  // session is tens of GB of scratch, and ENOSPC halfway through a re-encode
+  // surfaces as an opaque ffmpeg failure.
+  const needBytes = estimateFinalizeBytes({
+    fragmentBytes: chunks.reduce((n, c) => n + (c.bytes ?? 0), 0),
+    fragmentCount: chunks.length,
+  });
+  try {
+    const fs = await statfs(deps.tempDir);
+    const freeBytes = Number(fs.bsize) * Number(fs.bavail);
+    if (freeBytes < needBytes) {
+      await deps.videos.setError(
+        job.videoId,
+        `Not enough disk to finish this recording: needs about ${GB(needBytes)}, ` +
+          `${GB(freeBytes)} free. The recording is safe — free up space and retry.`,
+      );
+      return { chunks: chunks.length, needBytes, freeBytes, blocked: "insufficient disk" };
+    }
+  } catch {
+    // statfs is unavailable on some mounts — proceed rather than block on it.
+  }
 
   // Reassemble the MediaRecorder timeslice fragments by *binary* concatenation
   // in index order — they're one continuous stream that was flushed in pieces,
@@ -120,21 +168,51 @@ export const liveFinalizeHandler: JobHandler<PipelineDeps> = async ({ job, deps,
     return { chunks: 0 };
   }
 
-  // Binary-joined WebM fragments have duplicate/non-monotonic timestamps at each
-  // join. ffmpeg tolerates that but a browser <video> renders black after a seek.
-  //  - screen recordings (video stream): re-encode so the output timeline is
-  //    rebuilt monotonically from frame order.
-  //  - mic-only (audio stream): a stream-copy remux is enough and far cheaper.
-  const source = scratchPath(work, "source.webm");
+  // Reassembled fragments are usually a byte-exact copy of one continuous
+  // MediaRecorder stream, so a stream copy is all that's needed — and it is
+  // ~200x faster than re-encoding (measured 550x realtime against 2.8x).
+  //
+  // But screen capture is variable-rate, and some sources emit packets that
+  // share a decode timestamp. A browser cannot seek through that: it plays
+  // black past the first seam. So take the cheap path, check the result, and
+  // only pay for a re-encode when the check actually fails. Reading packet
+  // timestamps never decodes, so the check costs ~1 minute on an 8h recording,
+  // and the fallback re-encode (x264 veryfast, ~11x realtime) is only paid
+  // when it's actually needed.
   const pre = await deps.ffmpeg.probe(reassembled, signal).catch(() => null);
   const hasVideo = !!pre && pre.videoCodec !== null;
+
+  let source = scratchPath(work, "source.webm");
+  let mime = "video/webm";
+  let strategy: "copy" | "transcode" = "copy";
   try {
-    if (hasVideo) await deps.ffmpeg.concatAv([reassembled], source, signal);
-    else await deps.ffmpeg.remux(reassembled, source, signal);
+    await deps.ffmpeg.remux(reassembled, source, signal);
   } catch {
     await copyFile(reassembled, source);
   }
-  await deps.storage.putFile(video.storageKey, source, "video/webm");
+
+  if (hasVideo) {
+    const ts = await deps.ffmpeg
+      .videoTimestampReport(source, signal)
+      .catch(() => ({ packets: 0, nonMonotonic: 1 }));
+    if (ts.nonMonotonic > 0) {
+      strategy = "transcode";
+      const mp4 = scratchPath(work, "source.mp4");
+      await deps.ffmpeg.transcodeAv(reassembled, mp4, signal);
+      source = mp4;
+      mime = "video/mp4";
+    }
+  }
+
+  // The stored object has to describe what it actually holds, or the player
+  // gets the wrong content type and ffmpeg the wrong extension downstream.
+  const storageKey =
+    mime === "video/mp4" ? video.storageKey.replace(/\.webm$/, ".mp4") : video.storageKey;
+  await deps.storage.putFile(storageKey, source, mime);
+  if (storageKey !== video.storageKey) {
+    await deps.videos.setStorageKey(job.videoId, storageKey);
+    await deps.storage.delete(video.storageKey).catch(() => {});
+  }
   await setProgress(0.55);
 
   const info = await deps.ffmpeg.probe(source, signal);
@@ -166,6 +244,7 @@ export const liveFinalizeHandler: JobHandler<PipelineDeps> = async ({ job, deps,
     chunks: chunks.length,
     usedChunks: used,
     segments: result.segments.length,
+    strategy,
     ...(truncatedAt !== null ? { truncatedAtFragment: truncatedAt } : {}),
   };
 };

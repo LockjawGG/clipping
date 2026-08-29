@@ -89,9 +89,9 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       extractAudio: async (i, o) => {
         spy.extracted.push([i, o]);
       },
-      concatAudio: async () => {},
-      concatAv: async () => {},
       remux: async () => {},
+      transcodeAv: async () => {},
+      videoTimestampReport: async () => ({ packets: 0, nonMonotonic: 0 }),
       cut: async () => {},
       reframe: async () => {},
       reframeTracked: async () => {},
@@ -153,6 +153,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
         video.status = s;
       },
       setError: async () => {},
+      setStorageKey: async () => {},
       setFilename: async (_id, name) => {
         spy.filename = name;
       },

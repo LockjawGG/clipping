@@ -62,6 +62,9 @@ export function prismaVideoRepo(client: PrismaClient): VideoRepo {
     async setFilename(id, originalFilename) {
       await client.video.update({ where: { id }, data: { originalFilename } });
     },
+    async setStorageKey(id, storageKey) {
+      await client.video.update({ where: { id }, data: { storageKey } });
+    },
   };
 }
 

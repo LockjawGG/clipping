@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { promisify } from "node:util";
 
 import {
@@ -8,14 +8,14 @@ import {
   type AspectRatio,
   type CaptionBurnStyle,
   type OverlayCompositeItem,
-  buildConcatAudioArgs,
-  buildConcatAvArgs,
   buildCutArgs,
   buildExtractAudioArgs,
   buildOverlayCompositeArgs,
   buildProbeArgs,
   buildReframeArgs,
   buildRemuxArgs,
+  buildTranscodeAvArgs,
+  buildVideoPacketDtsArgs,
   buildThumbnailArgs,
   buildTrackedReframeArgs,
 } from "./args.ts";
@@ -140,12 +140,18 @@ export interface OverlayCompositeOptions {
 export interface Ffmpeg {
   probe(inputPath: string, signal?: AbortSignal): Promise<MediaInfo>;
   extractAudio(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void>;
-  /** Join self-contained audio chunks in order, no re-encode. */
-  concatAudio(inputPaths: string[], outputPath: string, signal?: AbortSignal): Promise<void>;
-  /** Join self-contained A/V WebM chunks, re-encoding to one continuous stream. */
-  concatAv(inputPaths: string[], outputPath: string, signal?: AbortSignal): Promise<void>;
   /** Rewrite a container (stream copy) to fix timestamps / add a seek index. */
   remux(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void>;
+  /** Re-encode to H.264/AAC at a constant frame rate, rebuilding the timeline. */
+  transcodeAv(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void>;
+  /**
+   * Count video packets whose decode timestamp doesn't advance. Non-zero means
+   * a player can't seek the file reliably. Reads packets only — no decoding.
+   */
+  videoTimestampReport(
+    inputPath: string,
+    signal?: AbortSignal,
+  ): Promise<{ packets: number; nonMonotonic: number }>;
   /** Frame-accurate trim (re-encode, never stream-copy). */
   cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void>;
   /** Scale/crop to an aspect preset, optionally burning subtitles. */
@@ -199,30 +205,41 @@ export class FfmpegRunner implements Ffmpeg {
     await this.exec(this.ffmpegPath, buildExtractAudioArgs({ inputPath, outputPath }), signal);
   }
 
-  private async writeConcatList(inputPaths: string[], outputPath: string): Promise<string> {
-    await mkdir(dirname(outputPath), { recursive: true });
-    const listPath = join(dirname(outputPath), "concat.txt");
-    // concat demuxer: single-quote each path, escaping embedded quotes.
-    const body = inputPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n") + "\n";
-    await writeFile(listPath, body, "utf8");
-    return listPath;
-  }
-
-  async concatAudio(inputPaths: string[], outputPath: string, signal?: AbortSignal): Promise<void> {
-    if (inputPaths.length === 0) throw new Error("concatAudio: no inputs");
-    const listPath = await this.writeConcatList(inputPaths, outputPath);
-    await this.exec(this.ffmpegPath, buildConcatAudioArgs({ listPath, outputPath }), signal);
-  }
-
-  async concatAv(inputPaths: string[], outputPath: string, signal?: AbortSignal): Promise<void> {
-    if (inputPaths.length === 0) throw new Error("concatAv: no inputs");
-    const listPath = await this.writeConcatList(inputPaths, outputPath);
-    await this.exec(this.ffmpegPath, buildConcatAvArgs({ listPath, outputPath }), signal);
-  }
-
   async remux(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void> {
     await mkdir(dirname(outputPath), { recursive: true });
     await this.exec(this.ffmpegPath, buildRemuxArgs({ inputPath, outputPath }), signal);
+  }
+
+  async transcodeAv(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void> {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await this.exec(this.ffmpegPath, buildTranscodeAvArgs({ inputPath, outputPath }), signal);
+  }
+
+  async videoTimestampReport(
+    inputPath: string,
+    signal?: AbortSignal,
+  ): Promise<{ packets: number; nonMonotonic: number }> {
+    const { stdout } = await this.exec(
+      this.ffprobePath,
+      buildVideoPacketDtsArgs({ inputPath }),
+      signal,
+    );
+    let packets = 0;
+    let nonMonotonic = 0;
+    let prev = Number.NEGATIVE_INFINITY;
+    for (const line of stdout.split(/\r?\n/)) {
+      const t = line.trim();
+      if (t === "") continue;
+      packets++;
+      // "N/A" appears when a packet carries no DTS at all — equally unseekable.
+      const dts = Number(t);
+      if (!Number.isFinite(dts) || dts <= prev) {
+        nonMonotonic++;
+        continue;
+      }
+      prev = dts;
+    }
+    return { packets, nonMonotonic };
   }
 
   async cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void> {

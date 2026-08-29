@@ -34,6 +34,8 @@ export interface VideoRepo {
   setError(id: string, message: string): Promise<void>;
   /** Replace the display filename (used after FETCH learns the real title). */
   setFilename(id: string, originalFilename: string): Promise<void>;
+  /** Point the video at a different object, e.g. when finalising changes container. */
+  setStorageKey(id: string, storageKey: string): Promise<void>;
 }
 
 export interface TranscriptRepo {

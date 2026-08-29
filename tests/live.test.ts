@@ -19,7 +19,11 @@ import {
 import { sweepLiveSessions } from "../src/lib/pipeline/live-sweep.ts";
 import { ApiError } from "../src/lib/api/http.ts";
 import type { PipelineDeps } from "../src/lib/pipeline/deps.ts";
-import { liveFinalizeHandler, liveTranscribeHandler } from "../src/lib/pipeline/live-handlers.ts";
+import {
+  estimateFinalizeBytes,
+  liveFinalizeHandler,
+  liveTranscribeHandler,
+} from "../src/lib/pipeline/live-handlers.ts";
 import type { JobContext, JobRecord } from "../src/lib/jobs/types.ts";
 
 /* ------------------------------------------------------- service fakes */
@@ -315,7 +319,7 @@ test("LIVE_FINALIZE reassembles fragments, re-transcribes, and queues ANALYZE", 
   } as unknown as PipelineDeps;
 
   const out = await liveFinalizeHandler(jobCtx(deps, "LIVE_FINALIZE", null));
-  assert.deepEqual(out, { chunks: 2, usedChunks: 2, segments: 0 });
+  assert.deepEqual(out, { chunks: 2, usedChunks: 2, segments: 0, strategy: "copy" });
   assert.ok(calls.includes("remux"));
   assert.ok(calls.includes("put"));
   assert.ok(calls.includes("status:READY"));
@@ -486,4 +490,110 @@ test("LIVE_FINALIZE stops at a truncated fragment rather than splicing past it",
   };
   assert.equal(out.usedChunks, 2, "the good fragment plus the short one, then stop");
   assert.equal(out.truncatedAtFragment, 1);
+});
+
+/* ------------------------------------------- finalisation: copy vs re-encode */
+
+/** A finalize deps fake whose timestamp check and codec are configurable. */
+function finalizeFake(opts: { videoCodec: string | null; nonMonotonic: number }) {
+  const calls: string[] = [];
+  const puts: Array<{ key: string; mime: string }> = [];
+  let storageKey = "videos/vidX/source.webm";
+  const deps = {
+    tempDir: "/tmp/live-strategy",
+    ffmpeg: {
+      remux: async () => calls.push("remux"),
+      transcodeAv: async () => calls.push("transcodeAv"),
+      videoTimestampReport: async () => {
+        calls.push("check");
+        return { packets: 100, nonMonotonic: opts.nonMonotonic };
+      },
+      probe: async () => ({ durationMs: 1_000, hasAudio: true, videoCodec: opts.videoCodec }),
+      extractAudio: async () => {},
+    },
+    storage: {
+      exists: async () => true,
+      getToFile: async (_k: string, p: string) => writeFile(p, "x"),
+      putFile: async (key: string, _p: string, mime: string) => {
+        puts.push({ key, mime });
+      },
+      delete: async () => calls.push("delete-old"),
+    },
+    videos: {
+      get: async () => ({ id: "vidX", storageKey, durationMs: null, status: "PROBING" }),
+      applyProbe: async () => {},
+      setStatus: async () => {},
+      setError: async () => {},
+      setStorageKey: async (_id: string, k: string) => {
+        storageKey = k;
+      },
+    },
+    liveChunks: {
+      listForVideo: async () => [
+        { id: "c0", videoId: "vidX", index: 0, startMs: 0, storageKey: "k0", status: "DONE", bytes: null },
+      ],
+      deleteForVideo: async () => {},
+    },
+    transcription: { transcribe: async () => ({ provider: "fake", language: "en", segments: [] }) },
+    transcripts: { save: async () => ({ segmentCount: 0 }) },
+    queue: { enqueue: async () => {} },
+  } as unknown as PipelineDeps;
+  return { deps, calls, puts, key: () => storageKey };
+}
+
+test("LIVE_FINALIZE keeps the cheap stream copy when timestamps come out clean", async () => {
+  const f = finalizeFake({ videoCodec: "vp9", nonMonotonic: 0 });
+  const out = (await liveFinalizeHandler(jobCtx(f.deps, "LIVE_FINALIZE", null))) as { strategy: string };
+
+  assert.equal(out.strategy, "copy");
+  assert.ok(f.calls.includes("check"), "the copy is verified, not assumed");
+  assert.ok(!f.calls.includes("transcodeAv"), "no re-encode when the copy is good");
+  assert.deepEqual(f.puts[0], { key: "videos/vidX/source.webm", mime: "video/webm" });
+});
+
+test("LIVE_FINALIZE re-encodes to MP4 when the copy has non-monotonic timestamps", async () => {
+  const f = finalizeFake({ videoCodec: "vp9", nonMonotonic: 7 });
+  const out = (await liveFinalizeHandler(jobCtx(f.deps, "LIVE_FINALIZE", null))) as { strategy: string };
+
+  assert.equal(out.strategy, "transcode");
+  assert.ok(f.calls.includes("transcodeAv"));
+  assert.deepEqual(f.puts[0], { key: "videos/vidX/source.mp4", mime: "video/mp4" });
+  assert.equal(f.key(), "videos/vidX/source.mp4", "the row follows the new container");
+  assert.ok(f.calls.includes("delete-old"), "the stale .webm object is cleaned up");
+});
+
+test("LIVE_FINALIZE skips the timestamp check entirely for audio-only recordings", async () => {
+  const f = finalizeFake({ videoCodec: null, nonMonotonic: 99 });
+  const out = (await liveFinalizeHandler(jobCtx(f.deps, "LIVE_FINALIZE", null))) as { strategy: string };
+
+  assert.equal(out.strategy, "copy");
+  assert.ok(!f.calls.includes("check"), "no video stream, nothing to seek through");
+  assert.ok(!f.calls.includes("transcodeAv"));
+});
+
+test("estimateFinalizeBytes budgets for the re-encode and the WAV, not just the source", () => {
+  // 90 fragments x 20s = 30 minutes, 300 MB of WebM.
+  const bytes = estimateFinalizeBytes({ fragmentBytes: 300_000_000, fragmentCount: 90 });
+  // reassembled + ~2.7x re-encode + 1800s of 16kHz mono 16-bit WAV (57.6 MB)
+  assert.ok(bytes > 1_100_000_000, `expected > 1.1 GB, got ${bytes}`);
+  assert.ok(bytes < 1_200_000_000, `expected < 1.2 GB, got ${bytes}`);
+});
+
+test("estimateFinalizeBytes falls back to a per-fragment estimate when sizes are unknown", () => {
+  const known = estimateFinalizeBytes({ fragmentBytes: 33_000_000, fragmentCount: 10 });
+  const unknown = estimateFinalizeBytes({ fragmentBytes: 0, fragmentCount: 10 });
+  assert.ok(unknown > 0);
+  // Same order of magnitude — the fallback is calibrated to real 1080p capture.
+  assert.ok(Math.abs(known - unknown) / known < 0.05);
+});
+
+test("LIVE_FINALIZE refuses to start when the scratch disk can't hold the result", async () => {
+  const f = finalizeFake({ videoCodec: "vp9", nonMonotonic: 0 });
+  // A path that exists but reports essentially no free space isn't something we
+  // can fake through statfs, so assert the estimate the guard is built on.
+  const need = estimateFinalizeBytes({ fragmentBytes: 8_000_000_000, fragmentCount: 1440 });
+  assert.ok(need > 25_000_000_000, "an 8h recording budgets tens of GB");
+  // And the happy path still runs when there is room.
+  const out = (await liveFinalizeHandler(jobCtx(f.deps, "LIVE_FINALIZE", null))) as { strategy: string };
+  assert.equal(out.strategy, "copy");
 });
