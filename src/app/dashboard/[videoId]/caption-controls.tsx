@@ -4,13 +4,15 @@ import { memo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import type { CaptionTemplate } from "@/lib/captions/preset-library.ts";
+import type { TextStyle } from "@/lib/captions/text-style.ts";
 import { parseStylePartial } from "@/lib/captions/text-style.ts";
+import { parseRich, serializeRich } from "@/lib/captions/rich-extras.ts";
+import { parseWordRules, serializeWordRules } from "@/lib/captions/word-rules.ts";
 import { TemplateBrowser, splitTemplate } from "./caption-templates";
-import { CaptionStyleAdvanced } from "./caption-style-advanced";
-import { CaptionWordRules } from "./caption-word-rules";
+import { StyleControls } from "./style-controls";
 
 /** The current config as a full TextStyle partial (scalar fields + rich blob). */
-function stylePartialFromConfig(c: CaptionConfig): Record<string, unknown> {
+function stylePartialFromConfig(c: CaptionConfig): Partial<TextStyle> {
   return {
     fontFamily: c.fontFamily,
     fontWeight: c.fontWeight,
@@ -23,9 +25,23 @@ function stylePartialFromConfig(c: CaptionConfig): Record<string, unknown> {
     alignment: c.alignment,
     positionY: c.positionY,
     uppercase: c.uppercase,
-    ...parseStylePartial(c.styleJson),
+    ...(parseStylePartial(c.styleJson) as Partial<TextStyle>),
   };
 }
+
+/** TextStyle fields that map to scalar SubtitleConfig columns (vs the styleJson blob). */
+const SCALAR_KEYS = new Set<string>([
+  "fontFamily",
+  "fontWeight",
+  "fontSizePx",
+  "textColor",
+  "highlightColor",
+  "outlineColor",
+  "outlineWidthPx",
+  "backgroundColor",
+  "alignment",
+  "uppercase",
+]);
 
 const ANIMATIONS = [
   "NONE",
@@ -38,9 +54,6 @@ const ANIMATIONS = [
   "SLIDE_UP",
   "TYPEWRITER",
 ] as const;
-const PRESETS = ["CLASSIC", "BOLD", "VIRAL", "MINIMAL", "KARAOKE"] as const;
-export const CAPTION_FONTS = ["Inter", "Archivo Black", "Georgia", "JetBrains Mono"] as const;
-const WEIGHTS = [400, 600, 700, 800, 900] as const;
 
 export interface CaptionConfig {
   preset: string;
@@ -131,6 +144,20 @@ export const CaptionControls = memo(function CaptionControls({
   const set = <K extends keyof CaptionConfig>(k: K, v: CaptionConfig[K]) =>
     onChange({ ...value, [k]: v });
 
+  /** A TextStyle patch from the shared panel → scalar columns + the styleJson blob. */
+  const applyStylePatch = (patch: Partial<TextStyle>) => {
+    const next = { ...value } as CaptionConfig & Record<string, unknown>;
+    const rich: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(patch)) {
+      if (SCALAR_KEYS.has(k)) next[k] = v;
+      else rich[k] = v;
+    }
+    if (Object.keys(rich).length) {
+      next.styleJson = serializeRich({ ...parseRich(value.styleJson), ...rich });
+    }
+    onChange(next);
+  };
+
   async function run(kind: "toggle" | "save", req: () => Promise<Response>) {
     setBusy(kind);
     setError(null);
@@ -147,28 +174,22 @@ export const CaptionControls = memo(function CaptionControls({
     }
   }
 
+  const putCaptions = (c: CaptionConfig) =>
+    fetch(`/api/clips/${clipId}/captions`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(toPayload(c)),
+    });
+
   const toggle = async () => {
     const next = !captionsOn;
     const ok = await run("toggle", () =>
-      next
-        ? fetch(`/api/clips/${clipId}/captions`, {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(toPayload(value)),
-          })
-        : fetch(`/api/clips/${clipId}/captions`, { method: "DELETE" }),
+      next ? putCaptions(value) : fetch(`/api/clips/${clipId}/captions`, { method: "DELETE" }),
     );
     if (ok) onCaptionsOnChange(next);
   };
 
-  const saveStyle = () =>
-    run("save", () =>
-      fetch(`/api/clips/${clipId}/captions`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(toPayload(value)),
-      }),
-    );
+  const saveStyle = () => run("save", () => putCaptions(value));
 
   const [appliedTemplate, setAppliedTemplate] = useState<string | null>(null);
   const [savedTick, setSavedTick] = useState(0);
@@ -204,13 +225,7 @@ export const CaptionControls = memo(function CaptionControls({
     } as CaptionConfig;
     onChange(next);
     setAppliedTemplate(t.id);
-    const ok = await run("save", () =>
-      fetch(`/api/clips/${clipId}/captions`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(toPayload(next)),
-      }),
-    );
+    const ok = await run("save", () => putCaptions(next));
     if (ok && !captionsOn) onCaptionsOnChange(true);
   };
 
@@ -253,171 +268,31 @@ export const CaptionControls = memo(function CaptionControls({
           disabled={!captionsOn || busy !== null}
           className="flex flex-col gap-3 px-3 pt-1 disabled:opacity-50"
         >
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-muted">preset</span>
-              <select
-                value={value.preset}
-                onChange={(e) => set("preset", e.target.value)}
-                className="field py-1"
-              >
-                {PRESETS.map((p) => (
-                  <option key={p} value={p}>
-                    {p.toLowerCase()}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-muted">animation</span>
-              <select
-                value={value.animation}
-                onChange={(e) => set("animation", e.target.value)}
-                className="field py-1"
-              >
-                {ANIMATIONS.map((a) => (
-                  <option key={a} value={a}>
-                    {a.replace(/_/g, " ").toLowerCase()}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-muted">font</span>
-              <select
-                value={value.fontFamily}
-                onChange={(e) => set("fontFamily", e.target.value)}
-                className="field py-1"
-              >
-                {CAPTION_FONTS.map((f) => (
-                  <option key={f} value={f}>
-                    {f}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-muted">weight</span>
-              <select
-                value={value.fontWeight}
-                onChange={(e) => set("fontWeight", Number(e.target.value))}
-                className="field py-1"
-              >
-                {WEIGHTS.map((w) => (
-                  <option key={w} value={w}>
-                    {w}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="col-span-2 flex flex-col gap-1 sm:col-span-1">
-              <span className="text-xs text-muted">size · {value.fontSizePx}px</span>
-              <input
-                type="range"
-                min={24}
-                max={160}
-                step={2}
-                value={value.fontSizePx}
-                onChange={(e) => set("fontSizePx", Number(e.target.value))}
-              />
-            </label>
-          </div>
+          <label className="flex w-40 flex-col gap-1">
+            <span className="text-xs text-muted">animation</span>
+            <select
+              value={value.animation}
+              onChange={(e) => set("animation", e.target.value)}
+              className="field py-1"
+            >
+              {ANIMATIONS.map((a) => (
+                <option key={a} value={a}>
+                  {a.replace(/_/g, " ").toLowerCase()}
+                </option>
+              ))}
+            </select>
+          </label>
 
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <label className="flex items-center gap-1.5">
-              text
-              <input
-                type="color"
-                value={value.textColor}
-                onChange={(e) => set("textColor", e.target.value.toUpperCase())}
-                className="h-7 w-9 rounded border border-border bg-surface"
-              />
-            </label>
-            <label className="flex items-center gap-1.5">
-              highlight
-              <input
-                type="color"
-                value={value.highlightColor}
-                onChange={(e) => set("highlightColor", e.target.value.toUpperCase())}
-                className="h-7 w-9 rounded border border-border bg-surface"
-              />
-            </label>
-            <label className="flex items-center gap-1.5">
-              outline
-              <input
-                type="color"
-                value={value.outlineColor}
-                onChange={(e) => set("outlineColor", e.target.value.toUpperCase())}
-                className="h-7 w-9 rounded border border-border bg-surface"
-              />
-            </label>
-            <label className="flex items-center gap-2">
-              <span className="text-xs text-muted">outline {value.outlineWidthPx}</span>
-              <input
-                type="range"
-                min={0}
-                max={24}
-                step={1}
-                value={value.outlineWidthPx}
-                onChange={(e) => set("outlineWidthPx", Number(e.target.value))}
-              />
-            </label>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <label className="flex items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={value.backgroundColor !== null}
-                onChange={(e) => set("backgroundColor", e.target.checked ? "#000000" : null)}
-              />
-              background box
-            </label>
-            {value.backgroundColor !== null && (
-              <input
-                type="color"
-                value={value.backgroundColor}
-                onChange={(e) => set("backgroundColor", e.target.value.toUpperCase())}
-                className="h-7 w-9 rounded border border-border bg-surface"
-              />
-            )}
-            <label className="flex items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={value.uppercase}
-                onChange={(e) => set("uppercase", e.target.checked)}
-              />
-              uppercase
-            </label>
-            <span className="flex items-center gap-1.5">
-              <span className="text-xs text-muted">align</span>
-              <span className="seg">
-                {(["left", "center", "right"] as const).map((a) => (
-                  <button
-                    key={a}
-                    type="button"
-                    aria-pressed={value.alignment === a}
-                    onClick={() => set("alignment", a)}
-                  >
-                    {a}
-                  </button>
-                ))}
-              </span>
-            </span>
-            <span className="text-xs text-muted">
-              y {(value.positionY * 100).toFixed(0)}%
-            </span>
-          </div>
-
-          <CaptionStyleAdvanced
-            styleJson={value.styleJson}
-            onChange={(styleJson) => set("styleJson", styleJson)}
+          <StyleControls
+            style={stylePartialFromConfig(value)}
+            onStyle={applyStylePatch}
+            wordRules={parseWordRules(value.wordRulesJson)}
+            onWordRules={(r) => set("wordRulesJson", serializeWordRules(r))}
           />
 
-          <CaptionWordRules
-            wordRulesJson={value.wordRulesJson}
-            onChange={(wordRulesJson) => set("wordRulesJson", wordRulesJson)}
-          />
+          <div className="flex flex-wrap items-center gap-4 text-xs">
+            <span className="text-muted">y {(value.positionY * 100).toFixed(0)}%</span>
+          </div>
 
           <details className="rounded border border-border bg-surface-raised px-2 py-1 text-xs">
             <summary className="cursor-pointer text-muted">Advanced line wrapping</summary>
