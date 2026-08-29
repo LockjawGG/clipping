@@ -38,7 +38,7 @@ export function normalizeSourceUrl(raw: string): string {
   }
 
   u.protocol = u.protocol.toLowerCase();
-  u.hostname = u.hostname.toLowerCase();
+  u.hostname = u.hostname.toLowerCase().replace(/^www\./, "");
   u.hash = "";
   if (
     (u.protocol === "http:" && u.port === "80") ||

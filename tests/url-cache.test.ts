@@ -3,10 +3,14 @@ import assert from "node:assert/strict";
 
 import { normalizeSourceUrl, sourceUrlHash } from "../src/lib/ingest/url-cache.ts";
 
-test("normalizeSourceUrl lowercases scheme + host, drops the fragment", () => {
+test("normalizeSourceUrl lowercases scheme + host, drops the fragment and a www. prefix", () => {
   assert.equal(
     normalizeSourceUrl("HTTPS://WWW.YouTube.com/watch?v=abc#t=30"),
-    "https://www.youtube.com/watch?v=abc",
+    "https://youtube.com/watch?v=abc",
+  );
+  assert.equal(
+    normalizeSourceUrl("https://youtube.com/watch?v=abc"),
+    normalizeSourceUrl("https://www.youtube.com/watch?v=abc"),
   );
 });
 
