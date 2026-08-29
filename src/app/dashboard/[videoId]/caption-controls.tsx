@@ -4,9 +4,28 @@ import { memo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import type { CaptionTemplate } from "@/lib/captions/preset-library.ts";
+import { parseStylePartial } from "@/lib/captions/text-style.ts";
 import { TemplateBrowser, splitTemplate } from "./caption-templates";
 import { CaptionStyleAdvanced } from "./caption-style-advanced";
 import { CaptionWordRules } from "./caption-word-rules";
+
+/** The current config as a full TextStyle partial (scalar fields + rich blob). */
+function stylePartialFromConfig(c: CaptionConfig): Record<string, unknown> {
+  return {
+    fontFamily: c.fontFamily,
+    fontWeight: c.fontWeight,
+    fontSizePx: c.fontSizePx,
+    textColor: c.textColor,
+    highlightColor: c.highlightColor,
+    outlineColor: c.outlineColor,
+    outlineWidthPx: c.outlineWidthPx,
+    backgroundColor: c.backgroundColor,
+    alignment: c.alignment,
+    positionY: c.positionY,
+    uppercase: c.uppercase,
+    ...parseStylePartial(c.styleJson),
+  };
+}
 
 const ANIMATIONS = [
   "NONE",
@@ -152,6 +171,27 @@ export const CaptionControls = memo(function CaptionControls({
     );
 
   const [appliedTemplate, setAppliedTemplate] = useState<string | null>(null);
+  const [savedTick, setSavedTick] = useState(0);
+
+  const saveAsTemplate = async () => {
+    const name = window.prompt("Name this style")?.trim();
+    if (!name) return;
+    await run("save", async () => {
+      const res = await fetch("/api/text-presets", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name,
+          kind: "caption",
+          style: JSON.stringify(stylePartialFromConfig(value)),
+          animation: value.animation,
+          wordRules: value.wordRulesJson,
+        }),
+      });
+      if (res.ok) setSavedTick((n) => n + 1);
+      return res;
+    });
+  };
 
   const applyTemplate = async (t: CaptionTemplate) => {
     const { scalar, styleJson, wordRulesJson } = splitTemplate(t);
@@ -200,6 +240,7 @@ export const CaptionControls = memo(function CaptionControls({
       <TemplateBrowser
         disabled={busy !== null}
         activeId={appliedTemplate}
+        savedTick={savedTick}
         onApply={applyTemplate}
       />
 
@@ -406,9 +447,19 @@ export const CaptionControls = memo(function CaptionControls({
             </div>
           </details>
 
-          <button type="button" onClick={saveStyle} className="btn btn-sm self-start">
-            {busy === "save" ? "…" : "Save style"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={saveStyle} className="btn btn-sm">
+              {busy === "save" ? "…" : "Save style"}
+            </button>
+            <button
+              type="button"
+              onClick={saveAsTemplate}
+              className="btn btn-ghost btn-sm"
+              title="Save this look to the “Mine” tab"
+            >
+              Save as template
+            </button>
+          </div>
         </fieldset>
       </details>
 

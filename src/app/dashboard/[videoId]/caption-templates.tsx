@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 
 import {
@@ -10,6 +10,8 @@ import {
   type CaptionTemplateCategory,
 } from "@/lib/captions/preset-library.ts";
 import { resolveTextStyle, textStyleToCss } from "@/lib/captions/text-style.ts";
+
+type BrowserCategory = CaptionTemplateCategory | "mine";
 
 /** Fields that live in the scalar SubtitleConfig columns (vs the styleJson blob). */
 export const SCALAR_STYLE_KEYS = [
@@ -111,17 +113,128 @@ const TemplateCard = memo(function TemplateCard({
   );
 });
 
+interface SavedPreset {
+  id: string;
+  name: string;
+  style: string;
+  animation: string;
+  wordRules: string | null;
+}
+
+/** The "Mine" tab — the user's saved styles, fetched live. */
+const MyTemplates = memo(function MyTemplates({
+  disabled,
+  activeId,
+  savedTick,
+  onApply,
+}: {
+  disabled?: boolean;
+  activeId?: string | null;
+  savedTick: number;
+  onApply: (template: CaptionTemplate) => void;
+}) {
+  const [rows, setRows] = useState<SavedPreset[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setError(null);
+    fetch("/api/text-presets?kind=caption")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("could not load your styles"))))
+      .then((data: SavedPreset[]) => live && setRows(data))
+      .catch((e) => live && setError(e instanceof Error ? e.message : "load failed"));
+    return () => {
+      live = false;
+    };
+  }, [savedTick]);
+
+  const templates = useMemo<CaptionTemplate[]>(() => {
+    if (!rows) return [];
+    return rows.map((r) => {
+      let style: CaptionTemplate["style"] = {};
+      let wordRules: CaptionTemplate["wordRules"];
+      try {
+        style = JSON.parse(r.style);
+      } catch {
+        /* keep {} */
+      }
+      if (r.wordRules) {
+        try {
+          wordRules = JSON.parse(r.wordRules);
+        } catch {
+          /* skip */
+        }
+      }
+      return {
+        id: r.id,
+        category: "clean",
+        name: r.name,
+        style,
+        animation: r.animation,
+        wordRules,
+      } as CaptionTemplate;
+    });
+  }, [rows]);
+
+  async function remove(id: string) {
+    setRows((cur) => cur?.filter((r) => r.id !== id) ?? cur);
+    await fetch(`/api/text-presets/${id}`, { method: "DELETE" }).catch(() => {});
+  }
+
+  if (error) return <p className="text-xs text-danger">{error}</p>;
+  if (!rows) return <p className="text-xs text-muted">Loading…</p>;
+  if (rows.length === 0)
+    return (
+      <p className="text-xs text-muted">
+        No saved styles yet — tune a caption and hit “Save as template”.
+      </p>
+    );
+
+  return (
+    <div
+      className={`flex gap-2 overflow-x-auto pb-1 ${disabled ? "pointer-events-none opacity-50" : ""}`}
+    >
+      {templates.map((t) => (
+        <div key={t.id} className="relative shrink-0">
+          <TemplateCard template={t} active={activeId === t.id} onApply={() => onApply(t)} />
+          <button
+            type="button"
+            aria-label={`Delete ${t.name}`}
+            onClick={() => remove(t.id)}
+            className="absolute right-1 top-1 rounded bg-black/60 px-1 text-[10px] text-white/90 hover:bg-danger"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+});
+
 interface Props {
   disabled?: boolean;
   /** id of the currently-applied template, if known. */
   activeId?: string | null;
+  /** Bumped by the parent after a "Save as template" so "Mine" refetches. */
+  savedTick?: number;
   onApply: (template: CaptionTemplate) => void;
 }
 
-export const TemplateBrowser = memo(function TemplateBrowser({ disabled, activeId, onApply }: Props) {
-  const [category, setCategory] = useState<CaptionTemplateCategory>("clean");
-  const list = useMemo(() => CAPTION_TEMPLATES.filter((t) => t.category === category), [category]);
-  const blurb = CAPTION_TEMPLATE_CATEGORIES.find((c) => c.id === category)?.blurb;
+export const TemplateBrowser = memo(function TemplateBrowser({
+  disabled,
+  activeId,
+  savedTick = 0,
+  onApply,
+}: Props) {
+  const [category, setCategory] = useState<BrowserCategory>("clean");
+  const list = useMemo(
+    () => (category === "mine" ? [] : CAPTION_TEMPLATES.filter((t) => t.category === category)),
+    [category],
+  );
+  const blurb =
+    category === "mine"
+      ? "Your saved styles"
+      : CAPTION_TEMPLATE_CATEGORIES.find((c) => c.id === category)?.blurb;
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3" aria-disabled={disabled}>
@@ -142,20 +255,37 @@ export const TemplateBrowser = memo(function TemplateBrowser({ disabled, activeI
             {c.label}
           </button>
         ))}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={category === "mine"}
+          onClick={() => setCategory("mine")}
+        >
+          Mine
+        </button>
       </div>
 
-      <div
-        className={`flex gap-2 overflow-x-auto pb-1 ${disabled ? "pointer-events-none opacity-50" : ""}`}
-      >
-        {list.map((t) => (
-          <TemplateCard
-            key={t.id}
-            template={t}
-            active={activeId === t.id}
-            onApply={() => onApply(t)}
-          />
-        ))}
-      </div>
+      {category === "mine" ? (
+        <MyTemplates
+          disabled={disabled}
+          activeId={activeId}
+          savedTick={savedTick}
+          onApply={onApply}
+        />
+      ) : (
+        <div
+          className={`flex gap-2 overflow-x-auto pb-1 ${disabled ? "pointer-events-none opacity-50" : ""}`}
+        >
+          {list.map((t) => (
+            <TemplateCard
+              key={t.id}
+              template={t}
+              active={activeId === t.id}
+              onApply={() => onApply(t)}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 });

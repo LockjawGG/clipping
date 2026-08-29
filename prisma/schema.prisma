@@ -31,10 +31,30 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  projects Project[]
-  assets   Asset[]
+  projects    Project[]
+  assets      Asset[]
+  textPresets TextPreset[]
 
   @@map("users")
+}
+
+/// A user's saved Text & Captions style — appears in the "Mine" tab of the
+/// template browser. `style` is a JSON partial TextStyle, `wordRules` a JSON
+/// WordRule[]. `kind` is "caption" or "text".
+model TextPreset {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  kind      String   @default("caption")
+  style     String
+  animation String   @default("NONE")
+  wordRules String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind])
+  @@map("text_presets")
 }
 
 model Project {

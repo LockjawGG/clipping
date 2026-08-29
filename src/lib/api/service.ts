@@ -12,6 +12,7 @@ import type { TranscriptServiceDeps } from "./transcript.ts";
 import type { AssetServiceDeps } from "./assets.ts";
 import type { OverlayServiceDeps } from "./overlays.ts";
 import type { CaptionStyleServiceDeps } from "./caption-styles.ts";
+import type { TextPresetServiceDeps } from "./text-presets.ts";
 import type { SequenceServiceDeps } from "./sequence.ts";
 import type { LiveServiceDeps } from "./live.ts";
 
@@ -52,6 +53,11 @@ export function clipService(userId: string): ClipServiceDeps {
 /** Project-service deps scoped to the signed-in user. */
 export function projectService(userId: string): ProjectServiceDeps {
   return { db: db as unknown as ProjectServiceDeps["db"], userId };
+}
+
+/** Saved Text & Captions style presets scoped to the signed-in user. */
+export function textPresetService(userId: string): TextPresetServiceDeps {
+  return { db: db as unknown as TextPresetServiceDeps["db"], userId };
 }
 
 /** Transcript-editing deps scoped to the signed-in user. */
