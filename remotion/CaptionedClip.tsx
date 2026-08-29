@@ -8,29 +8,60 @@ import {
   useVideoConfig,
 } from "remotion";
 
-import type { CaptionPreset, CaptionStyleProps, CaptionedClipProps, RemotionCue, RemotionWord } from "./schema";
+import type { CaptionStyleProps, CaptionedClipProps, RemotionCue, RemotionWord } from "./schema";
+import {
+  resolveTextAnimation,
+  tracksFor,
+  type AnimProp,
+  type AnimScope,
+  type AnimPhase,
+  type AnimTrack,
+  type SpringConfig,
+} from "../src/lib/captions/anim-spec";
+
+/**
+ * The Remotion interpreter for the declarative animation spec (`anim-spec.ts`).
+ *
+ * Every caption animation's constants — spring configs, from/to values, timing
+ * windows — come from the shared spec, not inline literals. The editor preview
+ * reads the same documents, so what you scrub is what burns. The spring math
+ * itself stays Remotion-native (`spring()`), so the exported curve is exact.
+ */
 
 function activeCue(cues: RemotionCue[], tMs: number): RemotionCue | undefined {
   return cues.find((c) => tMs >= c.startMs && tMs < c.endMs);
 }
 
+/** First track matching a prop within a scope+phase of the resolved animation. */
+function pick(
+  animId: string,
+  scope: AnimScope,
+  phase: AnimPhase,
+  prop: AnimProp,
+): AnimTrack | undefined {
+  return tracksFor(resolveTextAnimation(animId), scope, phase).find((t) => t.prop === prop);
+}
+
+const SPRING_FALLBACK: SpringConfig = { damping: 12, stiffness: 200 };
+
 const Word: React.FC<{
   word: RemotionWord;
   tMs: number;
-  preset: CaptionPreset;
+  animId: string;
   style: CaptionStyleProps;
   fps: number;
   frame: number;
-}> = ({ word, tMs, preset, style, fps, frame }) => {
+}> = ({ word, tMs, animId, style, fps, frame }) => {
+  const anim = resolveTextAnimation(animId);
   const spoken = tMs >= word.startMs;
   const active = tMs >= word.startMs && tMs < word.endMs;
   const cased = (t: string) => (style.uppercase ? t.toUpperCase() : t);
 
-  if (preset === "word-by-word" && !spoken) {
+  if (anim.reveal === "word" && !spoken) {
     return <span style={{ opacity: 0 }}>{cased(word.text)} </span>;
   }
 
-  if (preset === "typewriter") {
+  if (anim.reveal === "char") {
     const dur = Math.max(1, word.endMs - word.startMs);
     const progress = spoken ? Math.min(1, (tMs - word.startMs) / dur) : 0;
     const shown = spoken && !active ? word.text : word.text.slice(0, Math.ceil(progress * word.text.length));
@@ -45,24 +76,32 @@ const Word: React.FC<{
 
   let transform = "none";
   let opacity = 1;
-  if (active && preset === "pop") {
-    const sp = spring({ frame: Math.max(0, sinceStart), fps, config: { damping: 12, stiffness: 200 } });
-    transform = `scale(${interpolate(sp, [0, 1], [1.35, 1])})`;
-  } else if (active && preset === "scale") {
-    transform = "scale(1.12)";
-  } else if (active && preset === "bounce") {
-    const sp = spring({ frame: Math.max(0, sinceStart), fps, config: { damping: 6, stiffness: 180 } });
-    transform = `translateY(${interpolate(sp, [0, 1], [-18, 0])}px)`;
-  } else if (preset === "fade") {
+
+  const popScale = active ? pick(animId, "word", "intro", "scale") : undefined;
+  const holdScale = active ? pick(animId, "word", "active", "scale") : undefined;
+  const bounceY = active ? pick(animId, "word", "intro", "translateY") : undefined;
+  const fadeOpacity = pick(animId, "word", "intro", "opacity");
+
+  if (popScale && popScale.ease === "spring") {
+    const sp = spring({ frame: Math.max(0, sinceStart), fps, config: popScale.spring ?? SPRING_FALLBACK });
+    transform = `scale(${interpolate(sp, [0, 1], [popScale.from, popScale.to])})`;
+  } else if (holdScale) {
+    transform = `scale(${holdScale.to})`;
+  } else if (bounceY && bounceY.ease === "spring") {
+    const sp = spring({ frame: Math.max(0, sinceStart), fps, config: bounceY.spring ?? SPRING_FALLBACK });
+    transform = `translateY(${interpolate(sp, [0, 1], [bounceY.from, bounceY.to])}px)`;
+  } else if (fadeOpacity) {
+    const winStart = word.startMs + (fadeOpacity.startMs ?? 0);
+    const winEnd = winStart + (fadeOpacity.durMs ?? 200);
     opacity = spoken
-      ? 1
-      : interpolate(tMs, [word.startMs - 120, word.startMs], [0, 1], {
+      ? fadeOpacity.to
+      : interpolate(tMs, [winStart, winEnd], [fadeOpacity.from, fadeOpacity.to], {
           extrapolateLeft: "clamp",
           extrapolateRight: "clamp",
         });
   }
 
-  const highlighted = active || (preset === "karaoke" && spoken);
+  const highlighted = active || (anim.highlight === "progressive" && spoken);
 
   return (
     <span
@@ -84,18 +123,22 @@ export const CaptionedClip: React.FC<CaptionedClipProps> = ({ videoSrc, cues, pr
   const { fps, height, width } = useVideoConfig();
   const tMs = (frame / fps) * 1000;
   const cue = activeCue(cues, tMs);
+  const animId = preset;
 
   const alignItems =
     style.alignment === "left" ? "flex-start" : style.alignment === "right" ? "flex-end" : "center";
 
-  // slide-up: the whole cue rises + fades in over ~180ms.
+  // Whole-cue intro (slide-up and any future cue-scoped animation).
   let cueTransform = "none";
   let cueOpacity = 1;
-  if (cue && preset === "slide-up") {
+  const cueY = pick(animId, "cue", "intro", "translateY");
+  const cueFade = pick(animId, "cue", "intro", "opacity");
+  if (cue && (cueY || cueFade)) {
     const sinceCue = frame - (cue.startMs / 1000) * fps;
-    const sp = spring({ frame: Math.max(0, sinceCue), fps, config: { damping: 20, stiffness: 160 } });
-    cueTransform = `translateY(${interpolate(sp, [0, 1], [28, 0])}px)`;
-    cueOpacity = sp;
+    const cfg = cueY?.spring ?? cueFade?.spring ?? SPRING_FALLBACK;
+    const sp = spring({ frame: Math.max(0, sinceCue), fps, config: cfg });
+    if (cueY) cueTransform = `translateY(${interpolate(sp, [0, 1], [cueY.from, cueY.to])}px)`;
+    if (cueFade) cueOpacity = interpolate(sp, [0, 1], [cueFade.from, cueFade.to]);
   }
 
   return (
@@ -135,7 +178,15 @@ export const CaptionedClip: React.FC<CaptionedClipProps> = ({ videoSrc, cues, pr
             }}
           >
             {cue.words.map((w, i) => (
-              <Word key={i} word={w} tMs={tMs} preset={preset} style={style} fps={fps} frame={frame} />
+              <Word
+                key={i}
+                word={w}
+                tMs={tMs}
+                animId={animId}
+                style={style}
+                fps={fps}
+                frame={frame}
+              />
             ))}
           </div>
         </AbsoluteFill>
