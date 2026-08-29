@@ -70,7 +70,8 @@ export function prismaVideoRepo(client: PrismaClient): VideoRepo {
 
 export function prismaTranscriptRepo(client: PrismaClient): TranscriptRepo {
   return {
-    async save(videoId, result) {
+    async save(videoId, result, opts) {
+      const translatedTo = opts?.translatedTo ?? "";
       // A full-length transcript is hundreds of segments and thousands of
       // words. One `create` per segment blows past the default interactive-
       // transaction timeout against a hosted DB ("Transaction already closed"),
@@ -78,10 +79,11 @@ export function prismaTranscriptRepo(client: PrismaClient): TranscriptRepo {
       const CHUNK = 1000;
       return client.$transaction(
         async (tx) => {
-          await tx.transcript.deleteMany({ where: { videoId } });
+          await tx.transcript.deleteMany({ where: { videoId, translatedTo } });
           const transcript = await tx.transcript.create({
             data: {
               videoId,
+              translatedTo,
               provider: result.provider,
               model: result.model ?? null,
               language: result.language,
@@ -128,9 +130,9 @@ export function prismaTranscriptRepo(client: PrismaClient): TranscriptRepo {
         { timeout: 120_000, maxWait: 10_000 },
       );
     },
-    async loadSegments(videoId) {
+    async loadSegments(videoId, translatedTo = "") {
       const rows = await client.transcriptSegment.findMany({
-        where: { transcript: { videoId } },
+        where: { transcript: { videoId, translatedTo } },
         orderBy: { index: "asc" },
         include: { words: { orderBy: { index: "asc" } } },
       });
@@ -154,7 +156,10 @@ export function prismaTranscriptRepo(client: PrismaClient): TranscriptRepo {
       return client.$transaction(
         async (tx) => {
           const transcript =
-            (await tx.transcript.findUnique({ where: { videoId }, select: { id: true } })) ??
+            (await tx.transcript.findFirst({
+              where: { videoId, translatedTo: "" },
+              select: { id: true },
+            })) ??
             (await tx.transcript.create({
               data: { videoId, provider, language },
               select: { id: true },

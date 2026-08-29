@@ -65,9 +65,15 @@ export interface VideoDb {
   };
   clip: { count(args: { where: { videoId: string } }): Promise<number> };
   transcript: {
-    findUnique(args: {
-      where: { videoId: string };
+    findFirst(args: {
+      where: { videoId: string; translatedTo?: string };
+      orderBy?: unknown;
     }): Promise<{ language: string } | null>;
+    findMany(args: {
+      where: { videoId: string };
+      select?: unknown;
+      orderBy?: unknown;
+    }): Promise<Array<{ translatedTo: string; language: string }>>;
   };
   job: {
     findMany(args: {
@@ -211,6 +217,42 @@ export async function updateVideo(deps: VideoServiceDeps, videoId: string, input
   return { id: videoId, ...(name !== undefined ? { name } : {}), ...(projectId ? { projectId } : {}) };
 }
 
+
+/**
+ * Translation targets. Whisper's speech-translation only ever produces English,
+ * so that's the sole option until a separate local MT model is wired in.
+ */
+export const TRANSLATE_TARGETS = ["en"] as const;
+
+const translateSchema = z.object({
+  target: z.enum(TRANSLATE_TARGETS),
+});
+
+/**
+ * Produce a translation of a video's transcript, stored alongside the original
+ * (never replacing it). Re-extracts audio from the stored source and runs
+ * Whisper in translate mode. The video stays READY and its clips untouched
+ * while this builds. Idempotent-ish: a second call just regenerates it.
+ */
+export async function translateVideo(deps: VideoServiceDeps, videoId: string, input: unknown) {
+  const { target } = translateSchema.parse(input);
+  const video = await ownedVideo(deps, videoId);
+
+  if (["PROBING", "TRANSCRIBING", "UPLOADING", "LIVE"].includes(video.status)) {
+    throw new ApiError(409, "this video is still processing — try again once it's ready");
+  }
+  if (!(await deps.storage.exists(video.storageKey))) {
+    throw new ApiError(409, "the source file for this video is missing");
+  }
+
+  const jobId = await deps.enqueue({
+    videoId,
+    kind: "EXTRACT_AUDIO",
+    payload: { task: "translate", translatedTo: target },
+  });
+  return { videoId, target, jobId };
+}
+
 export async function confirmUpload(deps: VideoServiceDeps, videoId: string) {
   const video = await ownedVideo(deps, videoId);
 
@@ -302,10 +344,14 @@ export async function deleteVideo(deps: VideoServiceDeps, videoId: string) {
 export async function getVideoStatus(deps: VideoServiceDeps, videoId: string) {
   const video = await ownedVideo(deps, videoId);
 
-  const [clipCount, transcript] = await Promise.all([
+  const [clipCount, transcripts] = await Promise.all([
     deps.db.clip.count({ where: { videoId } }),
-    deps.db.transcript.findUnique({ where: { videoId } }),
+    deps.db.transcript.findMany({
+      where: { videoId },
+      select: { translatedTo: true, language: true },
+    }),
   ]);
+  const primary = transcripts.find((t) => t.translatedTo === "");
 
   return {
     id: video.id,
@@ -315,7 +361,8 @@ export async function getVideoStatus(deps: VideoServiceDeps, videoId: string) {
     width: video.width,
     height: video.height,
     clipCount,
-    transcriptLanguage: transcript?.language ?? null,
+    transcriptLanguage: primary?.language ?? null,
+    translations: transcripts.filter((t) => t.translatedTo !== "").map((t) => t.translatedTo),
     errorMessage: video.errorMessage,
   };
 }

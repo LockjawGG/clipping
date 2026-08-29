@@ -76,7 +76,17 @@ export const probeHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal
 };
 
 /** EXTRACT_AUDIO: 16kHz mono WAV for the transcriber, uploaded to storage. */
+interface ExtractAudioPayload {
+  /** Forced transcription language for the TRANSCRIBE this chains into. */
+  language?: string;
+  /** "translate" runs Whisper's speech-translation (English target only). */
+  task?: "transcribe" | "translate";
+  /** Which stored transcript the result replaces: "" source, or a lang code. */
+  translatedTo?: string;
+}
+
 export const extractAudioHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal, setProgress }) => {
+  const { language, task, translatedTo } = (job.payload ?? {}) as ExtractAudioPayload;
   const video = await deps.videos.get(job.videoId);
   if (!video) throw new Error(`video ${job.videoId} not found`);
 
@@ -90,24 +100,40 @@ export const extractAudioHandler: JobHandler<PipelineDeps> = async ({ job, deps,
   const audioKey = audioKeyFor(job.videoId);
   await deps.storage.putFile(audioKey, wav, AUDIO_MIME);
 
-  await deps.queue.enqueue({ videoId: job.videoId, kind: "TRANSCRIBE", payload: { audioKey } });
-  return { audioKey };
+  await deps.queue.enqueue({
+    videoId: job.videoId,
+    kind: "TRANSCRIBE",
+    payload: {
+      audioKey,
+      ...(language ? { language } : {}),
+      ...(task ? { task } : {}),
+      ...(translatedTo ? { translatedTo } : {}),
+    },
+  });
+  return { audioKey, ...(task ? { task } : {}) };
 };
 
 interface TranscribePayload {
   audioKey?: string;
   language?: string;
   diarize?: boolean;
+  task?: "transcribe" | "translate";
+  /** Non-empty means this run produces a translation, stored alongside the
+   *  source transcript rather than replacing it, and skips status/ANALYZE. */
+  translatedTo?: string;
 }
 
 /** TRANSCRIBE: run the transcription provider, persist segments + words. */
 export const transcribeHandler: JobHandler<PipelineDeps> = async ({ job, deps, signal, setProgress }) => {
   const payload = (job.payload ?? {}) as TranscribePayload;
   const audioKey = payload.audioKey ?? audioKeyFor(job.videoId);
+  const isTranslation = !!payload.translatedTo;
   const wav = scratchPath(jobWorkDir(deps.tempDir, job.id), "audio.wav");
   await deps.storage.getToFile(audioKey, wav);
 
-  await deps.videos.setStatus(job.videoId, "TRANSCRIBING");
+  // A translation is a side artefact — leave the video READY and its clips
+  // alone while it builds.
+  if (!isTranslation) await deps.videos.setStatus(job.videoId, "TRANSCRIBING");
   await setProgress(0.2);
 
   const video = await deps.videos.get(job.videoId);
@@ -116,6 +142,7 @@ export const transcribeHandler: JobHandler<PipelineDeps> = async ({ job, deps, s
   let lastBeat = 0;
   const result = await deps.transcription.transcribe(wav, {
     language: payload.language,
+    task: payload.task,
     diarize: payload.diarize,
     wordTimestamps: true,
     signal,
@@ -138,9 +165,14 @@ export const transcribeHandler: JobHandler<PipelineDeps> = async ({ job, deps, s
       }
     },
   });
-  const { segmentCount } = await deps.transcripts.save(job.videoId, result);
+  const { segmentCount } = await deps.transcripts.save(job.videoId, result, {
+    translatedTo: payload.translatedTo ?? "",
+  });
   await setProgress(0.9);
 
+  if (isTranslation) {
+    return { segmentCount, translatedTo: payload.translatedTo, language: result.language };
+  }
   await deps.videos.setStatus(job.videoId, "READY");
   await deps.queue.enqueue({ videoId: job.videoId, kind: "ANALYZE" });
   return { segmentCount, language: result.language };

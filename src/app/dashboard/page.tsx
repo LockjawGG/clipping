@@ -37,11 +37,11 @@ function EmptyState({ hasVideos }: { hasVideos: boolean }) {
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ project?: string; video?: string }>;
+  searchParams: Promise<{ project?: string; video?: string; transcript?: string }>;
 }) {
   const userId = await currentUserId();
   if (!userId) redirect("/login");
-  const { project: wantProject, video: wantVideo } = await searchParams;
+  const { project: wantProject, video: wantVideo, transcript: wantTranscript } = await searchParams;
 
   await getOrCreateProject(db, userId);
   const projects = await listProjects(projectService(userId));
@@ -130,10 +130,18 @@ export default async function DashboardPage({
       },
     });
     if (video && video.project.userId === userId) {
+      // Which transcript to show: "" is the source, a language code is a translation.
+      const availableTranscripts = await db.transcript.findMany({
+        where: { videoId: video.id },
+        select: { translatedTo: true, language: true },
+      });
+      const selectedTranscript = availableTranscripts.some((t) => t.translatedTo === wantTranscript)
+        ? (wantTranscript as string)
+        : "";
       const [clips, segments, sourceUrl] = await Promise.all([
         listVideoClips(clipService(userId), video.id),
         db.transcriptSegment.findMany({
-          where: { transcript: { videoId: video.id } },
+          where: { transcript: { videoId: video.id, translatedTo: selectedTranscript } },
           orderBy: { index: "asc" },
           select: {
             startMs: true,
@@ -196,7 +204,14 @@ export default async function DashboardPage({
             name: video.originalFilename,
             status: video.status,
             durationMs: video.durationMs,
+            transcriptLanguage:
+              availableTranscripts.find((t) => t.translatedTo === "")?.language ?? null,
           }}
+          transcriptViews={availableTranscripts.map((t) => ({
+            translatedTo: t.translatedTo,
+            language: t.language,
+          }))}
+          selectedTranscript={selectedTranscript}
           sourceUrl={sourceUrl}
           clips={clips}
           wordsByClip={wordsByClip}

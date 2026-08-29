@@ -39,9 +39,17 @@ export interface VideoRepo {
 }
 
 export interface TranscriptRepo {
-  /** Replace any existing transcript for the video. Returns the segment count. */
-  save(videoId: string, result: TranscriptResult): Promise<{ segmentCount: number }>;
-  loadSegments(videoId: string): Promise<Segment[]>;
+  /**
+   * Replace the transcript for a video. `translatedTo` picks which one: ""
+   * (default) is the source transcription, a language code is a translation.
+   */
+  save(
+    videoId: string,
+    result: TranscriptResult,
+    opts?: { translatedTo?: string },
+  ): Promise<{ segmentCount: number }>;
+  /** Segments of one transcript. `translatedTo` "" (default) = the source. */
+  loadSegments(videoId: string, translatedTo?: string): Promise<Segment[]>;
   /**
    * Append segments to the video's transcript (creating it if absent) — used by
    * rolling live transcription. Segment/word start/end are already offset to the

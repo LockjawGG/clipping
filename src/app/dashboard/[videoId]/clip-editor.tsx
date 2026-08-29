@@ -7,6 +7,7 @@ import { RailThumb } from "../rail-thumb";
 import { CaptionControls, CAPTION_DEFAULTS, type CaptionConfig } from "./caption-controls";
 import { ClipPlayer, type PreviewWord } from "./clip-player";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
+import type { TranscriptView } from "../editor-pane";
 import { OverlayPanel, type OverlayView } from "./overlay-panel";
 import type { WordStyle, WordStylePatch } from "./editable-transcript";
 import { SequenceEditor } from "./sequence-editor";
@@ -18,6 +19,19 @@ const ASPECTS = [
   ["LANDSCAPE_16_9", "16:9"],
   ["PORTRAIT_4_5", "4:5"],
 ] as const;
+
+/** Languages offered for a manual re-transcribe. "" = auto-detect. Order and
+ *  labels are display-only; the codes match TRANSCRIBE_LANGUAGES on the server. */
+const LANGUAGE_NAMES: Record<string, string> = {
+  en: "English", es: "Spanish", fr: "French", de: "German", it: "Italian",
+  pt: "Portuguese", nl: "Dutch", ru: "Russian", pl: "Polish", uk: "Ukrainian",
+  tr: "Turkish", ar: "Arabic", he: "Hebrew", hi: "Hindi", ja: "Japanese",
+  ko: "Korean", zh: "Chinese", vi: "Vietnamese", th: "Thai", id: "Indonesian",
+  sv: "Swedish", no: "Norwegian", da: "Danish", fi: "Finnish", el: "Greek",
+  cs: "Czech", ro: "Romanian", hu: "Hungarian",
+};
+const langName = (code: string | null) =>
+  code ? (LANGUAGE_NAMES[code] ?? code.toUpperCase()) : "unknown";
 
 export interface ClipData {
   id: string;
@@ -83,6 +97,9 @@ const fileSlug = (title: string) =>
 
 export function ClipEditor({
   clip,
+  videoId,
+  transcriptViews,
+  selectedTranscript,
   sourceUrl,
   words,
   transcript,
@@ -92,6 +109,9 @@ export function ClipEditor({
   defaultTimelineOpen = false,
 }: {
   clip: ClipData;
+  videoId: string;
+  transcriptViews: TranscriptView[];
+  selectedTranscript: string;
   sourceUrl: string;
   words: PreviewWord[];
   transcript: TranscriptRow[];
@@ -101,6 +121,65 @@ export function ClipEditor({
   defaultTimelineOpen?: boolean;
 }) {
   const router = useRouter();
+
+  const sourceLang = transcriptViews.find((t) => t.translatedTo === "")?.language ?? null;
+  const hasEnglishTranslation = transcriptViews.some((t) => t.translatedTo === "en");
+
+  const [langBusy, setLangBusy] = useState(false);
+  const [langError, setLangError] = useState<string | null>(null);
+
+  const showTranscript = useCallback(
+    (translatedTo: string) => {
+      const params = new URLSearchParams(window.location.search);
+      if (translatedTo) params.set("transcript", translatedTo);
+      else params.delete("transcript");
+      router.push(`/dashboard?${params.toString()}`);
+    },
+    [router],
+  );
+
+  const pickView = useCallback(
+    async (value: string) => {
+      setLangError(null);
+      if (value === "" || value === "en") {
+        if (value === "" || hasEnglishTranslation) {
+          showTranscript(value);
+          return;
+        }
+      }
+      // value === "en" and it doesn't exist yet: generate it, then switch.
+      setLangBusy(true);
+      try {
+        const res = await fetch(`/api/videos/${videoId}/translate`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ target: "en" }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? `HTTP ${res.status}`);
+        }
+        const started = Date.now();
+        const tick = async () => {
+          const r = await fetch(`/api/videos/${videoId}`).then((x) => x.json());
+          if ((r.translations ?? []).includes("en")) {
+            setLangBusy(false);
+            showTranscript("en");
+          } else if (r.status === "FAILED" || Date.now() - started > 600_000) {
+            setLangBusy(false);
+            setLangError("Translation didn't finish — try again.");
+          } else {
+            setTimeout(tick, 3000);
+          }
+        };
+        setTimeout(tick, 3000);
+      } catch (e) {
+        setLangBusy(false);
+        setLangError(e instanceof Error ? e.message : "couldn't start the translation");
+      }
+    },
+    [videoId, hasEnglishTranslation, showTranscript],
+  );
 
   // Debounced "soft reset": re-run the server components so an edit or delete the
   // user just made is reflected everywhere (the preview, other clips, render
@@ -887,10 +966,28 @@ export function ClipEditor({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <p className="text-xs font-medium text-muted">
-          Transcript for this clip — click a word to jump the preview there, double-click to fix a
-          typo, or select words to colour / bold them as captions
-        </p>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <p className="min-w-0 flex-1 text-xs font-medium text-muted">
+            Transcript for this clip — click a word to jump the preview there, double-click to fix a
+            typo, or select words to colour / bold them as captions
+          </p>
+          <label className="flex items-center gap-1.5 text-xs text-muted">
+            <span>Show in</span>
+            <select
+              className="field h-7 py-0 text-xs"
+              disabled={langBusy}
+              value={selectedTranscript}
+              onChange={(e) => void pickView(e.target.value)}
+            >
+              <option value="">Original ({langName(sourceLang)})</option>
+              <option value="en">
+                English translation{hasEnglishTranslation ? "" : " — generate"}
+              </option>
+            </select>
+          </label>
+          {langBusy && <span className="text-xs text-accent">Translating…</span>}
+        </div>
+        {langError && <p className="text-xs text-danger">{langError}</p>}
         <EditableTranscript
           rows={transcript}
           styles={wordStyles}

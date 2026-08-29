@@ -141,6 +141,7 @@ export class WhisperLocalProvider implements TranscriptionProvider {
       String(this.opts.beamSize ?? 5),
     ];
     if (options.language) args.push("--language", options.language);
+    if (options.task === "translate") args.push("--task", "translate");
     // Prime the decoder with domain terms it routinely mangles.
     if (options.vocabulary?.length) {
       args.push("--initial_prompt", options.vocabulary.join(", "));

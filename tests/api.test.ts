@@ -12,6 +12,7 @@ import {
   createVideoFromUrl,
   createVideoUpload,
   getVideoStatus,
+  translateVideo,
 } from "../src/lib/api/videos.ts";
 import { ApiError } from "../src/lib/api/http.ts";
 import { authorizeLocalRequest } from "../src/lib/api/local-storage.ts";
@@ -83,7 +84,10 @@ function fakeDb() {
       },
     },
     clip: { count: async () => 3 },
-    transcript: { findUnique: async () => ({ language: "en" }) },
+    transcript: {
+      findFirst: async () => ({ language: "en" }),
+      findMany: async () => [{ translatedTo: "", language: "en" }],
+    },
     job: {
       findMany: async () => [],
       updateMany: async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
@@ -412,5 +416,36 @@ test("authorizeLocalRequest rejects missing, wrong-action, and tampered tokens",
   assert.throws(
     () => authorizeLocalRequest(routeDeps, ["videos", "v1", "x.mp4"], "get", putToken),
     (e: unknown) => e instanceof ApiError && e.status === 403,
+  );
+});
+
+
+// --- translateVideo -------------------------------------
+
+test("translateVideo enqueues a translate pass without touching the video", async () => {
+  const { deps, enqueued, videos } = makeDeps();
+  const { videoId } = await createVideoFromUrl(deps, { url: "https://example.com/v.mp4" });
+  videos.get(videoId)!.status = "READY";
+
+  const out = await translateVideo(deps, videoId, { target: "en" });
+  assert.equal(out.target, "en");
+  assert.equal(videos.get(videoId)!.status, "READY", "the original stays READY");
+  assert.deepEqual(enqueued.at(-1), {
+    videoId,
+    kind: "EXTRACT_AUDIO",
+    payload: { task: "translate", translatedTo: "en" },
+  });
+});
+
+test("translateVideo rejects a bad target and a still-processing video", async () => {
+  const { deps, videos } = makeDeps();
+  const { videoId } = await createVideoFromUrl(deps, { url: "https://example.com/v.mp4" });
+  videos.get(videoId)!.status = "READY";
+  await assert.rejects(() => translateVideo(deps, videoId, { target: "de" }));
+
+  videos.get(videoId)!.status = "TRANSCRIBING";
+  await assert.rejects(
+    () => translateVideo(deps, videoId, { target: "en" }),
+    (e) => e instanceof ApiError && e.status === 409,
   );
 });

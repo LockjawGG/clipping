@@ -164,7 +164,7 @@ model Video {
   updatedAt    DateTime @updatedAt
 
   project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  transcript    Transcript?
+  transcripts   Transcript[]
   clips         Clip[]
   jobs          Job[]
   sequenceItems SequenceItem[]
@@ -178,10 +178,14 @@ model Video {
 
 model Transcript {
   id        String   @id @default(cuid())
-  videoId   String   @unique
+  videoId   String
   provider  String
   model     String?
   language  String
+  /// "" is the transcription of what was actually said. A language code (only
+  /// "en" today) is a translation of it — kept alongside the original, not a
+  /// replacement, so switching the view never loses the source text.
+  translatedTo String @default("")
   // Mean segment confidence, used as a render-time quality gate.
   confidence Float?
   createdAt DateTime @default(now())
@@ -189,6 +193,7 @@ model Transcript {
   video    Video               @relation(fields: [videoId], references: [id], onDelete: Cascade)
   segments TranscriptSegment[]
 
+  @@unique([videoId, translatedTo])
   @@map("transcripts")
 }
 

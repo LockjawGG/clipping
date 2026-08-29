@@ -9,6 +9,8 @@ export interface EditorVideo {
   name: string;
   status: string;
   durationMs: number | null;
+  /** Language of the current transcript (ISO code), or null before one exists. */
+  transcriptLanguage: string | null;
 }
 
 function timecode(ms: number): string {
@@ -21,6 +23,12 @@ const STATUS_TONE: Record<string, string> = {
   FAILED: "border-danger/40 text-danger",
 };
 
+export interface TranscriptView {
+  /** "" for the source transcription, or the language code of a translation. */
+  translatedTo: string;
+  language: string;
+}
+
 export function EditorPane({
   video,
   sourceUrl,
@@ -30,6 +38,8 @@ export function EditorPane({
   overlaysByClip,
   wordStylesByClip,
   projects,
+  transcriptViews,
+  selectedTranscript,
 }: {
   video: EditorVideo;
   sourceUrl: string;
@@ -39,6 +49,8 @@ export function EditorPane({
   overlaysByClip: Record<string, OverlayView[]>;
   wordStylesByClip: Record<string, Record<string, WordStyle>>;
   projects: Array<{ id: string; name: string }>;
+  transcriptViews: TranscriptView[];
+  selectedTranscript: string;
 }) {
   return (
     <div className="flex flex-col gap-8">
@@ -69,6 +81,9 @@ export function EditorPane({
               <div key={c.id} id={`clip-${c.id}`} className="scroll-mt-6">
                 <ClipEditor
                   clip={c}
+                  videoId={video.id}
+                  transcriptViews={transcriptViews}
+                  selectedTranscript={selectedTranscript}
                   sourceUrl={sourceUrl}
                   words={wordsByClip[c.id] ?? []}
                   transcript={transcriptByClip[c.id] ?? []}

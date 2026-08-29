@@ -37,6 +37,12 @@ export interface TranscriptResult {
 
 export interface TranscribeOptions {
   language?: string;
+  /**
+   * "transcribe" (default) writes what was said. "translate" is Whisper's
+   * speech-translation mode — it only ever targets English, regardless of the
+   * source language.
+   */
+  task?: "transcribe" | "translate";
   wordTimestamps?: boolean;
   diarize?: boolean;
   /** Proper nouns the model routinely mangles. */
