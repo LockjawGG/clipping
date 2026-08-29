@@ -12,6 +12,7 @@ import { assetService, overlayService, captionStyleService } from "@/lib/api/ser
 import { getStorage } from "@/lib/storage/index.ts";
 
 import { WorkspaceShell } from "./workspace-shell";
+import { CaptionInsertProvider } from "./caption-insert";
 import { LeftRail } from "./left-rail";
 import { ContentRail } from "./content-rail";
 import { EditorPane } from "./editor-pane";
@@ -227,25 +228,27 @@ export default async function DashboardPage({
   }
 
   return (
-    <WorkspaceShell
-      left={
-        <LeftRail
-          projects={projects}
-          activeProjectId={activeProjectId}
-          favorites={favorites}
-          assets={assets}
-        />
-      }
-      right={
-        <ContentRail
-          videos={videos}
-          projects={projects}
-          activeProjectId={activeProjectId}
-          activeVideoId={activeVideoId}
-        />
-      }
-    >
-      {editor ?? <EmptyState hasVideos={videos.length > 0} />}
-    </WorkspaceShell>
+    <CaptionInsertProvider>
+      <WorkspaceShell
+        left={
+          <LeftRail
+            projects={projects}
+            activeProjectId={activeProjectId}
+            favorites={favorites}
+            assets={assets}
+          />
+        }
+        right={
+          <ContentRail
+            videos={videos}
+            projects={projects}
+            activeProjectId={activeProjectId}
+            activeVideoId={activeVideoId}
+          />
+        }
+      >
+        {editor ?? <EmptyState hasVideos={videos.length > 0} />}
+      </WorkspaceShell>
+    </CaptionInsertProvider>
   );
 }

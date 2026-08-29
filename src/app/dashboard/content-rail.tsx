@@ -8,6 +8,7 @@ import { FromUrlForm } from "./from-url-form";
 import { GoLive } from "./go-live";
 import { RailThumb } from "./rail-thumb";
 import type { ProjectSummary } from "./project-rail";
+import { useCaptionInsert } from "./caption-insert";
 
 export interface VideoSummary {
   id: string;
@@ -64,10 +65,30 @@ export function ContentRail({
   activeVideoId: string | null;
 }) {
   const router = useRouter();
+  const { focusedClipId } = useCaptionInsert();
   const [tab, setTab] = useState<"upload" | "link" | "live">("link");
+  const [insertingCaption, setInsertingCaption] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [subMenu, setSubMenu] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
+
+  async function insertCaption() {
+    if (!focusedClipId || insertingCaption) return;
+    setInsertingCaption(true);
+    try {
+      await fetch(`/api/clips/${focusedClipId}/text-overlays`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "New caption" }),
+      });
+      router.refresh();
+      document
+        .getElementById(`clip-${focusedClipId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } finally {
+      setInsertingCaption(false);
+    }
+  }
   // Null on the server + first paint so the ETA can't cause a hydration mismatch.
   const [nowMs, setNowMs] = useState<number | null>(null);
 
@@ -205,6 +226,20 @@ export function ContentRail({
           <GoLive projectId={activeProjectId} />
         )}
       </div>
+
+      <button
+        type="button"
+        onClick={insertCaption}
+        disabled={!focusedClipId || insertingCaption}
+        title={
+          focusedClipId
+            ? "Add a text caption to the selected clip"
+            : "Open a clip in the editor first"
+        }
+        className="btn btn-sm mx-2 mb-3 block w-[calc(100%-1rem)] disabled:opacity-50"
+      >
+        {insertingCaption ? "…" : "＋ Insert caption"}
+      </button>
 
       <span className="rail-heading">Raw content</span>
       {videos.length === 0 && (

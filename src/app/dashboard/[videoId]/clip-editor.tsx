@@ -13,6 +13,7 @@ import { OverlayPanel, type OverlayView } from "./overlay-panel";
 import type { WordStyle, WordStylePatch } from "./editable-transcript";
 import { SequenceEditor } from "./sequence-editor";
 import { ASSET_DND_MIME } from "../media-library";
+import { useCaptionInsert } from "../caption-insert";
 
 const ASPECTS = [
   ["VERTICAL_9_16", "9:16"],
@@ -126,6 +127,14 @@ export function ClipEditor({
   defaultTimelineOpen?: boolean;
 }) {
   const router = useRouter();
+  const { setFocusedClipId } = useCaptionInsert();
+
+  // Claim "focused clip" so the Add-content rail's Insert-caption targets this
+  // one. The first clip claims it on mount as a sensible default.
+  useEffect(() => {
+    if (defaultTimelineOpen) setFocusedClipId(clip.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const sourceLang = transcriptViews.find((t) => t.translatedTo === "")?.language ?? null;
 
@@ -696,6 +705,7 @@ export function ClipEditor({
   return (
     <div
       ref={cardRef}
+      onPointerDownCapture={() => setFocusedClipId(clip.id)}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes(ASSET_DND_MIME)) {
           e.preventDefault();
