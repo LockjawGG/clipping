@@ -120,7 +120,7 @@ interface VideoLite {
 }
 interface AssetLite {
   id: string;
-  projectId: string;
+  userId: string;
   kind: string;
   name: string;
   storageKey: string;
@@ -171,6 +171,8 @@ export interface SequenceServiceDeps {
   db: SequenceDb;
   storage: StorageProvider;
   assertProjectOwned: (projectId: string) => Promise<void>;
+  /** The signed-in user — owns the media library sequence items pull from. */
+  userId: string;
 }
 
 /* ------------------------------------------------------------------ views */
@@ -466,8 +468,7 @@ export async function createSequenceItem(
     await deps.assertProjectOwned(v.projectId);
   } else {
     const a = await deps.db.asset.findUnique({ where: { id: parsed.sourceAssetId! } });
-    if (!a) throw new ApiError(404, "source asset not found");
-    await deps.assertProjectOwned(a.projectId);
+    if (!a || a.userId !== deps.userId) throw new ApiError(404, "source asset not found");
   }
 
   const maxOut = src.durationMs > 0 ? src.durationMs : STILL_IMAGE_MS;

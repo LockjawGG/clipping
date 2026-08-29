@@ -31,10 +31,14 @@ const KIND_SWAP: Record<AssetView["kind"], AssetView["kind"]> = {
 };
 const isAudio = (k: AssetView["kind"]) => k === "AUDIO" || k === "SFX";
 
-const kindOf = (file: File): AssetView["kind"] => {
-  if (file.type === "image/gif" || /\.gif$/i.test(file.name)) return "GIF";
-  if (file.type.startsWith("image/")) return "IMAGE";
-  return "AUDIO";
+/** Classify a picked file, or null if it's clearly neither an image nor audio. */
+const kindOf = (file: File): AssetView["kind"] | null => {
+  const t = file.type;
+  if (t === "image/gif" || /\.gif$/i.test(file.name)) return "GIF";
+  if (t.startsWith("image/") || /\.(png|jpe?g|webp|avif|bmp|svg)$/i.test(file.name)) return "IMAGE";
+  if (t.startsWith("audio/") || t.startsWith("video/") || /\.(mp3|wav|m4a|aac|ogg|flac|opus)$/i.test(file.name))
+    return "AUDIO";
+  return null;
 };
 
 function fmtSize(n: number | null) {
@@ -87,7 +91,7 @@ function probe(
   });
 }
 
-export function MediaLibrary({ projectId, assets }: { projectId: string; assets: AssetView[] }) {
+export function MediaLibrary({ assets }: { assets: AssetView[] }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<Tab>("All");
@@ -120,12 +124,16 @@ export function MediaLibrary({ projectId, assets }: { projectId: string; assets:
 
   async function uploadOne(file: File) {
     const kind = kindOf(file);
+    if (!kind) {
+      throw new Error(
+        `not an image, GIF or audio file (looks like ${file.type || "an unknown type"}) — if you saved this from a web page, save the actual image instead`,
+      );
+    }
     const dims = await probe(file, kind);
     const createRes = await fetch("/api/assets", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        projectId,
         kind,
         name: file.name,
         mimeType: file.type || "application/octet-stream",

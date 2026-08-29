@@ -43,7 +43,7 @@ function makeDeps(over: Partial<SequenceServiceDeps> = {}) {
     v2: { id: "v2", projectId: "p2", storageKey: "videos/v2.mp4", durationMs: 30000, hasAudio: true, originalFilename: "other.mp4" },
   };
   const assets: Record<string, any> = {
-    img1: { id: "img1", projectId: "p1", kind: "IMAGE", name: "logo.png", storageKey: "a/logo.png", durationMs: null },
+    img1: { id: "img1", userId: "u1", kind: "IMAGE", name: "logo.png", storageKey: "a/logo.png", durationMs: null },
   };
   /** Overlays on c1, keyed by id. Tests push into this before calling. */
   const overlays: any[] = [];
@@ -107,6 +107,7 @@ function makeDeps(over: Partial<SequenceServiceDeps> = {}) {
   const deps: SequenceServiceDeps = {
     db,
     storage: fakeStorage(),
+    userId: "u1",
     assertProjectOwned: async (p) => {
       if (p !== "p1") throw new ApiError(404, "not found");
     },

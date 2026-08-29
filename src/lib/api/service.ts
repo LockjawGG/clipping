@@ -61,13 +61,13 @@ export function transcriptService(userId: string): TranscriptServiceDeps {
   };
 }
 
-/** Media-library deps scoped to the signed-in user. */
+/** Media-library deps scoped to the signed-in user (library is user-wide). */
 export function assetService(userId: string): AssetServiceDeps {
   return {
     db: db as unknown as AssetServiceDeps["db"],
     storage: getStorage(),
     maxUploadBytes: env.MAX_UPLOAD_BYTES,
-    assertProjectOwned: ownsProject(userId),
+    userId,
   };
 }
 
@@ -77,6 +77,7 @@ export function overlayService(userId: string): OverlayServiceDeps {
     db: db as unknown as OverlayServiceDeps["db"],
     storage: getStorage(),
     assertProjectOwned: ownsProject(userId),
+    userId,
   };
 }
 
@@ -94,6 +95,7 @@ export function sequenceService(userId: string): SequenceServiceDeps {
     db: db as unknown as SequenceServiceDeps["db"],
     storage: getStorage(),
     assertProjectOwned: ownsProject(userId),
+    userId,
   };
 }
 

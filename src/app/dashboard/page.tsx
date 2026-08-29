@@ -86,7 +86,7 @@ export default async function DashboardPage({
         video: { select: { originalFilename: true } },
       },
     }),
-    listAssets(assetService(userId), activeProjectId),
+    listAssets(assetService(userId)),
   ]);
 
   const videos = await Promise.all(

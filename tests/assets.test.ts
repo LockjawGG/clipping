@@ -42,7 +42,7 @@ function makeDeps(over: Partial<AssetServiceDeps> = {}) {
   const db: AssetDb = {
     asset: {
       findMany: async ({ where }) =>
-        [...rows.values()].filter((r) => r.projectId === where.projectId) as never,
+        [...rows.values()].filter((r) => r.userId === where.userId) as never,
       findUnique: async ({ where }) => (rows.get(where.id) ?? null) as never,
       create: async ({ data }) => {
         const id = `a${++seq}`;
@@ -72,37 +72,45 @@ function makeDeps(over: Partial<AssetServiceDeps> = {}) {
     db,
     storage: fakeStorage(),
     maxUploadBytes: 50_000_000,
-    assertProjectOwned: async (p) => {
-      if (p !== "p1") throw new ApiError(404, "not found");
-    },
+    userId: "u1",
     ...over,
   };
   return { deps, rows };
 }
 
 const upload = {
-  projectId: "p1",
   kind: "IMAGE" as const,
   name: "logo.png",
   mimeType: "image/png",
   sizeBytes: 4096,
 };
 
-test("createAssetUpload validates ownership and returns a presigned PUT", async () => {
+test("createAssetUpload stores it under the signed-in user and returns a presigned PUT", async () => {
   const { deps, rows } = makeDeps();
   const res = await createAssetUpload(deps, upload);
   assert.match(res.upload.url, /^https:\/\/up\.example\/assets\/image\//);
   assert.equal(rows.size, 1);
+  assert.equal([...rows.values()][0].userId, "u1");
 });
 
-test("createAssetUpload rejects an oversize file and a foreign project", async () => {
+test("createAssetUpload rejects an oversize file", async () => {
   const { deps } = makeDeps();
   await assert.rejects(
     () => createAssetUpload(deps, { ...upload, sizeBytes: 99_000_000 }),
     (e: unknown) => e instanceof ApiError && e.status === 413,
   );
+});
+
+test("updateAsset / deleteAsset 404 for another user's asset", async () => {
+  const { deps } = makeDeps();
+  const { assetId } = await createAssetUpload(deps, upload);
+  const other = { ...deps, userId: "u2" }; // same store, different user
   await assert.rejects(
-    () => createAssetUpload(deps, { ...upload, projectId: "someone-else" }),
+    () => updateAsset(other, assetId, { name: "x" }),
+    (e: unknown) => e instanceof ApiError && e.status === 404,
+  );
+  await assert.rejects(
+    () => deleteAsset(other, assetId),
     (e: unknown) => e instanceof ApiError && e.status === 404,
   );
 });
@@ -128,7 +136,7 @@ test("updateAsset renames and toggles favorite; listAssets returns URLs", async 
   const { deps } = makeDeps();
   const { assetId } = await createAssetUpload(deps, upload);
   await updateAsset(deps, assetId, { name: "brand.png", favorite: true });
-  const list = await listAssets(deps, "p1");
+  const list = await listAssets(deps);
   assert.equal(list[0].name, "brand.png");
   assert.equal(list[0].favorited, true);
   assert.match(list[0].url!, /^https:\/\/dl\.example\//);
@@ -165,7 +173,7 @@ test("updateAsset changes kind and it survives listAssets", async () => {
   assert.equal(view.name, "clap.wav", "kind-only patch leaves name untouched");
   assert.equal(rows.get(assetId)!.kind, "SFX");
 
-  const list = await listAssets(deps, "p1");
+  const list = await listAssets(deps);
   assert.equal(list[0].kind, "SFX");
 });
 
@@ -186,18 +194,19 @@ test("updateAsset applies name, favorite and kind in one call", async () => {
   assert.ok(row.favoritedAt instanceof Date);
 });
 
-test("updateAsset 404s for an unknown asset and a foreign project", async () => {
+test("updateAsset 404s for an unknown asset and one owned by another user", async () => {
   const { deps } = makeDeps();
   await assert.rejects(
     () => updateAsset(deps, "nope", { kind: "SFX" }),
     (e: unknown) => e instanceof ApiError && e.status === 404,
   );
-  // asset that exists but whose project the caller doesn't own
-  const foreign = makeDeps();
-  const { assetId } = await createAssetUpload(foreign.deps, upload);
-  foreign.rows.get(assetId)!.projectId = "someone-else";
+  const { assetId } = await createAssetUpload(deps, upload);
+  deps.db.asset = {
+    ...deps.db.asset,
+    findUnique: async () => ({ id: assetId, userId: "someone-else" }) as never,
+  };
   await assert.rejects(
-    () => updateAsset(foreign.deps, assetId, { name: "x" }),
+    () => updateAsset(deps, assetId, { name: "x" }),
     (e: unknown) => e instanceof ApiError && e.status === 404,
   );
 });

@@ -32,6 +32,7 @@ model User {
   updatedAt    DateTime @updatedAt
 
   projects Project[]
+  assets   Asset[]
 
   @@map("users")
 }
@@ -46,7 +47,6 @@ model Project {
   user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   videos     Video[]
   savedClips Clip[]  @relation("SavedClips")
-  assets     Asset[]
 
   // Every list query is scoped by owner. Index accordingly.
   @@index([userId, updatedAt])
@@ -60,11 +60,12 @@ enum AssetKind {
   SFX
 }
 
-/// Reusable media dropped into a project's library: image / GIF overlays and
-/// audio / SFX beds. Referenced by `Overlay` (visual) and, later, audio tracks.
+/// Reusable media in a user's library: image / GIF overlays and audio / SFX
+/// beds. Owned by the user, shared across all their projects. Referenced by
+/// `Overlay` (visual) and sequence audio tracks.
 model Asset {
   id         String    @id @default(cuid())
-  projectId  String
+  userId     String
   kind       AssetKind
   name       String
   storageKey String    @unique
@@ -78,11 +79,11 @@ model Asset {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
-  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   overlays      Overlay[]
   sequenceItems SequenceItem[]
 
-  @@index([projectId, createdAt])
+  @@index([userId, createdAt])
   @@map("assets")
 }
 

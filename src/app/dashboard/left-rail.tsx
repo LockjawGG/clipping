@@ -39,7 +39,7 @@ export function LeftRail({
       {tab === "projects" ? (
         <ProjectRail projects={projects} activeProjectId={activeProjectId} favorites={favorites} />
       ) : (
-        <MediaLibrary projectId={activeProjectId} assets={assets} />
+        <MediaLibrary assets={assets} />
       )}
     </div>
   );

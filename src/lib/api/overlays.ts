@@ -65,7 +65,7 @@ interface OverlayRow {
 
 interface AssetLite {
   id: string;
-  projectId: string;
+  userId: string;
   kind: string;
   name: string;
   storageKey: string;
@@ -112,6 +112,8 @@ export interface OverlayServiceDeps {
   db: OverlayDb;
   storage: StorageProvider;
   assertProjectOwned: (projectId: string) => Promise<void>;
+  /** The signed-in user — owns the media library the overlay pulls from. */
+  userId: string;
 }
 
 /** The image-ish asset kinds that can be dropped onto a clip as a visual overlay. */
@@ -227,8 +229,7 @@ export async function createOverlayFromAsset(
   const clip = await ownedClip(deps, clipId);
 
   const asset = await deps.db.asset.findUnique({ where: { id: parsed.assetId } });
-  if (!asset) throw new ApiError(404, "asset not found");
-  await deps.assertProjectOwned(asset.projectId);
+  if (!asset || asset.userId !== deps.userId) throw new ApiError(404, "asset not found");
   if (!VISUAL_KINDS.has(asset.kind)) {
     throw new ApiError(422, "only image or GIF assets can be placed on a clip");
   }

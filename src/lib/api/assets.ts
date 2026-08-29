@@ -7,9 +7,10 @@ import type { StorageProvider } from "../providers/types.ts";
 import { ApiError } from "./http.ts";
 
 /**
- * Project media library: images / GIFs used as overlays, and audio / SFX beds.
- * Upload mirrors the video flow — create a row + presigned PUT, the client
- * pushes the bytes, then confirms with the intrinsic dimensions it measured.
+ * The user's media library: images / GIFs used as overlays, and audio / SFX
+ * beds. Owned by the user and shared across every project. Upload mirrors the
+ * video flow — create a row + presigned PUT, the client pushes the bytes, then
+ * confirms with the intrinsic dimensions it measured.
  */
 
 const KINDS = ["IMAGE", "GIF", "AUDIO", "SFX"] as const;
@@ -18,7 +19,6 @@ export type AssetKind = (typeof KINDS)[number];
 const SAFE_EXT = /^\.[a-z0-9]{1,8}$/i;
 
 export const createAssetSchema = z.object({
-  projectId: z.string().min(1),
   kind: z.enum(KINDS),
   name: z.string().trim().min(1).max(300),
   mimeType: z.string().regex(/^[-\w.]+\/[-\w.+]+$/, "not a MIME type"),
@@ -45,7 +45,7 @@ export const updateAssetSchema = z
 
 interface AssetRow {
   id: string;
-  projectId: string;
+  userId: string;
   kind: string;
   name: string;
   storageKey: string;
@@ -60,7 +60,7 @@ interface AssetRow {
 
 export interface AssetDb {
   asset: {
-    findMany(args: { where: { projectId: string }; orderBy?: unknown }): Promise<AssetRow[]>;
+    findMany(args: { where: { userId: string }; orderBy?: unknown }): Promise<AssetRow[]>;
     findUnique(args: { where: { id: string } }): Promise<AssetRow | null>;
     create(args: { data: Record<string, unknown> }): Promise<AssetRow>;
     update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<AssetRow>;
@@ -72,7 +72,8 @@ export interface AssetServiceDeps {
   db: AssetDb;
   storage: StorageProvider;
   maxUploadBytes: number;
-  assertProjectOwned: (projectId: string) => Promise<void>;
+  /** The signed-in user — owns the whole library. */
+  userId: string;
 }
 
 function assetKey(kind: AssetKind, filename: string): string {
@@ -83,8 +84,7 @@ function assetKey(kind: AssetKind, filename: string): string {
 
 async function ownedAsset(deps: AssetServiceDeps, assetId: string): Promise<AssetRow> {
   const asset = await deps.db.asset.findUnique({ where: { id: assetId } });
-  if (!asset) throw new ApiError(404, "asset not found");
-  await deps.assertProjectOwned(asset.projectId);
+  if (!asset || asset.userId !== deps.userId) throw new ApiError(404, "asset not found");
   return asset;
 }
 
@@ -104,10 +104,9 @@ function toView(a: AssetRow, url: string | null) {
   };
 }
 
-export async function listAssets(deps: AssetServiceDeps, projectId: string) {
-  await deps.assertProjectOwned(projectId);
+export async function listAssets(deps: AssetServiceDeps) {
   const rows = await deps.db.asset.findMany({
-    where: { projectId },
+    where: { userId: deps.userId },
     orderBy: { createdAt: "desc" },
   });
   return Promise.all(
@@ -120,14 +119,13 @@ export async function createAssetUpload(deps: AssetServiceDeps, input: unknown) 
   if (parsed.sizeBytes > deps.maxUploadBytes) {
     throw new ApiError(413, `file is larger than the ${deps.maxUploadBytes}-byte limit`);
   }
-  await deps.assertProjectOwned(parsed.projectId);
 
   const storageKey = assetKey(parsed.kind, parsed.name);
   const uploadUrl = await deps.storage.createUploadUrl(storageKey, parsed.mimeType);
 
   const asset = await deps.db.asset.create({
     data: {
-      projectId: parsed.projectId,
+      userId: deps.userId,
       kind: parsed.kind,
       name: parsed.name.slice(0, 300),
       storageKey,

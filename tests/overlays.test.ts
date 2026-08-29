@@ -52,11 +52,11 @@ function makeDeps(over: Partial<OverlayServiceDeps> = {}) {
   const clips: Record<string, { id: string; startMs: number; endMs: number; projectId: string }> = {
     c1: { id: "c1", startMs: 5_000, endMs: 15_000, projectId: "p1" },
   };
-  const assets: Record<string, { id: string; projectId: string; kind: string; name: string; storageKey: string }> = {
-    img1: { id: "img1", projectId: "p1", kind: "IMAGE", name: "logo.png", storageKey: "assets/image/a.png" },
-    gif1: { id: "gif1", projectId: "p1", kind: "GIF", name: "spin.gif", storageKey: "assets/gif/b.gif" },
-    snd1: { id: "snd1", projectId: "p1", kind: "AUDIO", name: "bed.mp3", storageKey: "assets/audio/c.mp3" },
-    foreign: { id: "foreign", projectId: "p2", kind: "IMAGE", name: "x.png", storageKey: "assets/image/x.png" },
+  const assets: Record<string, { id: string; userId: string; kind: string; name: string; storageKey: string }> = {
+    img1: { id: "img1", userId: "u1", kind: "IMAGE", name: "logo.png", storageKey: "assets/image/a.png" },
+    gif1: { id: "gif1", userId: "u1", kind: "GIF", name: "spin.gif", storageKey: "assets/gif/b.gif" },
+    snd1: { id: "snd1", userId: "u1", kind: "AUDIO", name: "bed.mp3", storageKey: "assets/audio/c.mp3" },
+    foreign: { id: "foreign", userId: "u2", kind: "IMAGE", name: "x.png", storageKey: "assets/image/x.png" },
   };
 
   const db: OverlayServiceDeps["db"] = {
@@ -106,6 +106,7 @@ function makeDeps(over: Partial<OverlayServiceDeps> = {}) {
   const deps: OverlayServiceDeps = {
     db,
     storage: fakeStorage(),
+    userId: "u1",
     assertProjectOwned: async (p) => {
       if (p !== "p1") throw new ApiError(404, "not found");
     },
