@@ -68,6 +68,8 @@ export interface WhisperLocalOptions {
   model: string;
   /** Where the CLI writes its JSON. A per-call subdir is created under this. */
   tempDir?: string;
+  /** Beam-search width. Higher = more accurate, slower. CLI default is 5. */
+  beamSize?: number;
 }
 
 /**
@@ -126,8 +128,23 @@ export class WhisperLocalProvider implements TranscriptionProvider {
       outDir,
       "--word_timestamps",
       "True",
+      // Accuracy-leaning defaults:
+      //  - fp16 False: full-precision decode (CPU forces this anyway; explicit
+      //    here so it's also true on a GPU box and silences the warning).
+      //  - condition_on_previous_text True: carry context across segments so a
+      //    long recording stays coherent (this is the default, pinned for clarity).
+      "--fp16",
+      "False",
+      "--condition_on_previous_text",
+      "True",
+      "--beam_size",
+      String(this.opts.beamSize ?? 5),
     ];
     if (options.language) args.push("--language", options.language);
+    // Prime the decoder with domain terms it routinely mangles.
+    if (options.vocabulary?.length) {
+      args.push("--initial_prompt", options.vocabulary.join(", "));
+    }
 
     const binaryExists = existsSync(this.opts.binary);
     const jsonPath = join(outDir, `${basename(audioPath, extname(audioPath))}.json`);

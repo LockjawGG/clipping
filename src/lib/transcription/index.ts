@@ -32,6 +32,7 @@ function build(): TranscriptionProvider {
         binary: env.WHISPER_BINARY,
         model: env.WHISPER_MODEL,
         tempDir: env.TEMP_DIR,
+        beamSize: env.WHISPER_BEAM_SIZE,
       });
   }
 }

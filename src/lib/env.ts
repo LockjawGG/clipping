@@ -33,7 +33,13 @@ const schema = z.object({
     .enum(["whisper-local", "openai", "deepgram"])
     .default("whisper-local"),
   WHISPER_BINARY: z.string().default("whisper"),
+  // Accuracy ladder (CPU speed drops roughly 2x per rung):
+  //   base(.en) « small(.en) « medium(.en) « large-v3
+  // Use the ".en" variant for English-only recordings — more accurate at a
+  // given size. large-v3 is multilingual only.
   WHISPER_MODEL: z.string().default("large-v3"),
+  /** Whisper beam-search width. Higher = more accurate + slower. CLI default 5. */
+  WHISPER_BEAM_SIZE: z.coerce.number().int().min(1).max(10).default(5),
   /**
    * Language for rolling live-capture chunks. A short 8s slice is too little for
    * reliable auto-detection (it language-hops), so live transcription pins this.

@@ -127,6 +127,9 @@ export const liveFinalizeHandler: JobHandler<PipelineDeps> = async ({ job, deps,
     wordTimestamps: true,
     signal,
     durationMs: info.durationMs ?? undefined,
+    // Skip language detection when the deployment pins one — a touch faster and
+    // it can't misfire on a quiet opening.
+    ...(LIVE_LANGUAGE ? { language: LIVE_LANGUAGE } : {}),
     onProgress: (f) => void setProgress(0.6 + f * 0.35).catch(() => {}),
   });
   await deps.transcripts.save(job.videoId, result);
