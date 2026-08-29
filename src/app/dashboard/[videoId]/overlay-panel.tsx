@@ -69,16 +69,16 @@ export const OverlayPanel = memo(function OverlayPanel({
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-medium text-muted">
-          Layers{overlays.length ? ` (${overlays.length})` : ""} — drag media from the library, or
+          Captions &amp; layers{overlays.length ? ` (${overlays.length})` : ""}
         </p>
         <button type="button" onClick={onAddText} className="btn btn-sm shrink-0">
-          + Add text
+          + Insert caption
         </button>
       </div>
 
       {ordered.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border px-3 py-3 text-center text-xs text-muted">
-          Drop an image or GIF here, then drag it into place on the preview
+          “Insert caption” to add a text caption, or drag an image / GIF from the library.
         </p>
       ) : (
         <ul className="flex flex-col gap-1.5">

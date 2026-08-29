@@ -603,7 +603,7 @@ export function ClipEditor({
       const res = await fetch(`/api/clips/${clip.id}/text-overlays`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ content: "Text" }),
+        body: JSON.stringify({ content: "New caption" }),
       });
       const created = await res.json().catch(() => null);
       if (!res.ok) throw new Error(created?.error ?? "could not add text");
