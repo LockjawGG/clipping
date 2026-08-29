@@ -3,6 +3,10 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { buildCues, toVtt } from "@/lib/captions/layout.ts";
+import { textStyleFromParts, textStyleToCss } from "@/lib/captions/text-style.ts";
+import { parseWordRules, applyWordRules, wordEffectCss } from "@/lib/captions/word-rules.ts";
+import { captionWordAnim, captionCueAnim, NEUTRAL_CAPTION_CSS } from "@/lib/captions/anim-dom.ts";
+import { remotionPreset } from "@/lib/captions/presets.ts";
 import type { CaptionConfig } from "./caption-controls";
 import type { OverlayView } from "./overlay-panel";
 import { wordSpanCss, type WordStyle } from "./editable-transcript";
@@ -244,6 +248,47 @@ export const ClipPlayer = memo(function ClipPlayer({
   const scale = (boxRef.current?.clientHeight ?? 480) / 1920;
   const showOverlay = mode === "source" && captionsOn && activeCue;
 
+  // WYSIWYG caption styling: resolve the rich TextStyle from the scalar caption
+  // config + its styleJson blob, then render through the same helpers the burn
+  // uses (textStyleToCss + the DOM animation interpreter).
+  const richStyle = useMemo(
+    () =>
+      textStyleFromParts(
+        {
+          fontFamily: caption.fontFamily,
+          fontSizePx: caption.fontSizePx,
+          fontWeight: caption.fontWeight,
+          textColor: caption.textColor,
+          highlightColor: caption.highlightColor,
+          outlineColor: caption.outlineColor,
+          outlineWidthPx: caption.outlineWidthPx,
+          backgroundColor: caption.backgroundColor,
+          alignment: caption.alignment,
+          positionY: caption.positionY,
+          uppercase: caption.uppercase,
+        },
+        caption.styleJson,
+      ),
+    [caption],
+  );
+  const richCss = useMemo(() => textStyleToCss(richStyle, { scale }), [richStyle, scale]);
+  const captionWordRules = useMemo(
+    () => parseWordRules(caption.wordRulesJson),
+    [caption.wordRulesJson],
+  );
+  const captionAnimId = caption.animation === "NONE" ? "none" : remotionPreset(caption.animation);
+  const gradientFill = richStyle.fill.kind !== "solid";
+  const cueCss =
+    activeCue != null
+      ? captionCueAnim(captionAnimId, posMs, { startMs: activeCue.startMs, endMs: activeCue.endMs })
+      : NEUTRAL_CAPTION_CSS;
+  const placementTransform =
+    caption.alignment === "center" ? "translate(-50%, -50%)" : "translateY(-50%)";
+  const overlayTransform =
+    cueCss.transform && cueCss.transform !== "none"
+      ? `${placementTransform} ${cueCss.transform}`
+      : placementTransform;
+
   // Overlays are burned into the rendered file; in source mode preview them as
   // positioned <img>s that appear only within their clip-relative time window.
   const activeOverlays =
@@ -324,31 +369,58 @@ export const ClipPlayer = memo(function ClipPlayer({
               top: `${caption.positionY * 100}%`,
               left: caption.alignment === "left" ? "6%" : caption.alignment === "right" ? "auto" : "50%",
               right: caption.alignment === "right" ? "6%" : "auto",
-              transform: caption.alignment === "center" ? "translate(-50%, -50%)" : "translateY(-50%)",
               maxWidth: "88%",
-              textAlign: caption.alignment,
-              fontFamily: `"${caption.fontFamily}", Inter, sans-serif`,
-              fontWeight: caption.fontWeight,
-              fontSize: Math.max(11, caption.fontSizePx * scale),
-              lineHeight: 1.15,
-              color: caption.textColor,
-              WebkitTextStroke: `${Math.max(0, caption.outlineWidthPx * scale)}px ${caption.outlineColor}`,
-              paintOrder: "stroke fill",
-              background: caption.backgroundColor ?? "transparent",
-              padding: caption.backgroundColor ? "0.15em 0.4em" : 0,
-              borderRadius: caption.backgroundColor ? "0.15em" : 0,
-              textShadow: caption.backgroundColor ? "none" : "0 3px 12px rgba(0,0,0,0.6)",
+              ...(richCss.text as unknown as React.CSSProperties),
+              ...((richCss.panel ?? {}) as unknown as React.CSSProperties),
+              // keep a legibility floor the burn doesn't need
+              fontSize: Math.max(11, richStyle.fontSizePx * scale),
+              transform: overlayTransform,
+              opacity: cueCss.opacity,
               cursor: "grab",
               touchAction: "none",
               userSelect: "none",
             }}
           >
             {(activeCue!.words as PreviewWord[]).map((w, i) => {
-              const text = caption.uppercase ? w.text.toUpperCase() : w.text;
+              const anim = captionWordAnim(
+                captionAnimId,
+                posMs,
+                { startMs: w.startMs, endMs: w.endMs, index: i },
+                w.text,
+              );
+              if (anim.hidden) {
+                return (
+                  <span key={w.id ?? i} style={{ opacity: 0 }}>
+                    {i > 0 ? " " : ""}
+                    {w.text}
+                  </span>
+                );
+              }
+              const manual = wordSpanCss(wordStyles[w.id]);
+              const ruleCss = wordEffectCss(
+                applyWordRules(captionWordRules, {
+                  spoken: posMs >= w.startMs,
+                  active: posMs >= w.startMs && posMs < w.endMs,
+                }),
+              );
+              const explicitColor =
+                manual.color !== undefined || ruleCss.color !== undefined || anim.highlighted;
               return (
-                <span key={w.id ?? i} style={wordSpanCss(wordStyles[w.id])}>
+                <span
+                  key={w.id ?? i}
+                  style={{
+                    display: "inline-block",
+                    ...(anim.css as unknown as React.CSSProperties),
+                    ...(anim.highlighted ? { color: richStyle.highlightColor } : {}),
+                    ...(gradientFill && !explicitColor
+                      ? { color: "inherit", WebkitTextFillColor: "inherit" }
+                      : {}),
+                    ...(ruleCss as unknown as React.CSSProperties),
+                    ...manual,
+                  }}
+                >
                   {i > 0 ? " " : ""}
-                  {text}
+                  {anim.visibleText}
                 </span>
               );
             })}

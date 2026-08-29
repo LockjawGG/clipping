@@ -127,6 +127,17 @@ test("resolveTextAnimation falls back to word-by-word for unknown ids", () => {
   assert.equal(resolveTextAnimation(null).id, "word-by-word");
 });
 
+test('the "none" animation is a real static entry — every word shows, no tracks', () => {
+  const none = resolveTextAnimation("none");
+  assert.equal(none.id, "none");
+  assert.equal(none.reveal, "none");
+  assert.equal(none.clauses.length, 0);
+  const w = captionWordAnim("none", 0, { startMs: 5000, endMs: 5400, index: 0 }, "later");
+  assert.equal(w.hidden, false, "an unspoken word is still visible with no animation");
+  assert.equal(w.visibleText, "later");
+  assert.equal(w.css.transform, "none");
+});
+
 test("tracksFor pulls the right scope/phase tracks", () => {
   const pop = tracksFor(resolveTextAnimation("pop"), "word", "intro");
   assert.equal(pop.length, 1);

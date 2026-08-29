@@ -78,6 +78,13 @@ export const DEFAULT_SPRING: SpringConfig = { damping: 12, stiffness: 200, mass:
  * this is a drop-in source of truth — the visuals are unchanged.
  */
 export const BUILTIN_TEXT_ANIMATIONS: Record<string, TextAnimation> = {
+  none: {
+    id: "none",
+    label: "None",
+    reveal: "none",
+    highlight: "active",
+    clauses: [],
+  },
   "word-by-word": {
     id: "word-by-word",
     label: "Word by word",
