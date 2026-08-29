@@ -120,6 +120,7 @@ function makeDeps(
                 quality: "P1080",
                 sizeBytes: 4_200_000n,
                 durationMs: 26_600,
+                startedAt: null,
               },
             ],
           },

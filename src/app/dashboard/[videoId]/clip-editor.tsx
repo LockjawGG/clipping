@@ -40,6 +40,7 @@ export interface ClipData {
     quality: string;
     sizeBytes: number | null;
     durationMs: number | null;
+    startedAtMs: number | null;
   } | null;
 }
 
@@ -56,6 +57,18 @@ const fmtBytes = (n: number | null) => {
 const fmtDur = (ms: number) => {
   const total = Math.round(ms / 1000);
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+};
+/**
+ * Rough "time left" for a render from elapsed time and fractional progress.
+ * Null until there's enough signal (a start time + >2% done).
+ */
+const renderEta = (startedAtMs: number | null, progress: number, nowMs: number | null): string | null => {
+  if (startedAtMs == null || nowMs == null || progress <= 0.02 || progress >= 1) return null;
+  const remainMs = ((nowMs - startedAtMs) / progress) * (1 - progress);
+  if (!Number.isFinite(remainMs) || remainMs <= 0) return null;
+  const secs = Math.ceil(remainMs / 1000);
+  if (secs < 60) return `~${secs}s left`;
+  return `~${Math.floor(secs / 60)}m ${secs % 60}s left`;
 };
 const qualityLabel = (q: string) =>
   ({ P720: "720p", P1080: "1080p", ORIGINAL: "source quality" })[q] ?? q;
@@ -327,6 +340,20 @@ export function ClipEditor({
 
   const rendering = clip.render?.status === "QUEUED" || clip.render?.status === "PROCESSING";
 
+  // While a render is in flight, poll for progress and tick a clock for the ETA.
+  // `null` on the server / first paint so the ETA can't cause a hydration gap.
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  useEffect(() => {
+    if (!rendering) return;
+    setNowMs(Date.now());
+    const tick = setInterval(() => setNowMs(Date.now()), 1000);
+    const poll = setInterval(() => router.refresh(), 2500);
+    return () => {
+      clearInterval(tick);
+      clearInterval(poll);
+    };
+  }, [rendering, router]);
+
   const dirty =
     draft.title !== clip.title ||
     draft.startMs !== clip.startMs ||
@@ -454,6 +481,9 @@ export function ClipEditor({
     setDraft((d) => ({ ...d, [field]: Math.max(0, Math.round(seconds * 1000)) }));
 
   const pct = clip.render ? Math.round(clip.render.progress * 100) : 0;
+  const eta = clip.render
+    ? renderEta(clip.render.startedAtMs, clip.render.progress, nowMs)
+    : null;
 
   return (
     <div
@@ -560,7 +590,10 @@ export function ClipEditor({
                     void saveAndRender();
                   }}
                 >
-                  ⬇ {rendering ? "Rendering…" : "Render & download MP4"}
+                  ⬇{" "}
+                  {rendering
+                    ? `Rendering… ${pct}%${eta ? ` · ${eta}` : ""}`
+                    : "Render & download MP4"}
                 </button>
               )}
               <div className="my-1 border-t border-border" />
@@ -622,7 +655,9 @@ export function ClipEditor({
               <div className="h-2 min-w-[140px] flex-1 overflow-hidden rounded-full bg-surface">
                 <div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} />
               </div>
-              <span className="font-mono text-xs tabular-nums text-muted">Rendering… {pct}%</span>
+              <span className="font-mono text-xs tabular-nums text-muted">
+                Rendering… {pct}%{eta ? ` · ${eta}` : ""}
+              </span>
             </>
           ) : clip.render?.downloadUrl ? (
             <>

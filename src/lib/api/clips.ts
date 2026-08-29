@@ -112,6 +112,7 @@ interface ClipListRow {
     quality: string;
     sizeBytes: bigint | null;
     durationMs: number | null;
+    startedAt: Date | null;
   }>;
 }
 
@@ -307,6 +308,7 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
           quality: true,
           sizeBytes: true,
           durationMs: true,
+          startedAt: true,
         },
       },
     },
@@ -351,6 +353,7 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
               quality: latest.quality,
               sizeBytes: latest.sizeBytes != null ? Number(latest.sizeBytes) : null,
               durationMs: latest.durationMs,
+              startedAtMs: latest.startedAt ? latest.startedAt.getTime() : null,
             }
           : null,
       };
