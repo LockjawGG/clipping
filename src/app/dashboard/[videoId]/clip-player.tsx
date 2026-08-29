@@ -124,7 +124,10 @@ export const ClipPlayer = memo(function ClipPlayer({
     setPosMs(0);
     v.pause();
     const seek = () => {
-      v.currentTime = baseMs / 1000;
+      // Assigning the position the element is already at (0 -> 0) is a no-op,
+      // so nothing decodes and the frame stays black. Nudge off zero to force
+      // the first frame to paint.
+      v.currentTime = baseMs > 0 ? baseMs / 1000 : 0.04;
     };
     if (v.readyState >= 1) seek();
     else v.addEventListener("loadedmetadata", seek, { once: true });
@@ -264,7 +267,11 @@ export const ClipPlayer = memo(function ClipPlayer({
           ref={videoRef}
           src={src}
           playsInline
-          preload="metadata"
+          // "metadata" is enough for a seekable MP4, but a WebM written by
+          // MediaRecorder needs actual frame data before it will paint one —
+          // with metadata-only preload the element stays black until you press
+          // play. "auto" makes the first frame appear immediately.
+          preload="auto"
           onTimeUpdate={onTimeUpdate}
           onLoadedMetadata={(e) => {
             if (mode === "rendered") setRenderedDurMs(e.currentTarget.duration * 1000);
