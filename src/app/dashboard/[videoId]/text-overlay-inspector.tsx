@@ -67,6 +67,44 @@ export const TextOverlayInspector = memo(function TextOverlayInspector({
     else if (!v) setDraft(text);
   };
 
+  // saved text-style presets ("Mine")
+  const [presets, setPresets] = useState<
+    { id: string; name: string; style: string; animation: string }[]
+  >([]);
+  const loadPresets = () =>
+    fetch("/api/text-presets?kind=text")
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setPresets)
+      .catch(() => {});
+  useEffect(() => {
+    void loadPresets();
+  }, []);
+
+  const saveAsPreset = async () => {
+    const name = window.prompt("Name this text style")?.trim();
+    if (!name) return;
+    const res = await fetch("/api/text-presets", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name,
+        kind: "text",
+        style: serializeStylePartial(style) ?? "{}",
+        animation: serializeElementAnim(anim) ?? "NONE",
+      }),
+    });
+    if (res.ok) void loadPresets();
+  };
+
+  const applyPreset = (id: string) => {
+    const p = presets.find((x) => x.id === id);
+    if (!p) return;
+    onEdit({
+      styleJson: p.style === "{}" ? null : p.style,
+      animationJson: p.animation === "NONE" ? null : p.animation,
+    });
+  };
+
   return (
     <div className="flex flex-col gap-2">
       <input
@@ -191,6 +229,32 @@ export const TextOverlayInspector = memo(function TextOverlayInspector({
         <span className="text-[10px] text-muted">
           an out animation needs a set end time
         </span>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={saveAsPreset} className="btn btn-ghost btn-sm">
+          Save as template
+        </button>
+        {presets.length > 0 && (
+          <select
+            defaultValue=""
+            aria-label="Apply a saved text style"
+            onChange={(e) => {
+              if (e.target.value) applyPreset(e.target.value);
+              e.target.value = "";
+            }}
+            className="field py-0.5"
+          >
+            <option value="" disabled>
+              Apply saved…
+            </option>
+            {presets.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       <details className="rounded border border-border bg-surface px-2 py-1">
