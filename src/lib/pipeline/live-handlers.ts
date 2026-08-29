@@ -105,11 +105,17 @@ export const liveFinalizeHandler: JobHandler<PipelineDeps> = async ({ job, deps,
     return { chunks: 0 };
   }
 
-  // Stream-copy remux to regenerate timestamps + a seek index. If a fragment
-  // was dropped mid-stream and the copy fails, fall back to the raw reassembly.
+  // Binary-joined WebM fragments have duplicate/non-monotonic timestamps at each
+  // join. ffmpeg tolerates that but a browser <video> renders black after a seek.
+  //  - screen recordings (video stream): re-encode so the output timeline is
+  //    rebuilt monotonically from frame order.
+  //  - mic-only (audio stream): a stream-copy remux is enough and far cheaper.
   const source = scratchPath(work, "source.webm");
+  const pre = await deps.ffmpeg.probe(reassembled, signal).catch(() => null);
+  const hasVideo = !!pre && pre.videoCodec !== null;
   try {
-    await deps.ffmpeg.remux(reassembled, source, signal);
+    if (hasVideo) await deps.ffmpeg.concatAv([reassembled], source, signal);
+    else await deps.ffmpeg.remux(reassembled, source, signal);
   } catch {
     await copyFile(reassembled, source);
   }

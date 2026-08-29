@@ -201,7 +201,7 @@ export function buildConcatAvArgs({ listPath, outputPath }: ConcatAudioArgs): st
   return [
     "-y",
     "-fflags",
-    "+genpts",
+    "+genpts+igndts",
     "-f",
     "concat",
     "-safe",
@@ -215,7 +215,14 @@ export function buildConcatAvArgs({ listPath, outputPath }: ConcatAudioArgs): st
     "-deadline",
     "realtime",
     "-cpu-used",
-    "5",
+    "8",
+    // Constant frame rate rebuilds a strictly monotonic timeline from the
+    // fragment-joined input, which a browser <video> needs to seek without
+    // going black. (`-fps_mode` replaced `-vsync` in ffmpeg 5+.)
+    "-r",
+    "30",
+    "-fps_mode",
+    "cfr",
     "-c:a",
     "libopus",
     "-b:a",
