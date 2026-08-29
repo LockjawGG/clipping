@@ -75,18 +75,46 @@ export const ELEMENT_OUTROS: Record<string, AnimTrack[]> = {
   ],
 };
 
+/** A continuous while-on-screen loop: each track oscillates one prop by a sine. */
+export interface LoopTrack {
+  prop: "translateX" | "translateY" | "scale" | "rotate" | "opacity";
+  amp: number;
+  periodMs: number;
+  /** radians, so tracks can run out of phase. */
+  phase?: number;
+}
+
+export const ELEMENT_LOOPS: Record<string, LoopTrack[]> = {
+  none: [],
+  float: [{ prop: "translateY", amp: 6, periodMs: 2600 }],
+  pulse: [{ prop: "scale", amp: 0.03, periodMs: 1600 }],
+  wiggle: [{ prop: "rotate", amp: 2, periodMs: 1400 }],
+  breathe: [{ prop: "opacity", amp: 0.12, periodMs: 3200 }],
+  sway: [
+    { prop: "translateX", amp: 5, periodMs: 3000 },
+    { prop: "rotate", amp: 1.2, periodMs: 3000, phase: Math.PI / 2 },
+  ],
+};
+
+const label = (id: string) => (id === "none" ? "None" : id.replace(/-/g, " "));
+
 export const ELEMENT_INTRO_OPTIONS: ElementAnimation[] = Object.keys(ELEMENT_INTROS).map((id) => ({
   id,
-  label: id === "none" ? "None" : id.replace(/-/g, " "),
+  label: label(id),
 }));
 export const ELEMENT_OUTRO_OPTIONS: ElementAnimation[] = Object.keys(ELEMENT_OUTROS).map((id) => ({
   id,
-  label: id === "none" ? "None" : id.replace(/-/g, " "),
+  label: label(id),
+}));
+export const ELEMENT_LOOP_OPTIONS: ElementAnimation[] = Object.keys(ELEMENT_LOOPS).map((id) => ({
+  id,
+  label: label(id),
 }));
 
 export interface ElementAnimSpec {
   intro?: string;
   outro?: string;
+  loop?: string;
 }
 
 export function parseElementAnim(json: string | null | undefined): ElementAnimSpec {
@@ -97,6 +125,7 @@ export function parseElementAnim(json: string | null | undefined): ElementAnimSp
       const out: ElementAnimSpec = {};
       if (typeof p.intro === "string") out.intro = p.intro;
       if (typeof p.outro === "string") out.outro = p.outro;
+      if (typeof p.loop === "string") out.loop = p.loop;
       return out;
     }
   } catch {
@@ -110,6 +139,7 @@ export function serializeElementAnim(spec: ElementAnimSpec): string | null {
   const out: ElementAnimSpec = {};
   if (spec.intro && spec.intro !== "none" && ELEMENT_INTROS[spec.intro]) out.intro = spec.intro;
   if (spec.outro && spec.outro !== "none" && ELEMENT_OUTROS[spec.outro]) out.outro = spec.outro;
+  if (spec.loop && spec.loop !== "none" && ELEMENT_LOOPS[spec.loop]) out.loop = spec.loop;
   return Object.keys(out).length ? JSON.stringify(out) : null;
 }
 
@@ -131,6 +161,39 @@ function combine(a: ResolvedTransform, b: ResolvedTransform): ResolvedTransform 
   };
 }
 
+/** Periodic loop transform at time `tMs` since the element appeared. */
+function sampleLoop(tracks: readonly LoopTrack[], tMs: number): ResolvedTransform {
+  const out: ResolvedTransform = {
+    opacity: 1,
+    translateX: 0,
+    translateY: 0,
+    scale: 1,
+    rotate: 0,
+    blur: 0,
+  };
+  for (const t of tracks) {
+    const v = t.amp * Math.sin((2 * Math.PI * tMs) / t.periodMs + (t.phase ?? 0));
+    switch (t.prop) {
+      case "translateX":
+        out.translateX += v;
+        break;
+      case "translateY":
+        out.translateY += v;
+        break;
+      case "rotate":
+        out.rotate += v;
+        break;
+      case "scale":
+        out.scale *= 1 + v;
+        break;
+      case "opacity":
+        out.opacity *= Math.min(1, 1 + v);
+        break;
+    }
+  }
+  return out;
+}
+
 export interface ElementAnimContext {
   /** ms since the element became visible (>= 0). */
   elapsedMs: number;
@@ -148,8 +211,13 @@ export function sampleElementAnim(
 ): { transform: string; opacity: number; filter?: string } {
   const intro = spec.intro ? ELEMENT_INTROS[spec.intro] ?? [] : [];
   const outro = spec.outro ? ELEMENT_OUTROS[spec.outro] ?? [] : [];
+  const loop = spec.loop ? ELEMENT_LOOPS[spec.loop] ?? [] : [];
 
   let t = sampleTracks(intro, Math.max(0, ctx.elapsedMs));
+
+  if (loop.length) {
+    t = combine(t, sampleLoop(loop, Math.max(0, ctx.elapsedMs)));
+  }
 
   if (outro.length && ctx.remainingMs !== null) {
     const win = animWindow(outro);

@@ -9,6 +9,7 @@ import {
   serializeElementAnim,
   ELEMENT_INTRO_OPTIONS,
   ELEMENT_OUTRO_OPTIONS,
+  ELEMENT_LOOP_OPTIONS,
 } from "@/lib/captions/element-anim.ts";
 import { TEXT_OVERLAY_ROLES } from "@/lib/overlays/roles.ts";
 
@@ -41,7 +42,7 @@ export const TextOverlayInspector = memo(function TextOverlayInspector({
   useEffect(() => setDraft(text), [text]);
 
   const anim = useMemo(() => parseElementAnim(animationJson), [animationJson]);
-  const setAnim = (p: { intro?: string; outro?: string }) =>
+  const setAnim = (p: { intro?: string; outro?: string; loop?: string }) =>
     onEdit({ animationJson: serializeElementAnim({ ...anim, ...p }) });
 
   const style = useMemo(() => parseStylePartial(styleJson), [styleJson]);
@@ -220,6 +221,20 @@ export const TextOverlayInspector = memo(function TextOverlayInspector({
             className="field py-0.5"
           >
             {ELEMENT_OUTRO_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1">
+          loop
+          <select
+            value={anim.loop ?? "none"}
+            onChange={(e) => setAnim({ loop: e.target.value })}
+            className="field py-0.5"
+          >
+            {ELEMENT_LOOP_OPTIONS.map((o) => (
               <option key={o.id} value={o.id}>
                 {o.label}
               </option>

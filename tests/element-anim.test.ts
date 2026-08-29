@@ -7,6 +7,7 @@ import {
   sampleElementAnim,
   ELEMENT_INTRO_OPTIONS,
   ELEMENT_OUTRO_OPTIONS,
+  ELEMENT_LOOP_OPTIONS,
 } from "../src/lib/captions/element-anim.ts";
 
 test("parseElementAnim tolerates null / garbage / partial", () => {
@@ -28,8 +29,36 @@ test("serializeElementAnim drops none / unknown, null when empty", () => {
 test("option lists include None first and cover the registries", () => {
   assert.equal(ELEMENT_INTRO_OPTIONS[0].id, "none");
   assert.equal(ELEMENT_OUTRO_OPTIONS[0].id, "none");
+  assert.equal(ELEMENT_LOOP_OPTIONS[0].id, "none");
   assert.ok(ELEMENT_INTRO_OPTIONS.some((o) => o.id === "slide-up"));
   assert.ok(ELEMENT_OUTRO_OPTIONS.some((o) => o.id === "zoom-out"));
+  assert.ok(ELEMENT_LOOP_OPTIONS.some((o) => o.id === "float"));
+});
+
+test("serializeElementAnim carries loop, parse round-trips it", () => {
+  assert.equal(serializeElementAnim({ loop: "none" }), null);
+  assert.equal(serializeElementAnim({ loop: "bogus" }), null);
+  assert.equal(serializeElementAnim({ loop: "float" }), '{"loop":"float"}');
+  assert.deepEqual(parseElementAnim('{"intro":"pop","loop":"pulse"}'), { intro: "pop", loop: "pulse" });
+});
+
+test("a loop oscillates around identity and never settles", () => {
+  const spec = { loop: "float" }; // translateY, amp 6, period 2600
+  const atZero = sampleElementAnim(spec, { elapsedMs: 0, remainingMs: null });
+  assert.equal(atZero.transform, "none", "sin(0) = 0");
+  const quarter = sampleElementAnim(spec, { elapsedMs: 650, remainingMs: null }); // period/4 -> peak
+  const m = quarter.transform.match(/translate\(0px, (-?[\d.]+)px\)/);
+  assert.ok(m && Math.abs(Number(m[1]) - 6) < 0.5, `near +6px, got ${quarter.transform}`);
+  const half = sampleElementAnim(spec, { elapsedMs: 1300, remainingMs: null });
+  assert.match(half.transform, /translate\(0px, -?0(\.\d+)?px\)|none/); // back through 0
+});
+
+test("loop composes with an intro without cancelling it", () => {
+  const spec = { intro: "fade", loop: "breathe" };
+  const early = sampleElementAnim(spec, { elapsedMs: 0, remainingMs: null });
+  assert.ok(early.opacity <= 0.02, "intro still starts from 0");
+  const later = sampleElementAnim(spec, { elapsedMs: 5000, remainingMs: null });
+  assert.ok(later.opacity <= 1 && later.opacity > 0.6, "breathing dip, never brighter than 1");
 });
 
 test("no animation -> identity at all times", () => {
