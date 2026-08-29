@@ -452,6 +452,12 @@ model SubtitleConfig {
 
   uppercase Boolean @default(false)
 
+  // Rich Text & Captions extras (phase 2). JSON-serialised partial TextStyle
+  // (fill, effect layers, letterSpacing, lineHeight, textTransform, glass) and
+  // WordRule[]. Null = the scalar columns above are the whole style.
+  styleJson     String?
+  wordRulesJson String?
+
   clip Clip @relation(fields: [clipId], references: [id], onDelete: Cascade)
 
   @@map("subtitle_configs")

@@ -114,6 +114,8 @@ function makeDeps(
               maxLines: 2,
               maxWordsPerCue: 7,
               uppercase: false,
+              styleJson: null,
+              wordRulesJson: null,
             },
             renders: [
               {

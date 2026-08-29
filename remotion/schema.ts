@@ -38,12 +38,21 @@ export const captionPresetSchema = z.enum([
   "typewriter",
 ]);
 
+/** Rich Text & Captions style + word rules. Validated app-side; the composition
+ *  only accepts and forwards them, so these stay permissive. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const textStyleSchema = z.any().nullable().default(null);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const wordRulesSchema = z.array(z.any()).default([]);
+
 export const captionedClipSchema = z.object({
   /** `file://…` path to the (already reframed) source video. */
   videoSrc: z.string(),
   cues: z.array(remotionCueSchema),
   preset: captionPresetSchema,
   style: captionStyleSchema,
+  textStyle: textStyleSchema,
+  wordRules: wordRulesSchema,
   fps: z.number(),
   durationInFrames: z.number(),
   width: z.number(),
@@ -73,6 +82,8 @@ export const DEFAULT_CAPTIONED_CLIP_PROPS: CaptionedClipProps = {
     positionY: 0.78,
     uppercase: false,
   },
+  textStyle: null,
+  wordRules: [],
   fps: 30,
   durationInFrames: 900,
   width: 1080,

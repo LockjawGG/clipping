@@ -62,6 +62,10 @@ export const captionConfigSchema = z
     maxLines: z.number().int().min(1).max(3),
     maxWordsPerCue: z.number().int().min(2).max(12),
     uppercase: z.boolean(),
+    /** JSON-serialised partial TextStyle (fill, effect layers, letterSpacing…). */
+    styleJson: z.string().max(20000).nullable(),
+    /** JSON-serialised WordRule[]. */
+    wordRulesJson: z.string().max(8000).nullable(),
   })
   .partial()
   .strict();
@@ -107,6 +111,8 @@ interface ClipListRow {
     maxLines: number;
     maxWordsPerCue: number;
     uppercase: boolean;
+    styleJson: string | null;
+    wordRulesJson: string | null;
   } | null;
   renders: Array<{
     id: string;
@@ -299,6 +305,8 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
           maxLines: true,
           maxWordsPerCue: true,
           uppercase: true,
+          styleJson: true,
+          wordRulesJson: true,
         },
       },
       renders: {

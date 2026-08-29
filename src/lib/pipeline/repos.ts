@@ -16,6 +16,9 @@ import { enqueueJob } from "../jobs/prisma-store.ts";
 import { join } from "node:path";
 
 import type { Segment } from "../providers/types.ts";
+import type { CaptionStyle } from "../captions/presets.ts";
+import { textStyleFromParts } from "../captions/text-style.ts";
+import { parseWordRules } from "../captions/word-rules.ts";
 import type {
   ClipRepo,
   DbAspectRatio,
@@ -26,6 +29,40 @@ import type {
   TranscriptRepo,
   VideoRepo,
 } from "./deps.ts";
+
+/** The scalar SubtitleConfig columns as a CaptionStyle. */
+type ScalarSubtitleRow = {
+  fontFamily: string;
+  fontSizePx: number;
+  fontWeight: number;
+  textColor: string;
+  highlightColor: string;
+  outlineColor: string;
+  outlineWidthPx: number;
+  backgroundColor: string | null;
+  alignment: string;
+  positionY: number;
+  uppercase: boolean;
+};
+
+function scalarCaptionStyle(sc: ScalarSubtitleRow): CaptionStyle {
+  return {
+    fontFamily: sc.fontFamily,
+    fontSizePx: sc.fontSizePx,
+    fontWeight: sc.fontWeight,
+    textColor: sc.textColor,
+    highlightColor: sc.highlightColor,
+    outlineColor: sc.outlineColor,
+    outlineWidthPx: sc.outlineWidthPx,
+    backgroundColor: sc.backgroundColor,
+    alignment:
+      sc.alignment === "left" || sc.alignment === "right"
+        ? sc.alignment
+        : "center",
+    positionY: sc.positionY,
+    uppercase: sc.uppercase,
+  };
+}
 
 export function prismaVideoRepo(client: PrismaClient): VideoRepo {
   return {
@@ -283,6 +320,8 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
                   alignment: true,
                   positionY: true,
                   uppercase: true,
+                  styleJson: true,
+                  wordRulesJson: true,
                 },
               },
               video: { select: { storageKey: true } },
@@ -338,23 +377,9 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
           ]),
         ),
         captionAnimation: sc?.animation ?? "NONE",
-        captionStyle: sc
-          ? {
-              fontFamily: sc.fontFamily,
-              fontSizePx: sc.fontSizePx,
-              fontWeight: sc.fontWeight,
-              textColor: sc.textColor,
-              highlightColor: sc.highlightColor,
-              outlineColor: sc.outlineColor,
-              outlineWidthPx: sc.outlineWidthPx,
-              backgroundColor: sc.backgroundColor,
-              alignment: (sc.alignment === "left" || sc.alignment === "right"
-                ? sc.alignment
-                : "center") as "left" | "center" | "right",
-              positionY: sc.positionY,
-              uppercase: sc.uppercase,
-            }
-          : null,
+        captionStyle: sc ? scalarCaptionStyle(sc) : null,
+        textStyle: sc ? textStyleFromParts(scalarCaptionStyle(sc), sc.styleJson) : null,
+        wordRules: parseWordRules(sc?.wordRulesJson ?? null),
       };
     },
     async begin(renderId) {

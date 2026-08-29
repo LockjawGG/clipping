@@ -101,6 +101,23 @@ export function wordEffectCss(effect: WordRuleEffect): Record<string, string | n
   return css;
 }
 
+/** Parse a stored `wordRulesJson` blob; a malformed or non-array blob -> []. */
+export function parseWordRules(json: string | null | undefined): WordRule[] {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json);
+    if (Array.isArray(parsed)) {
+      return parsed.filter(
+        (r): r is WordRule =>
+          !!r && typeof r === "object" && "trigger" in r && "effect" in r,
+      );
+    }
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
 // ---------- ready-made rule sets ----------
 
 /** Every spoken word stays lit in the highlight colour (classic karaoke). */

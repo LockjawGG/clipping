@@ -184,6 +184,8 @@ function target(over: Partial<RenderTarget> = {}): RenderTarget {
     burnCaptions: false,
     captionAnimation: "NONE",
     captionStyle: null,
+    textStyle: null,
+    wordRules: [],
     overlays: [],
     wordStyles: {},
     ...over,

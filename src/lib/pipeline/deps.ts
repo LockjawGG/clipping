@@ -1,6 +1,8 @@
 import type { Ffmpeg, MediaInfo } from "../ffmpeg/run.ts";
 import type { TextTranslator } from "../translation/text.ts";
 import type { CaptionStyle } from "../captions/presets.ts";
+import type { TextStyle } from "../captions/text-style.ts";
+import type { WordRule } from "../captions/word-rules.ts";
 import type { FaceDetector } from "../faces/detector.ts";
 import type { MediaFetcher } from "./fetcher.ts";
 import type { CaptionRenderer } from "./remotion.ts";
@@ -87,7 +89,13 @@ export interface RenderTarget {
   burnCaptions: boolean;
   /** Prisma CaptionAnimation enum value; "NONE" means a static ffmpeg burn. */
   captionAnimation: string;
+  /** The scalar style, for the fast ffmpeg `force_style` burn. */
   captionStyle: CaptionStyle | null;
+  /** The resolved rich style (scalar columns + styleJson). Drives the Remotion
+   *  path; null when the clip has no caption config. */
+  textStyle: TextStyle | null;
+  /** Word-level rules (karaoke / highlight / emphasis) for the Remotion path. */
+  wordRules: WordRule[];
   /** Library images/GIFs pinned onto this clip, bottom-to-top. */
   overlays: RenderOverlay[];
   /** Per-word caption overrides, keyed by transcript word id. */

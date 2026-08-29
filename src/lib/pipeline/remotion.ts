@@ -3,6 +3,8 @@ import { pathToFileURL } from "node:url";
 
 import type { Cue } from "../captions/layout.ts";
 import type { CaptionStyle } from "../captions/presets.ts";
+import type { TextStyle } from "../captions/text-style.ts";
+import type { WordRule } from "../captions/word-rules.ts";
 
 /**
  * Renders animated (word-timed) captions over an already-reframed clip via the
@@ -16,6 +18,10 @@ export interface CaptionRenderInput {
   cues: Cue[];
   preset: string;
   style: CaptionStyle;
+  /** Resolved rich style (fill, effect layers, glass...). Null = use `style`. */
+  textStyle?: TextStyle | null;
+  /** Word-level rules (karaoke / highlight / emphasis). */
+  wordRules?: WordRule[];
   width: number;
   height: number;
   fps: number;
@@ -68,6 +74,8 @@ export class RemotionCaptionRenderer implements CaptionRenderer {
       cues: input.cues,
       preset: input.preset,
       style: input.style,
+      textStyle: input.textStyle ?? null,
+      wordRules: input.wordRules ?? [],
       fps,
       durationInFrames,
       width: input.width,

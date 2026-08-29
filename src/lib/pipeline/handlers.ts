@@ -4,7 +4,8 @@ import { dirname } from "node:path";
 import { DEFAULT_SNAP_CONFIG } from "../clips/boundaries.ts";
 import { refineSuggestions } from "../analysis/pipeline.ts";
 import { buildCues, toSrt, toStyledSrt } from "../captions/layout.ts";
-import { DEFAULT_CAPTION_STYLE, isAnimatedPreset, remotionPreset } from "../captions/presets.ts";
+import { DEFAULT_CAPTION_STYLE, remotionPreset } from "../captions/presets.ts";
+import { captionNeedsRemotion } from "../captions/text-style.ts";
 import { ASPECT_DIMENSIONS, type CaptionBurnStyle } from "../ffmpeg/args.ts";
 import { type FocalPoint, resampleTrack } from "../faces/track.ts";
 import type { JobHandler } from "../jobs/types.ts";
@@ -341,7 +342,10 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
         .flatMap((s) => s.words)
         .filter((w) => w.startMs >= target.startMs && w.endMs <= target.endMs);
     }
-    const animated = words.length > 0 && isAnimatedPreset(target.captionAnimation);
+    // Rich style (gradient / glow / glass / effect layers) or a real animation
+    // routes through Remotion; a plain scalar style burns statically with ffmpeg.
+    const animated =
+      words.length > 0 && captionNeedsRemotion(target.captionAnimation, target.textStyle);
     const staticBurn = words.length > 0 && !animated;
 
     // Static captions burn during the reframe; animated ones are composited by
@@ -421,6 +425,8 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
         cues: buildCues(words),
         preset: remotionPreset(target.captionAnimation),
         style: target.captionStyle ?? DEFAULT_CAPTION_STYLE,
+        textStyle: target.textStyle,
+        wordRules: target.wordRules,
         width: pre.width ?? width,
         height: pre.height ?? height,
         fps: pre.fps ?? 30,

@@ -86,6 +86,29 @@ export const DEFAULT_TEXT_STYLE: TextStyle = {
   glass: false,
 };
 
+/**
+ * Build a full `TextStyle` from the scalar `SubtitleConfig` columns plus an
+ * optional stored `styleJson` blob (the rich extras). A malformed blob is
+ * ignored rather than thrown.
+ */
+export function textStyleFromParts(
+  base: Partial<CaptionStyle> | null | undefined,
+  styleJson: string | null | undefined,
+): TextStyle {
+  let extra: Partial<TextStyle> = {};
+  if (styleJson) {
+    try {
+      const parsed = JSON.parse(styleJson);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        extra = parsed as Partial<TextStyle>;
+      }
+    } catch {
+      /* ignore a corrupt blob — fall back to the scalar columns */
+    }
+  }
+  return resolveTextStyle({ ...(base ?? {}), ...extra });
+}
+
 /** Fill in defaults; `fill` and `layers` are replaced wholesale when present. */
 export function resolveTextStyle(partial: Partial<TextStyle> | null | undefined): TextStyle {
   const p = partial ?? {};

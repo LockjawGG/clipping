@@ -18,6 +18,8 @@ import {
   type AnimTrack,
   type SpringConfig,
 } from "../src/lib/captions/anim-spec";
+import { resolveTextStyle, textStyleToCss, type TextStyle } from "../src/lib/captions/text-style";
+import { applyWordRules, wordEffectCss, type WordRule } from "../src/lib/captions/word-rules";
 
 /**
  * The Remotion interpreter for the declarative animation spec (`anim-spec.ts`).
@@ -49,9 +51,12 @@ const Word: React.FC<{
   tMs: number;
   animId: string;
   style: CaptionStyleProps;
+  wordRules: WordRule[];
+  /** Container uses a clipped gradient fill — words must inherit it, not set their own colour. */
+  gradientFill: boolean;
   fps: number;
   frame: number;
-}> = ({ word, tMs, animId, style, fps, frame }) => {
+}> = ({ word, tMs, animId, style, wordRules, gradientFill, fps, frame }) => {
   const anim = resolveTextAnimation(animId);
   const spoken = tMs >= word.startMs;
   const active = tMs >= word.startMs && tMs < word.endMs;
@@ -102,6 +107,13 @@ const Word: React.FC<{
   }
 
   const highlighted = active || (anim.highlight === "progressive" && spoken);
+  const ruleCss = wordEffectCss(applyWordRules(wordRules, { spoken, active }));
+  const overrideColor = ruleCss.color !== undefined || highlighted;
+  const baseColor = highlighted
+    ? style.highlightColor
+    : gradientFill && !overrideColor
+      ? "inherit"
+      : style.textColor;
 
   return (
     <span
@@ -110,7 +122,9 @@ const Word: React.FC<{
         margin: "0 0.18em",
         transform,
         opacity,
-        color: highlighted ? style.highlightColor : style.textColor,
+        color: baseColor,
+        ...(gradientFill && !overrideColor ? { WebkitTextFillColor: "inherit" } : {}),
+        ...ruleCss,
       }}
     >
       {cased(word.text)}
@@ -118,12 +132,25 @@ const Word: React.FC<{
   );
 };
 
-export const CaptionedClip: React.FC<CaptionedClipProps> = ({ videoSrc, cues, preset, style }) => {
+export const CaptionedClip: React.FC<CaptionedClipProps> = ({
+  videoSrc,
+  cues,
+  preset,
+  style,
+  textStyle,
+  wordRules,
+}) => {
   const frame = useCurrentFrame();
   const { fps, height, width } = useVideoConfig();
   const tMs = (frame / fps) * 1000;
   const cue = activeCue(cues, tMs);
   const animId = preset;
+  const rules = (wordRules ?? []) as WordRule[];
+
+  // Rich style (gradient / glow / glass / effect layers) when present, else the
+  // scalar props. The scalar `style` still drives per-word highlight colour.
+  const rich = textStyle ? resolveTextStyle(textStyle as Partial<TextStyle>) : null;
+  const richCss = rich ? textStyleToCss(rich, { scale: 1 }) : null;
 
   const alignItems =
     style.alignment === "left" ? "flex-start" : style.alignment === "right" ? "flex-end" : "center";
@@ -156,26 +183,35 @@ export const CaptionedClip: React.FC<CaptionedClipProps> = ({ videoSrc, cues, pr
           }}
         >
           <div
-            style={{
-              fontFamily: style.fontFamily,
-              fontSize: style.fontSizePx,
-              fontWeight: style.fontWeight,
-              lineHeight: 1.15,
-              textAlign: style.alignment,
-              color: style.textColor,
-              WebkitTextStroke: `${style.outlineWidthPx}px ${style.outlineColor}`,
-              paintOrder: "stroke fill",
-              transform: cueTransform,
-              opacity: cueOpacity,
-              ...(style.backgroundColor
+            style={
+              richCss
                 ? {
-                    backgroundColor: style.backgroundColor,
-                    padding: "0.12em 0.35em",
-                    borderRadius: "0.1em",
-                    textShadow: "none",
+                    ...(richCss.text as unknown as React.CSSProperties),
+                    ...((richCss.panel ?? {}) as unknown as React.CSSProperties),
+                    transform: cueTransform,
+                    opacity: cueOpacity,
                   }
-                : { textShadow: "0 4px 18px rgba(0,0,0,0.55)" }),
-            }}
+                : {
+                    fontFamily: style.fontFamily,
+                    fontSize: style.fontSizePx,
+                    fontWeight: style.fontWeight,
+                    lineHeight: 1.15,
+                    textAlign: style.alignment,
+                    color: style.textColor,
+                    WebkitTextStroke: `${style.outlineWidthPx}px ${style.outlineColor}`,
+                    paintOrder: "stroke fill",
+                    transform: cueTransform,
+                    opacity: cueOpacity,
+                    ...(style.backgroundColor
+                      ? {
+                          backgroundColor: style.backgroundColor,
+                          padding: "0.12em 0.35em",
+                          borderRadius: "0.1em",
+                          textShadow: "none",
+                        }
+                      : { textShadow: "0 4px 18px rgba(0,0,0,0.55)" }),
+                  }
+            }
           >
             {cue.words.map((w, i) => (
               <Word
@@ -184,6 +220,8 @@ export const CaptionedClip: React.FC<CaptionedClipProps> = ({ videoSrc, cues, pr
                 tMs={tMs}
                 animId={animId}
                 style={style}
+                wordRules={rules}
+                gradientFill={!!rich && rich.fill.kind !== "solid"}
                 fps={fps}
                 frame={frame}
               />
