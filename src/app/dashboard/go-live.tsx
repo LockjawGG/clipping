@@ -125,14 +125,20 @@ export function GoLive({ projectId }: { projectId?: string }) {
       } else if (includeScreen) {
         let disp: MediaStream;
         try {
-          disp = await navigator.mediaDevices.getDisplayMedia({
+          // `systemAudio: "include"` makes Chrome offer the "Share system audio"
+          // (whole screen) / "Share tab audio" (tab) checkbox in the picker.
+          // Keep the audio constraint permissive — an over-specified one makes
+          // some Chrome builds drop the capture's audio track entirely.
+          const displayOpts: DisplayMediaStreamOptions & {
+            systemAudio?: "include" | "exclude";
+            surfaceSwitching?: "include" | "exclude";
+          } = {
             video: { frameRate: 30 },
-            audio: {
-              echoCancellation: false,
-              noiseSuppression: false,
-              autoGainControl: false,
-            },
-          });
+            audio: true,
+            systemAudio: "include",
+            surfaceSwitching: "include",
+          };
+          disp = await navigator.mediaDevices.getDisplayMedia(displayOpts);
         } catch (e) {
           if (e instanceof DOMException && (e.name === "NotAllowedError" || e.name === "AbortError")) {
             setNote("Screen share cancelled — recording the mic only.");
@@ -149,7 +155,9 @@ export function GoLive({ projectId }: { projectId?: string }) {
         });
         if (disp.getAudioTracks().length === 0) {
           setNote(
-            "That source has no audio — mic audio only (screen is still recorded). Tip: a Chrome tab with “Share tab audio”, or “Entire screen”, carries sound.",
+            "No system audio on that source — recording your mic only (screen video is still captured). " +
+              "To include computer sound, Stop and start again, then pick “Entire screen” and tick " +
+              "“Share system audio”, or a browser tab and tick “Share tab audio”. A single app window can’t share audio.",
           );
         } else {
           screenAudio = disp;
