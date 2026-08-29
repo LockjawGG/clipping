@@ -413,6 +413,7 @@ export function prismaLiveChunkRepo(client: PrismaClient): LiveChunkRepo {
     startMs: true,
     storageKey: true,
     status: true,
+    bytes: true,
   } as const;
   return {
     async get(id) {

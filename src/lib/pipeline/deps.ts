@@ -168,6 +168,8 @@ export interface LiveChunkRow {
   startMs: number;
   storageKey: string;
   status: string;
+  /** Size the browser reported uploading, when it said. */
+  bytes: number | null;
 }
 
 export interface LiveChunkRepo {

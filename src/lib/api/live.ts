@@ -24,10 +24,19 @@ export const startLiveSchema = z.object({
 export const addChunkSchema = z.object({
   index: z.number().int().min(0),
   startMs: z.number().int().min(0),
-  durationMs: z.number().int().min(1).max(120_000).optional(),
-  /** ms of audio the client believes it has recorded so far (for the UI). */
+  durationMs: z.number().int().min(1).max(600_000).optional(),
   contentType: z.string().max(120).optional(),
+  /** Size the browser is about to PUT, so a truncated upload is detectable. */
+  bytes: z.number().int().min(0).optional(),
 });
+
+/**
+ * A LIVE session whose browser stopped checking in for this long is treated as
+ * abandoned: the sweeper finalises it from the fragments that did land. Well
+ * clear of the client's 15s heartbeat, so a slow network can't orphan a
+ * recording that is still going.
+ */
+export const LIVE_HEARTBEAT_TIMEOUT_MS = 120_000;
 
 interface VideoRow {
   id: string;
@@ -51,14 +60,35 @@ interface SegRow {
   words: { id: string; text: string; startMs: number; endMs: number }[];
 }
 
+interface RecoverableRow {
+  id: string;
+  originalFilename: string;
+  createdAt: Date;
+  liveHeartbeatAt: Date | null;
+  _count: { liveChunks: number };
+}
+
 export interface LiveDb {
   video: {
     create(a: { data: Record<string, unknown> }): Promise<{ id: string }>;
     findUnique(a: { where: { id: string }; select?: unknown }): Promise<VideoRow | null>;
+    findMany(a: {
+      where: Record<string, unknown>;
+      orderBy?: unknown;
+      select?: unknown;
+    }): Promise<RecoverableRow[]>;
     update(a: { where: { id: string }; data: Record<string, unknown> }): Promise<unknown>;
+    updateMany(a: {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }): Promise<{ count: number }>;
   };
   liveChunk: {
-    create(a: { data: Record<string, unknown> }): Promise<ChunkRow>;
+    upsert(a: {
+      where: Record<string, unknown>;
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    }): Promise<ChunkRow>;
     findFirst(a: { where: Record<string, unknown>; orderBy?: unknown }): Promise<ChunkRow | null>;
   };
   transcriptSegment: {
@@ -104,9 +134,63 @@ export async function startLive(deps: LiveServiceDeps, input: unknown) {
   const storageKey = `videos/${randomUUID()}/source.webm`;
   const name = title ?? `Live recording ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
   const video = await deps.db.video.create({
-    data: { projectId: resolved, status: "LIVE", originalFilename: name, storageKey, hasAudio: true },
+    data: {
+      projectId: resolved,
+      status: "LIVE",
+      originalFilename: name,
+      storageKey,
+      hasAudio: true,
+      liveHeartbeatAt: new Date(),
+    },
   });
   return { videoId: video.id, projectId: resolved };
+}
+
+/**
+ * Client check-in. Keeps the session out of the sweeper's reach; a lapse is the
+ * only signal that a recording tab died, since Stop can never arrive from a
+ * browser that is gone. No-ops on a session that already left LIVE.
+ */
+export async function heartbeatLive(deps: LiveServiceDeps, videoId: string) {
+  await ownedLiveVideo(deps, videoId);
+  const { count } = await deps.db.video.updateMany({
+    where: { id: videoId, status: "LIVE" },
+    data: { liveHeartbeatAt: new Date() },
+  });
+  return { videoId, live: count > 0 };
+}
+
+/**
+ * Sessions still marked LIVE that hold at least one fragment — a recording
+ * whose tab closed without stopping. Offered back to the user as "recover
+ * this", and picked up automatically by the sweeper once the heartbeat lapses.
+ */
+export async function listRecoverableLive(deps: LiveServiceDeps) {
+  const rows = await deps.db.video.findMany({
+    where: { status: "LIVE", project: { userId: deps.userId } },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      originalFilename: true,
+      createdAt: true,
+      liveHeartbeatAt: true,
+      _count: { select: { liveChunks: true } },
+    },
+  });
+  return {
+    sessions: rows
+      .filter((r) => r._count.liveChunks > 0)
+      .map((r) => ({
+        videoId: r.id,
+        name: r.originalFilename,
+        startedAt: r.createdAt.toISOString(),
+        fragments: r._count.liveChunks,
+        /** False while a live tab is still checking in — don't offer that one. */
+        stale:
+          !r.liveHeartbeatAt ||
+          Date.now() - r.liveHeartbeatAt.getTime() > LIVE_HEARTBEAT_TIMEOUT_MS,
+      })),
+  };
 }
 
 /**
@@ -116,17 +200,26 @@ export async function startLive(deps: LiveServiceDeps, input: unknown) {
  * transcribed individually, just stored in order and reassembled on Stop.
  */
 export async function addLiveChunk(deps: LiveServiceDeps, videoId: string, input: unknown) {
-  const { index, startMs, durationMs, contentType } = addChunkSchema.parse(input);
+  const { index, startMs, durationMs, contentType, bytes } = addChunkSchema.parse(input);
   const video = await ownedLiveVideo(deps, videoId);
   if (video.status !== "LIVE") throw new ApiError(409, "this recording is no longer live");
 
   const mime =
     contentType && /^(audio|video)\/[-\w.+]+$/.test(contentType) ? contentType : "video/webm";
   const storageKey = `videos/${videoId}/chunks/${String(index).padStart(5, "0")}.webm`;
-  const chunk = await deps.db.liveChunk.create({
-    data: { videoId, index, startMs, durationMs: durationMs ?? null, storageKey },
+  // Idempotent: the outbox re-registers a fragment whose upload failed, and the
+  // (videoId, index) unique would otherwise reject the retry.
+  const chunk = await deps.db.liveChunk.upsert({
+    where: { videoId_index: { videoId, index } },
+    create: { videoId, index, startMs, durationMs: durationMs ?? null, bytes: bytes ?? null, storageKey },
+    update: { bytes: bytes ?? null, durationMs: durationMs ?? null },
   });
   const uploadUrl = await deps.storage.createUploadUrl(storageKey, mime);
+  // A fragment arriving is itself proof the tab is alive.
+  await deps.db.video.updateMany({
+    where: { id: videoId, status: "LIVE" },
+    data: { liveHeartbeatAt: new Date() },
+  });
 
   return {
     chunkId: chunk.id,
@@ -165,12 +258,21 @@ export async function stopLive(deps: LiveServiceDeps, videoId: string) {
   if (!anyChunk) {
     await deps.db.video.update({
       where: { id: videoId },
-      data: { status: "FAILED", errorMessage: "Live recording ended with no audio." },
+      data: {
+        status: "FAILED",
+        errorMessage: "Live recording ended with no audio.",
+        liveHeartbeatAt: null,
+      },
     });
     return { videoId, status: "FAILED" as const, chunks: 0 };
   }
 
-  await deps.db.video.update({ where: { id: videoId }, data: { status: "PROBING" } });
+  // Leaving LIVE takes it out of the sweeper's scope; clear the heartbeat so
+  // the column never outlives the session it described.
+  await deps.db.video.update({
+    where: { id: videoId },
+    data: { status: "PROBING", liveHeartbeatAt: null },
+  });
   const jobId = await deps.enqueue({ videoId, kind: "LIVE_FINALIZE" });
   return { videoId, status: "PROBING" as const, jobId };
 }

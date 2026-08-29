@@ -91,12 +91,27 @@ export const liveFinalizeHandler: JobHandler<PipelineDeps> = async ({ job, deps,
   await mkdir(dirname(reassembled), { recursive: true });
   const part = scratchPath(work, "part.webm");
   let used = 0;
+  let truncatedAt: number | null = null;
   for (let i = 0; i < chunks.length; i++) {
     // A fragment whose upload never landed (tab crashed / network) is skipped;
     // the stream is still decodable up to the gap.
     if (!(await deps.storage.exists(chunks[i].storageKey))) continue;
     await deps.storage.getToFile(chunks[i].storageKey, part);
-    await appendFile(reassembled, await readFile(part));
+    const body = await readFile(part);
+
+    // A fragment shorter than the browser said it sent was cut off mid-upload.
+    // Its own bytes are still decodable, but splicing the next fragment onto a
+    // half-written frame corrupts everything after it — so take this one and
+    // stop. Better a recording that ends early than one that plays garbage.
+    const expected = chunks[i].bytes;
+    if (expected !== null && body.byteLength < expected) {
+      await appendFile(reassembled, body);
+      used++;
+      truncatedAt = chunks[i].index;
+      break;
+    }
+
+    await appendFile(reassembled, body);
     used++;
     await setProgress((0.4 * (i + 1)) / chunks.length);
   }
@@ -147,5 +162,10 @@ export const liveFinalizeHandler: JobHandler<PipelineDeps> = async ({ job, deps,
   for (const c of chunks) await deps.storage.delete(c.storageKey).catch(() => {});
   await deps.liveChunks.deleteForVideo(job.videoId).catch(() => {});
 
-  return { chunks: chunks.length, usedChunks: used, segments: result.segments.length };
+  return {
+    chunks: chunks.length,
+    usedChunks: used,
+    segments: result.segments.length,
+    ...(truncatedAt !== null ? { truncatedAtFragment: truncatedAt } : {}),
+  };
 };

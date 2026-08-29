@@ -111,6 +111,10 @@ model LiveChunk {
   /// Offset of this chunk from the start of the session, in ms.
   startMs    Int
   durationMs Int?
+  /// Size the browser said it uploaded. Finalisation compares this against the
+  /// stored object so a truncated fragment is distinguishable from a missing
+  /// one — joined blind, a short fragment corrupts the stream silently.
+  bytes      Int?
   /// PENDING → DONE / FAILED (rolling transcription of this chunk).
   status     String   @default("PENDING")
   createdAt  DateTime @default(now())
@@ -150,6 +154,12 @@ model Video {
   hasAudio     Boolean @default(true)
 
   errorMessage String?
+
+  /// Last check-in from the browser recording into this video. Only meaningful
+  /// while status is LIVE: a lapsed heartbeat means the tab died, and the
+  /// sweeper finalises the session from whatever fragments already landed.
+  liveHeartbeatAt DateTime?
+
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -162,6 +172,7 @@ model Video {
 
   @@index([projectId, createdAt])
   @@index([sourceUrlHash])
+  @@index([status, liveHeartbeatAt])
   @@map("videos")
 }
 
