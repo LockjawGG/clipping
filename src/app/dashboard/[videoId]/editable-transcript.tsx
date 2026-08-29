@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export interface TranscriptWord {
@@ -52,12 +52,16 @@ const Word = memo(function Word({
   word,
   style,
   selected,
+  matched,
+  active,
   onToggleSelect,
   onSeek,
 }: {
   word: TranscriptWord;
   style: WordStyle | undefined;
   selected: boolean;
+  matched: boolean;
+  active: boolean;
   onToggleSelect: (id: string) => void;
   onSeek: (absStartMs: number) => void;
 }) {
@@ -106,6 +110,7 @@ const Word = memo(function Word({
   return (
     <button
       type="button"
+      id={`tw-${word.id}`}
       onClick={() => {
         onSeek(word.startMs);
         onToggleSelect(word.id);
@@ -114,7 +119,13 @@ const Word = memo(function Word({
       aria-pressed={selected}
       style={wordSpanCss(style)}
       className={`rounded px-0.5 ${busy ? "opacity-50" : ""} ${
-        selected ? "bg-accent/30 ring-1 ring-accent" : "hover:bg-accent/15"
+        selected
+          ? "bg-accent/30 ring-1 ring-accent"
+          : active
+            ? "bg-amber-400/60 ring-1 ring-amber-500"
+            : matched
+              ? "bg-amber-400/25"
+              : "hover:bg-accent/15"
       }`}
       title="Click to jump the preview here · double-click to fix a typo"
     >
@@ -151,6 +162,37 @@ export const EditableTranscript = memo(function EditableTranscript({
   onClearSelection,
   onSeek,
 }: Props) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+
+  // Matching word ids, in reading order, plus a fast lookup set.
+  const matches = useMemo(() => {
+    if (q.length === 0) return { ids: [] as string[], set: new Set<string>() };
+    const ids: string[] = [];
+    for (const row of rows) {
+      for (const w of row.words) {
+        if (w.text.toLowerCase().includes(q)) ids.push(w.id);
+      }
+    }
+    return { ids, set: new Set(ids) };
+  }, [rows, q]);
+
+  const [activeIdx, setActiveIdx] = useState(0);
+  useEffect(() => setActiveIdx(0), [q]);
+  const activeId = matches.ids[activeIdx] ?? null;
+
+  const step = (delta: number) => {
+    if (matches.ids.length === 0) return;
+    setActiveIdx((i) => {
+      const next = (i + delta + matches.ids.length) % matches.ids.length;
+      const id = matches.ids[next];
+      document.getElementById(`tw-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+      const w = rows.flatMap((r) => r.words).find((x) => x.id === id);
+      if (w) onSeek(w.startMs);
+      return next;
+    });
+  };
+
   if (rows.length === 0) {
     return <p className="text-xs text-muted">No transcript for this range.</p>;
   }
@@ -158,6 +200,45 @@ export const EditableTranscript = memo(function EditableTranscript({
 
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-surface-raised">
+      <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-2 text-xs">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") step(e.shiftKey ? -1 : 1);
+          }}
+          placeholder="Search the transcript…"
+          className="field h-7 min-w-0 flex-1 py-0 text-xs"
+        />
+        {q.length > 0 && (
+          <>
+            <span className="shrink-0 tabular-nums text-muted">
+              {matches.ids.length === 0
+                ? "no matches"
+                : `${activeIdx + 1} / ${matches.ids.length}`}
+            </span>
+            <button
+              type="button"
+              onClick={() => step(-1)}
+              disabled={matches.ids.length === 0}
+              className="btn btn-ghost btn-sm"
+              aria-label="Previous match"
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              onClick={() => step(1)}
+              disabled={matches.ids.length === 0}
+              className="btn btn-ghost btn-sm"
+              aria-label="Next match"
+            >
+              ↓
+            </button>
+          </>
+        )}
+      </div>
       {count > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2 text-xs">
           <span className="font-medium text-muted">
@@ -226,6 +307,8 @@ export const EditableTranscript = memo(function EditableTranscript({
                   word={w}
                   style={styles[w.id]}
                   selected={selectedIds.has(w.id)}
+                  matched={matches.set.has(w.id)}
+                  active={w.id === activeId}
                   onToggleSelect={onToggleSelect}
                   onSeek={onSeek}
                 />
