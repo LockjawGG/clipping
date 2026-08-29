@@ -28,7 +28,6 @@ const fmtClock = (ms: number) => {
 export function GoLive({ projectId }: { projectId?: string }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("idle");
-  const [includeScreen, setIncludeScreen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -131,9 +130,7 @@ export function GoLive({ projectId }: { projectId?: string }) {
       // plus any screen audio to mix in.
       let screenVideo: MediaStreamTrack | null = null;
       let screenAudio: MediaStream | null = null;
-      if (includeScreen && !navigator.mediaDevices?.getDisplayMedia) {
-        setNote("Screen capture isn’t available in this browser — recording the mic only.");
-      } else if (includeScreen) {
+      if (navigator.mediaDevices?.getDisplayMedia) {
         let disp: MediaStream;
         try {
           // `systemAudio: "include"` makes Chrome offer the "Share system audio"
@@ -152,7 +149,7 @@ export function GoLive({ projectId }: { projectId?: string }) {
           disp = await navigator.mediaDevices.getDisplayMedia(displayOpts);
         } catch (e) {
           if (e instanceof DOMException && (e.name === "NotAllowedError" || e.name === "AbortError")) {
-            setNote("Screen share cancelled — recording the mic only.");
+            setNote("Screen sharing skipped — recording your mic only.");
             disp = new MediaStream();
           } else {
             throw e;
@@ -303,20 +300,13 @@ export function GoLive({ projectId }: { projectId?: string }) {
     <div className="flex flex-col gap-2">
       {phase === "idle" && (
         <>
-          <label className="flex items-center gap-2 text-xs text-muted">
-            <input
-              type="checkbox"
-              checked={includeScreen}
-              onChange={(e) => setIncludeScreen(e.target.checked)}
-            />
-            Also capture screen / tab audio
-          </label>
           <button type="button" onClick={start} className="btn btn-primary">
             ● Go live
           </button>
           <p className="text-[11px] text-muted">
-            Records your mic{includeScreen ? " + shared screen audio" : ""} in the browser,
-            transcribing as you speak. Stop turns it into a normal clip-able video.
+            You’ll be asked to pick a screen or tab to share (tick “Share system audio” /
+            “Share tab audio” for its sound) — or skip that to record just your mic.
+            Transcribes as you speak; Stop turns it into a normal clip-able video.
           </p>
         </>
       )}
