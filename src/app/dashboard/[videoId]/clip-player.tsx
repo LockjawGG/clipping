@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { buildCues, toVtt } from "@/lib/captions/layout.ts";
 import {
@@ -408,11 +408,16 @@ export const ClipPlayer = memo(function ClipPlayer({
                 { startMs: w.startMs, endMs: w.endMs, index: i },
                 w.text,
               );
+              // A real space *between* the spans (not inside them) — an
+              // inline-block trims its own edge whitespace but not a sibling
+              // text node, and this keeps a soft-wrap opportunity between words.
+              const gap = i > 0 ? " " : null;
               if (anim.hidden) {
                 return (
-                  <span key={w.id ?? i} style={{ display: "inline-block", margin: "0 0.18em", opacity: 0 }}>
-                    {w.text}
-                  </span>
+                  <Fragment key={w.id ?? i}>
+                    {gap}
+                    <span style={{ display: "inline-block", opacity: 0 }}>{w.text}</span>
+                  </Fragment>
                 );
               }
               const manual = wordSpanCss(wordStyles[w.id]);
@@ -425,22 +430,23 @@ export const ClipPlayer = memo(function ClipPlayer({
               const explicitColor =
                 manual.color !== undefined || ruleCss.color !== undefined || anim.highlighted;
               return (
-                <span
-                  key={w.id ?? i}
-                  style={{
-                    display: "inline-block",
-                    margin: "0 0.18em",
-                    ...(anim.css as unknown as React.CSSProperties),
-                    ...(anim.highlighted ? { color: richStyle.highlightColor } : {}),
-                    ...(gradientFill && !explicitColor
-                      ? { color: "inherit", WebkitTextFillColor: "inherit" }
-                      : {}),
-                    ...(ruleCss as unknown as React.CSSProperties),
-                    ...manual,
-                  }}
-                >
-                  {anim.visibleText}
-                </span>
+                <Fragment key={w.id ?? i}>
+                  {gap}
+                  <span
+                    style={{
+                      display: "inline-block",
+                      ...(anim.css as unknown as React.CSSProperties),
+                      ...(anim.highlighted ? { color: richStyle.highlightColor } : {}),
+                      ...(gradientFill && !explicitColor
+                        ? { color: "inherit", WebkitTextFillColor: "inherit" }
+                        : {}),
+                      ...(ruleCss as unknown as React.CSSProperties),
+                      ...manual,
+                    }}
+                  >
+                    {anim.visibleText}
+                  </span>
+                </Fragment>
               );
             })}
           </div>

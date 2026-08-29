@@ -70,11 +70,7 @@ const Word: React.FC<{
 
   if (anim.reveal === "word" && !spoken) {
     // Same box model as a shown word so the line doesn't shift as words reveal.
-    return (
-      <span style={{ display: "inline-block", margin: "0 0.18em", opacity: 0 }}>
-        {cased(word.text)}
-      </span>
-    );
+    return <span style={{ display: "inline-block", opacity: 0 }}>{cased(word.text)}</span>;
   }
 
   if (anim.reveal === "char") {
@@ -85,7 +81,6 @@ const Word: React.FC<{
       <span
         style={{
           display: "inline-block",
-          margin: "0 0.18em",
           // let a clipped gradient fill on the container show through
           ...(gradientFill
             ? { color: "inherit", WebkitTextFillColor: "inherit" }
@@ -139,7 +134,6 @@ const Word: React.FC<{
     <span
       style={{
         display: "inline-block",
-        margin: "0 0.18em",
         transform,
         opacity,
         color: baseColor,
@@ -295,17 +289,22 @@ export const CaptionedClip: React.FC<CaptionedClipProps> = ({
             }
           >
             {cue.words.map((w, i) => (
-              <Word
-                key={i}
-                word={w}
-                tMs={tMs}
-                animId={animId}
-                style={style}
-                wordRules={rules}
-                gradientFill={!!rich && rich.fill.kind !== "solid"}
-                fps={fps}
-                frame={frame}
-              />
+              <React.Fragment key={i}>
+                {/* a real space between words — an inline-block trims its own
+                    edge whitespace but not a sibling text node, and this keeps
+                    a soft-wrap opportunity between words. */}
+                {i > 0 ? " " : null}
+                <Word
+                  word={w}
+                  tMs={tMs}
+                  animId={animId}
+                  style={style}
+                  wordRules={rules}
+                  gradientFill={!!rich && rich.fill.kind !== "solid"}
+                  fps={fps}
+                  frame={frame}
+                />
+              </React.Fragment>
             ))}
           </div>
         </AbsoluteFill>
