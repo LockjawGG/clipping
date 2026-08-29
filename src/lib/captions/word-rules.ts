@@ -118,6 +118,21 @@ export function parseWordRules(json: string | null | undefined): WordRule[] {
   return [];
 }
 
+/** Serialise for storage; drops `undefined` effect fields and empty rules, and
+ *  returns null for an empty list so the column stays clean. */
+export function serializeWordRules(rules: readonly WordRule[]): string | null {
+  const kept = rules
+    .map((r) => {
+      const effect: WordRuleEffect = {};
+      for (const [k, v] of Object.entries(r.effect ?? {})) {
+        if (v !== undefined) (effect as Record<string, unknown>)[k] = v;
+      }
+      return { trigger: r.trigger, effect };
+    })
+    .filter((r) => Object.keys(r.effect).length > 0);
+  return kept.length ? JSON.stringify(kept) : null;
+}
+
 // ---------- ready-made rule sets ----------
 
 /** Every spoken word stays lit in the highlight colour (classic karaoke). */

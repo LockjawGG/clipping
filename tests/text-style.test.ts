@@ -18,6 +18,8 @@ import {
   karaokeRules,
   emphasisRules,
   triggerMatches,
+  parseWordRules,
+  serializeWordRules,
 } from "../src/lib/captions/word-rules.ts";
 import {
   CAPTION_TEMPLATES,
@@ -149,6 +151,23 @@ test("wordEffectCss: scale -> em, bold -> 800, background -> boxed", () => {
 test("ready-made rule sets", () => {
   assert.deepEqual(karaokeRules("#0f0"), [{ trigger: "spoken", effect: { color: "#0f0" } }]);
   assert.equal(emphasisRules("#111")[0].trigger, "emphasis");
+});
+
+test("serializeWordRules prunes undefined fields, drops empty rules, round-trips", () => {
+  assert.equal(serializeWordRules([]), null);
+  assert.equal(
+    serializeWordRules([{ trigger: "active", effect: { bold: undefined, color: undefined } }]),
+    null,
+    "an all-undefined effect is not a rule",
+  );
+  const json = serializeWordRules([
+    { trigger: "active", effect: { color: "#FFE600", scale: undefined } },
+    { trigger: "emphasis", effect: { bold: true } },
+  ]);
+  assert.equal(json, '[{"trigger":"active","effect":{"color":"#FFE600"}},{"trigger":"emphasis","effect":{"bold":true}}]');
+  const back = parseWordRules(json);
+  assert.equal(back.length, 2);
+  assert.deepEqual(back[0], { trigger: "active", effect: { color: "#FFE600" } });
 });
 
 // ---------- preset-library ----------

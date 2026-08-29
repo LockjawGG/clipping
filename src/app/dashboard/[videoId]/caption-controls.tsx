@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type { CaptionTemplate } from "@/lib/captions/preset-library.ts";
 import { TemplateBrowser, splitTemplate } from "./caption-templates";
 import { CaptionStyleAdvanced } from "./caption-style-advanced";
+import { CaptionWordRules } from "./caption-word-rules";
 
 const ANIMATIONS = [
   "NONE",
@@ -370,6 +371,11 @@ export const CaptionControls = memo(function CaptionControls({
           <CaptionStyleAdvanced
             styleJson={value.styleJson}
             onChange={(styleJson) => set("styleJson", styleJson)}
+          />
+
+          <CaptionWordRules
+            wordRulesJson={value.wordRulesJson}
+            onChange={(wordRulesJson) => set("wordRulesJson", wordRulesJson)}
           />
 
           <details className="rounded border border-border bg-surface-raised px-2 py-1 text-xs">
