@@ -113,22 +113,48 @@ export function GoLive({ projectId }: { projectId?: string }) {
     chunkIndex.current = 0;
     lastSeg.current = -1;
     try {
-      const mic = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
-      streams.current.push(mic);
-
+      // Screen picker FIRST, while the click's user-activation is still fresh —
+      // an `await getUserMedia` before it consumes the gesture and Chrome then
+      // rejects getDisplayMedia with NotAllowedError.
       let screenAudio: MediaStream | null = null;
-      if (includeScreen) {
-        const disp = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      if (includeScreen && !navigator.mediaDevices?.getDisplayMedia) {
+        setNote("Screen capture isn’t available in this browser — recording the mic only.");
+      } else if (includeScreen) {
+        let disp: MediaStream;
+        try {
+          disp = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            },
+          });
+        } catch (e) {
+          if (e instanceof DOMException && (e.name === "NotAllowedError" || e.name === "AbortError")) {
+            setNote("Screen share cancelled — recording the mic only.");
+            disp = new MediaStream(); // fall through with mic only
+          } else {
+            throw e;
+          }
+        }
         streams.current.push(disp);
-        disp.getVideoTracks().forEach((t) => t.stop()); // audio only
+        // Keep the video track alive but unused (stopping it can end the whole
+        // capture on some browsers); getDisplayMedia can't be audio-only.
+        disp.getVideoTracks().forEach((t) => (t.enabled = false));
         if (disp.getAudioTracks().length === 0) {
-          setNote("No screen audio was shared — recording the mic only. Re-pick and tick “Share audio”.");
+          setNote(
+            "That source has no audio — recording the mic only. In the picker choose a Chrome tab (tick “Share tab audio”) or “Entire screen”.",
+          );
         } else {
           screenAudio = disp;
         }
       }
+
+      const mic = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      streams.current.push(mic);
 
       const AC: typeof AudioContext =
         window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -177,10 +203,14 @@ export function GoLive({ projectId }: { projectId?: string }) {
       setPhase("idle");
       setError(
         e instanceof DOMException && e.name === "NotAllowedError"
-          ? "Permission denied — allow microphone (and screen) access to record."
-          : e instanceof Error
-            ? e.message
-            : "couldn't start recording",
+          ? "Microphone permission denied — allow it in the browser and try again."
+          : e instanceof DOMException && e.name === "NotFoundError"
+            ? "No microphone found."
+            : e instanceof DOMException && e.name === "NotReadableError"
+              ? "The microphone is in use by another app."
+              : e instanceof Error
+                ? e.message
+                : "couldn't start recording",
       );
     }
   }
