@@ -52,6 +52,7 @@ export type FetchErrorKind =
   | "no_stream"
   | "too_large"
   | "not_installed"
+  | "wont_start"
   | "unknown";
 
 /** A fetch failure with a user-facing message plus the raw tail for debugging. */
@@ -76,8 +77,18 @@ const FRIENDLY: Record<FetchErrorKind, string> = {
   no_stream: "Found the page, but couldn’t get a usable media stream from it.",
   too_large: "That source is larger than the size limit.",
   not_installed: "The media downloader (yt-dlp) isn’t installed or isn’t on the path.",
+  wont_start:
+    "yt-dlp is installed but failed to start. Reinstall it (e.g. `pip install -U --force-reinstall yt-dlp`) or point YTDLP_PATH at a standalone build.",
   unknown: "Couldn’t get media from that link.",
 };
+
+/**
+ * Windows process exit codes for "the exe exists but its runtime won't load":
+ * 0xC0000142 STATUS_DLL_INIT_FAILED, 0xC0000135 STATUS_DLL_NOT_FOUND,
+ * 0xC000007B STATUS_INVALID_IMAGE_FORMAT. Common with winget-packaged binaries
+ * launched from a non-console parent.
+ */
+const WONT_START_EXIT_CODES = new Set([3221225794, 3221225781, 3221225595]);
 
 /**
  * Map a yt-dlp stderr dump to a `{ kind, message }` a normal user can act on.
@@ -279,6 +290,9 @@ export class YtDlpFetcher implements MediaFetcher, MediaProbe {
         }
         await cleanupPartials(outputPath);
         const tail = stderr.split("\n").filter(Boolean).slice(-4).join("\n").trim();
+        if (code != null && WONT_START_EXIT_CODES.has(code)) {
+          throw new FetchError("wont_start", FRIENDLY.wont_start, `exit ${code} (0x${(code >>> 0).toString(16)})`);
+        }
         const { kind, message } = classifyFetchError(stderr);
         throw new FetchError(kind, message, tail || `exit ${code}`);
       }
@@ -326,6 +340,9 @@ export class YtDlpFetcher implements MediaFetcher, MediaProbe {
           continue;
         }
         const tail = stderr.split("\n").filter(Boolean).slice(-4).join("\n").trim();
+        if (code != null && WONT_START_EXIT_CODES.has(code)) {
+          throw new FetchError("wont_start", FRIENDLY.wont_start, `exit ${code} (0x${(code >>> 0).toString(16)})`);
+        }
         const { kind, message } = classifyFetchError(stderr);
         throw new FetchError(kind, message, tail || `exit ${code}`);
       }

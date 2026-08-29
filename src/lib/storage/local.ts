@@ -35,7 +35,10 @@ export class LocalStorageProvider implements StorageProvider {
     this.baseDir = resolve(opts.baseDir);
     this.publicBaseUrl = opts.publicBaseUrl.replace(/\/+$/, "");
     this.secret = opts.secret;
-    this.defaultExpiresInSec = opts.defaultExpiresInSec ?? 900;
+    // Media the user stares at while editing (thumbnails, the source video) is
+    // signed once when the page renders and never refreshed for a READY video.
+    // 15 min was far too short — a normal editing session outlived every URL.
+    this.defaultExpiresInSec = opts.defaultExpiresInSec ?? 6 * 60 * 60;
   }
 
   /** Absolute path for a key, guaranteed to stay under `baseDir`. */

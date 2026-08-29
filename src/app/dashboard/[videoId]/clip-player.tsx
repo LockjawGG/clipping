@@ -31,6 +31,9 @@ interface Props {
   onPlayhead: (ms: number) => void;
   /** Fires when playback starts / stops, so a linked timeline can follow along. */
   onPlayingChange?: (playing: boolean) => void;
+  /** The <video> failed to load its source (e.g. an expired signed URL) — the
+   *  parent can refresh to mint a fresh one. Fires at most once per source. */
+  onSourceError?: () => void;
   onCaptionLayout: (layout: { positionY: number; alignment: "left" | "center" | "right" }) => void;
 }
 
@@ -58,10 +61,12 @@ export const ClipPlayer = memo(function ClipPlayer({
   onOverlayChange,
   onPlayhead,
   onPlayingChange,
+  onSourceError,
   onCaptionLayout,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+  const erroredSrc = useRef<string | null>(null);
   const [mode, setMode] = useState<Mode>("source");
   const [playing, setPlaying] = useState(false);
   const [posMs, setPosMs] = useState(0);
@@ -251,6 +256,11 @@ export const ClipPlayer = memo(function ClipPlayer({
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
           onEnded={() => setPlaying(false)}
+          onError={() => {
+            if (erroredSrc.current === src) return; // one report per source
+            erroredSrc.current = src;
+            onSourceError?.();
+          }}
           onClick={togglePlay}
           className="max-h-[58vh] w-auto max-w-full cursor-pointer"
         >

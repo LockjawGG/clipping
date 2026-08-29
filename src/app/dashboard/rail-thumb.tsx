@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 /**
  * A thumbnail tile for the rails. Falls back to a plain surface tile when the
  * URL is missing or fails to load (expired token, 404, still-ingesting video) —
- * never a broken-image glyph.
+ * never a broken-image glyph. Retries whenever a fresh `url` arrives.
  */
 export function RailThumb({
   url,
@@ -15,8 +15,10 @@ export function RailThumb({
   className?: string;
 }) {
   const [broken, setBroken] = useState(false);
-  const base = `shrink-0 rounded bg-surface-raised object-cover ${className}`;
+  // A new signed URL (e.g. after router.refresh) deserves another try.
+  useEffect(() => setBroken(false), [url]);
 
+  const base = `shrink-0 rounded bg-surface-raised object-cover ${className}`;
   if (!url || broken) return <span className={base} aria-hidden />;
 
   return (

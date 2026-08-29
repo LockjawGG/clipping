@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { RailThumb } from "../rail-thumb";
 import { CaptionControls, CAPTION_DEFAULTS, type CaptionConfig } from "./caption-controls";
 import { ClipPlayer, type PreviewWord } from "./clip-player";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
@@ -537,11 +538,9 @@ export function ClipEditor({
         >
           {busy === "delete" ? "…" : "✕"}
         </button>
-        {/* eslint-disable-next-line @next/next/no-img-element -- signed storage URL */}
-        <img
-          src={clip.thumbnailUrl ?? undefined}
-          alt=""
-          className={`shrink-0 rounded-lg bg-surface-raised object-cover ${collapsed ? "h-9 w-16" : "h-16 w-28"}`}
+        <RailThumb
+          url={clip.thumbnailUrl}
+          className={`rounded-lg ${collapsed ? "h-9 w-16" : "h-16 w-28"}`}
         />
         <input
           value={draft.title}
@@ -714,6 +713,7 @@ export function ClipEditor({
         onOverlayChange={editOverlay}
         onPlayhead={setPlayheadMs}
         onPlayingChange={setPreviewPlaying}
+        onSourceError={softReset}
         onCaptionLayout={onCaptionLayout}
       />
 
