@@ -165,7 +165,8 @@ body {
     @apply absolute z-20 min-w-[10rem] rounded-lg border border-border bg-surface-raised p-1
       shadow-card;
   }
-  .menu button {
+  .menu button,
+  .menu a {
     @apply flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm
       text-text transition-colors hover:bg-elevated;
   }

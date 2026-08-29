@@ -284,6 +284,7 @@ export function ClipEditor({
   const [captionsOn, setCaptionsOn] = useState(clip.captions !== null);
   const [captionDraft, setCaptionDraft] = useState<CaptionConfig>(clip.captions ?? CAPTION_DEFAULTS);
   const [saveMenu, setSaveMenu] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
 
   const onCaptionLayout = useCallback(
     (l: { positionY: number; alignment: "left" | "center" | "right" }) =>
@@ -486,6 +487,26 @@ export function ClipEditor({
         >
           {collapsed ? "▸" : "▾"}
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (confirmClose) {
+              setConfirmClose(false);
+              void remove();
+            } else {
+              setConfirmClose(true);
+              setTimeout(() => setConfirmClose(false), 3000);
+            }
+          }}
+          disabled={busy !== null}
+          aria-label="Remove this clip"
+          title={confirmClose ? "Click again to remove this clip" : "Remove this clip"}
+          className={`btn btn-ghost btn-sm mt-1 w-7 shrink-0 ${
+            confirmClose ? "bg-danger/15 text-danger" : "text-muted hover:text-danger"
+          }`}
+        >
+          {busy === "delete" ? "…" : "✕"}
+        </button>
         {/* eslint-disable-next-line @next/next/no-img-element -- signed storage URL */}
         <img
           src={clip.thumbnailUrl ?? undefined}
@@ -511,16 +532,39 @@ export function ClipEditor({
           <button
             type="button"
             onClick={() => setSaveMenu((v) => !v)}
-            disabled={busy !== null || projects.length === 0}
+            disabled={busy !== null}
             aria-haspopup="menu"
             aria-expanded={saveMenu}
             className={`btn btn-ghost btn-sm ${savedProject ? "text-accent" : ""}`}
           >
-            {busy === "save-to" ? "…" : savedProject ? `✓ ${savedProject.name}` : "Save to ▸"}
+            {busy === "save-to" ? "…" : savedProject ? `✓ ${savedProject.name}` : "Save / export ▸"}
           </button>
           {saveMenu && (
             <div className="menu right-0 top-9" role="menu">
-              <p className="px-2 py-1 text-xs text-muted">Save this clip to…</p>
+              <p className="px-2 py-1 text-xs text-muted">Save to your computer</p>
+              {clip.render?.downloadUrl ? (
+                <a
+                  role="menuitem"
+                  href={clip.render.downloadUrl}
+                  download={`${fileSlug(draft.title)}.mp4`}
+                  onClick={() => setSaveMenu(false)}
+                >
+                  ⬇ Download MP4
+                </a>
+              ) : (
+                <button
+                  role="menuitem"
+                  disabled={busy !== null || rendering}
+                  onClick={() => {
+                    setSaveMenu(false);
+                    void saveAndRender();
+                  }}
+                >
+                  ⬇ {rendering ? "Rendering…" : "Render & download MP4"}
+                </button>
+              )}
+              <div className="my-1 border-t border-border" />
+              <p className="px-2 py-1 text-xs text-muted">Save a copy to a project</p>
               {projects.map((p) => (
                 <button
                   key={p.id}
@@ -814,13 +858,7 @@ export function ClipEditor({
           {busy === "save" ? "…" : "Save"}
         </button>
         {dirty && <span className="text-xs text-muted">Unsaved edits</span>}
-        <button
-          onClick={remove}
-          disabled={busy !== null}
-          className="btn btn-ghost btn-danger ml-auto"
-        >
-          Delete
-        </button>
+        <span className="ml-auto text-xs text-muted">✕ (top-left) removes this clip</span>
       </div>
       </>
       )}
