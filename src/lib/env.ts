@@ -41,11 +41,11 @@ const schema = z.object({
   /** Whisper beam-search width. Higher = more accurate + slower. CLI default 5. */
   WHISPER_BEAM_SIZE: z.coerce.number().int().min(1).max(10).default(5),
   /**
-   * Language for rolling live-capture chunks. A short 8s slice is too little for
-   * reliable auto-detection (it language-hops), so live transcription pins this.
-   * The full re-transcribe on Stop still auto-detects. Empty = auto-detect.
+   * Force a transcription language for live recordings (ISO code, e.g. "es").
+   * Empty (the default) auto-detects: the finalize pass sees the whole
+   * recording so detection is reliable, and any language is transcribed.
    */
-  LIVE_LANGUAGE: z.string().default("en"),
+  LIVE_LANGUAGE: z.string().default(""),
   OPENAI_API_KEY: z.string().optional(),
   DEEPGRAM_API_KEY: z.string().optional(),
 

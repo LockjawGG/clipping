@@ -151,7 +151,7 @@ export interface Ffmpeg {
   videoTimestampReport(
     inputPath: string,
     signal?: AbortSignal,
-  ): Promise<{ packets: number; nonMonotonic: number }>;
+  ): Promise<{ packets: number; backwards: number; duplicateRun: number }>;
   /** Frame-accurate trim (re-encode, never stream-copy). */
   cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void>;
   /** Scale/crop to an aspect preset, optionally burning subtitles. */
@@ -218,29 +218,35 @@ export class FfmpegRunner implements Ffmpeg {
   async videoTimestampReport(
     inputPath: string,
     signal?: AbortSignal,
-  ): Promise<{ packets: number; nonMonotonic: number }> {
+  ): Promise<{ packets: number; backwards: number; duplicateRun: number }> {
     const { stdout } = await this.exec(
       this.ffprobePath,
       buildVideoPacketDtsArgs({ inputPath }),
       signal,
     );
     let packets = 0;
-    let nonMonotonic = 0;
+    let backwards = 0;
+    let duplicateRun = 0;
+    let run = 1;
     let prev = Number.NEGATIVE_INFINITY;
     for (const line of stdout.split(/\r?\n/)) {
       const t = line.trim();
       if (t === "") continue;
       packets++;
-      // "N/A" appears when a packet carries no DTS at all — equally unseekable.
-      const dts = Number(t);
-      if (!Number.isFinite(dts) || dts <= prev) {
-        nonMonotonic++;
-        continue;
+      const dts = Number(t); // "N/A" -> NaN, a packet with no DTS
+      if (!Number.isFinite(dts) || dts < prev) {
+        backwards++;
+      } else if (dts === prev) {
+        run += 1;
+        if (run > duplicateRun) duplicateRun = run;
+      } else {
+        run = 1;
       }
-      prev = dts;
+      if (Number.isFinite(dts)) prev = dts;
     }
-    return { packets, nonMonotonic };
+    return { packets, backwards, duplicateRun };
   }
+
 
   async cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void> {
     await mkdir(dirname(outputPath), { recursive: true });

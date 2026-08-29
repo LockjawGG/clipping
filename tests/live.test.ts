@@ -495,7 +495,7 @@ test("LIVE_FINALIZE stops at a truncated fragment rather than splicing past it",
 /* ------------------------------------------- finalisation: copy vs re-encode */
 
 /** A finalize deps fake whose timestamp check and codec are configurable. */
-function finalizeFake(opts: { videoCodec: string | null; nonMonotonic: number }) {
+function finalizeFake(opts: { videoCodec: string | null; backwards?: number; duplicateRun?: number }) {
   const calls: string[] = [];
   const puts: Array<{ key: string; mime: string }> = [];
   let storageKey = "videos/vidX/source.webm";
@@ -506,7 +506,7 @@ function finalizeFake(opts: { videoCodec: string | null; nonMonotonic: number })
       transcodeAv: async () => calls.push("transcodeAv"),
       videoTimestampReport: async () => {
         calls.push("check");
-        return { packets: 100, nonMonotonic: opts.nonMonotonic };
+        return { packets: 100, backwards: opts.backwards ?? 0, duplicateRun: opts.duplicateRun ?? 0 };
       },
       probe: async () => ({ durationMs: 1_000, hasAudio: true, videoCodec: opts.videoCodec }),
       extractAudio: async () => {},
@@ -542,7 +542,7 @@ function finalizeFake(opts: { videoCodec: string | null; nonMonotonic: number })
 }
 
 test("LIVE_FINALIZE keeps the cheap stream copy when timestamps come out clean", async () => {
-  const f = finalizeFake({ videoCodec: "vp9", nonMonotonic: 0 });
+  const f = finalizeFake({ videoCodec: "vp9" });
   const out = (await liveFinalizeHandler(jobCtx(f.deps, "LIVE_FINALIZE", null))) as { strategy: string };
 
   assert.equal(out.strategy, "copy");
@@ -551,8 +551,8 @@ test("LIVE_FINALIZE keeps the cheap stream copy when timestamps come out clean",
   assert.deepEqual(f.puts[0], { key: "videos/vidX/source.webm", mime: "video/webm" });
 });
 
-test("LIVE_FINALIZE re-encodes to MP4 when the copy has non-monotonic timestamps", async () => {
-  const f = finalizeFake({ videoCodec: "vp9", nonMonotonic: 7 });
+test("LIVE_FINALIZE re-encodes to MP4 when the timeline rewinds mid-file", async () => {
+  const f = finalizeFake({ videoCodec: "vp9", backwards: 7 });
   const out = (await liveFinalizeHandler(jobCtx(f.deps, "LIVE_FINALIZE", null))) as { strategy: string };
 
   assert.equal(out.strategy, "transcode");
@@ -562,8 +562,21 @@ test("LIVE_FINALIZE re-encodes to MP4 when the copy has non-monotonic timestamps
   assert.ok(f.calls.includes("delete-old"), "the stale .webm object is cleaned up");
 });
 
+test("LIVE_FINALIZE tolerates a few shared timestamps — ms rounding, not a splice", async () => {
+  const f = finalizeFake({ videoCodec: "vp9", duplicateRun: 3 });
+  const out = (await liveFinalizeHandler(jobCtx(f.deps, "LIVE_FINALIZE", null))) as { strategy: string };
+  assert.equal(out.strategy, "copy", "3 packets on one DTS is normal WebM granularity");
+  assert.ok(!f.calls.includes("transcodeAv"));
+});
+
+test("LIVE_FINALIZE re-encodes when a long run of packets shares one DTS (a real splice)", async () => {
+  const f = finalizeFake({ videoCodec: "vp9", duplicateRun: 40 });
+  const out = (await liveFinalizeHandler(jobCtx(f.deps, "LIVE_FINALIZE", null))) as { strategy: string };
+  assert.equal(out.strategy, "transcode");
+});
+
 test("LIVE_FINALIZE skips the timestamp check entirely for audio-only recordings", async () => {
-  const f = finalizeFake({ videoCodec: null, nonMonotonic: 99 });
+  const f = finalizeFake({ videoCodec: null, backwards: 99 });
   const out = (await liveFinalizeHandler(jobCtx(f.deps, "LIVE_FINALIZE", null))) as { strategy: string };
 
   assert.equal(out.strategy, "copy");
@@ -588,7 +601,7 @@ test("estimateFinalizeBytes falls back to a per-fragment estimate when sizes are
 });
 
 test("LIVE_FINALIZE refuses to start when the scratch disk can't hold the result", async () => {
-  const f = finalizeFake({ videoCodec: "vp9", nonMonotonic: 0 });
+  const f = finalizeFake({ videoCodec: "vp9" });
   // A path that exists but reports essentially no free space isn't something we
   // can fake through statfs, so assert the estimate the guard is built on.
   const need = estimateFinalizeBytes({ fragmentBytes: 8_000_000_000, fragmentCount: 1440 });

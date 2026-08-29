@@ -5,8 +5,14 @@ import type { JobHandler } from "../jobs/types.ts";
 import type { Segment } from "../providers/types.ts";
 import { jobWorkDir, type PipelineDeps, scratchPath } from "./deps.ts";
 
-/** Pin the language for short isolated chunks (too little to auto-detect). */
-const LIVE_LANGUAGE = process.env.LIVE_LANGUAGE ?? "en";
+/**
+ * Optional forced transcription language for live recordings (ISO code, e.g.
+ * "es"). Empty is the default and the norm: the finalize pass sees the whole
+ * recording, so Whisper detects the language itself and any language it picks
+ * up is transcribed. Only set this to override a deployment that is always one
+ * non-English language and wants to skip detection.
+ */
+const LIVE_LANGUAGE = process.env.LIVE_LANGUAGE?.trim() || "";
 
 /**
  * Live-capture handlers.
@@ -194,8 +200,13 @@ export const liveFinalizeHandler: JobHandler<PipelineDeps> = async ({ job, deps,
   if (hasVideo) {
     const ts = await deps.ffmpeg
       .videoTimestampReport(source, signal)
-      .catch(() => ({ packets: 0, nonMonotonic: 1 }));
-    if (ts.nonMonotonic > 0) {
+      .catch(() => ({ packets: 0, backwards: 1, duplicateRun: 0 }));
+    // A rewinding timeline always breaks seeking; so does a long run of packets
+    // stuck on one DTS (a real splice). A handful of shared timestamps is just
+    // the millisecond granularity of WebM and seeks fine — don't pay for a
+    // re-encode over that.
+    const spliceRun = ts.duplicateRun > 8;
+    if (ts.backwards > 0 || spliceRun) {
       strategy = "transcode";
       const mp4 = scratchPath(work, "source.mp4");
       await deps.ffmpeg.transcodeAv(reassembled, mp4, signal);
