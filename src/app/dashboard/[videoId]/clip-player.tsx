@@ -433,7 +433,9 @@ export const ClipPlayer = memo(function ClipPlayer({
               // the next one (transform:scale doesn't affect layout).
               const sv = Number(anim.css.transform.match(/scale\(([\d.]+)\)/)?.[1] ?? 1);
               const scaleMx =
-                sv > 1.001 ? `${(w.text.length * 0.3 * (sv - 1)).toFixed(3)}em` : null;
+                sv > 1.001
+                  ? `${Math.max(0.1, w.text.length * 0.42 * (sv - 1)).toFixed(3)}em`
+                  : null;
               return (
                 <Fragment key={w.id ?? i}>
                   {gap}

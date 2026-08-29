@@ -137,7 +137,9 @@ const Word: React.FC<{
   // roughly the overflow with horizontal margin so it never collides with the
   // next word; it eases back to 0 as the pop settles.
   const scaleMx =
-    scaleVal > 1.001 ? `${(word.text.length * 0.3 * (scaleVal - 1)).toFixed(3)}em` : undefined;
+    scaleVal > 1.001
+      ? `${Math.max(0.1, word.text.length * 0.42 * (scaleVal - 1)).toFixed(3)}em`
+      : undefined;
 
   return (
     <span
@@ -282,7 +284,7 @@ export const CaptionedClip: React.FC<CaptionedClipProps> = ({
                     fontWeight: style.fontWeight,
                     lineHeight: 1.15,
                     textAlign: style.alignment,
-                    wordSpacing: "0.14em",
+                    wordSpacing: "0.22em",
                     color: style.textColor,
                     WebkitTextStroke: `${style.outlineWidthPx}px ${style.outlineColor}`,
                     paintOrder: "stroke fill",

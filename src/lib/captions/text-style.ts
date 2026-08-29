@@ -292,10 +292,10 @@ export function textStyleToCss(style: TextStyle, opts: { scale?: number } = {}):
     fontSize: `${px(style.fontSizePx)}px`,
     lineHeight: style.lineHeight,
     textAlign: style.alignment,
-    // A little air between words on top of the space glyph. Applies to the real
-    // spaces the caption renderers put between word spans; wrap-safe (unlike a
-    // per-span margin) and gives pop/scale animations room before they overlap.
-    wordSpacing: "0.14em",
+    // Air between words on top of the space glyph. Applies to the real spaces
+    // the caption renderers put between word spans; wrap-safe (unlike a per-span
+    // margin) and gives pop/scale animations room before they overlap.
+    wordSpacing: "0.22em",
   };
 
   if (style.letterSpacingEm) text.letterSpacing = `${style.letterSpacingEm}em`;
