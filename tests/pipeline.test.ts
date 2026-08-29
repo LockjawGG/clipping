@@ -316,11 +316,13 @@ test("ANALYZE does not queue thumbnails when it produced no clips", async () => 
   assert.equal(spy.enqueued.length, 0);
 });
 
-test("ANALYZE throws when there is no transcript", async () => {
-  const { deps } = makeDeps({
+test("ANALYZE no-ops (0 clips) when the recording has no speech", async () => {
+  const { deps, spy } = makeDeps({
     transcripts: { save: async () => ({ segmentCount: 0 }), loadSegments: async () => [], appendSegments: async () => ({ appended: 0, fromIndex: 0 }) },
   });
-  await assert.rejects(() => analyzeHandler(ctx(deps, "ANALYZE")), /no transcript segments/);
+  const out = (await analyzeHandler(ctx(deps, "ANALYZE"))) as { clipCount: number };
+  assert.equal(out.clipCount, 0);
+  assert.deepEqual(spy.enqueued, []); // no THUMBNAIL queued
 });
 
 test("PROBE throws for an unknown video", async () => {

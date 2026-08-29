@@ -160,7 +160,12 @@ export const analyzeHandler: JobHandler<PipelineDeps> = async ({ job, deps, sign
   if (!video) throw new Error(`video ${job.videoId} not found`);
 
   const segments = await deps.transcripts.loadSegments(job.videoId);
-  if (segments.length === 0) throw new Error(`no transcript segments for video ${job.videoId}`);
+  if (segments.length === 0) {
+    // A recording with no discernible speech (silence, music, ambient PC audio)
+    // transcribes to nothing — that's a valid outcome, not a failure. The video
+    // is already READY; there's just nothing to suggest clips from.
+    return { clipCount: 0, consideredSegments: 0, note: "no speech detected" };
+  }
 
   const p = (job.payload ?? {}) as AnalyzePayload;
   const options = {
