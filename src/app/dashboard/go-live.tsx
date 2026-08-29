@@ -102,11 +102,18 @@ export function GoLive({ projectId }: { projectId?: string }) {
           const displayOpts: DisplayMediaStreamOptions & {
             systemAudio?: "include" | "exclude";
             surfaceSwitching?: "include" | "exclude";
+            selfBrowserSurface?: "include" | "exclude";
           } = {
-            video: { frameRate: 30 },
+            // `displaySurface: "monitor"` opens the picker on the Entire Screen
+            // pane — the surface that can carry system audio. It's a hint, so
+            // the user can still pick a window or tab.
+            video: { frameRate: 30, displaySurface: "monitor" },
             audio: true,
             systemAudio: "include",
             surfaceSwitching: "include",
+            // Don't offer this tab as a capture source — recording the editor
+            // itself is never what's wanted and causes a feedback mirror.
+            selfBrowserSurface: "exclude",
           };
           disp = await navigator.mediaDevices.getDisplayMedia(displayOpts);
         } catch (e) {
