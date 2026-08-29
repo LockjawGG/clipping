@@ -55,6 +55,8 @@ export interface TimelineProps {
   /** Omit to run uncontrolled (internal copy seeded from `clips`). */
   onClipsChange?: (next: TimelineClip[]) => void;
   onTracksChange?: (next: TimelineTrack[]) => void;
+  /** Reorder an overlay lane. When set, overlay track headers show ▲▼ controls. */
+  onReorderTrack?: (trackId: string, direction: "up" | "down") => void;
 
   /** Playhead position in ms. Controlled if provided with `onSeek`. */
   playheadMs?: number;

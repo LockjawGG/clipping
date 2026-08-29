@@ -50,6 +50,9 @@ interface SequenceView {
  */
 const isOverlay = (id: string) => id.startsWith("ov_");
 const overlayId = (id: string) => id.slice(3);
+const OVERLAY_TRACK_PREFIX = "ovtrk_";
+const isOverlayTrack = (id: string) => id.startsWith(OVERLAY_TRACK_PREFIX);
+const overlayIdFromTrack = (id: string) => id.slice(OVERLAY_TRACK_PREFIX.length);
 
 const itemToClip = (it: SequenceItemView): TimelineClip => ({
   id: it.id,
@@ -84,6 +87,7 @@ export function SequenceEditor({
   overlayWindows,
   onOverlayTiming,
   onOverlayDeleted,
+  onOverlayReorder,
   onChanged,
 }: {
   clipId: string;
@@ -102,6 +106,8 @@ export function SequenceEditor({
   overlayWindows?: Array<{ id: string; startMs: number | null; endMs: number | null }>;
   onOverlayTiming?: (overlayId: string, startMs: number, endMs: number) => void;
   onOverlayDeleted?: (overlayId: string) => void;
+  /** Reorder an overlay's layer (its stacking / lane position). */
+  onOverlayReorder?: (overlayId: string, direction: "up" | "down") => void;
   /** Called after any change lands server-side, so the editor can soft-refresh. */
   onChanged?: () => void;
 }) {
@@ -366,6 +372,25 @@ export function SequenceEditor({
     [seq],
   );
 
+  /** ▲▼ on an overlay lane header — swap it with its neighbour lane. The write
+   *  goes through the editor (which owns the Layers panel + the /reorder call). */
+  const onReorderTrack = useCallback(
+    (trackId: string, direction: "up" | "down") => {
+      if (!isOverlayTrack(trackId)) return;
+      setSeq((s) => {
+        if (!s) return s;
+        const t = [...s.tracks];
+        const i = t.findIndex((x) => x.id === trackId);
+        const j = direction === "up" ? i - 1 : i + 1;
+        if (i < 0 || j < 0 || j >= t.length || t[j].kind !== "OVERLAY") return s;
+        [t[i], t[j]] = [t[j], t[i]];
+        return { ...s, tracks: t };
+      });
+      onOverlayReorder?.(overlayIdFromTrack(trackId), direction);
+    },
+    [onOverlayReorder],
+  );
+
   if (error && !seq) {
     return (
       <div className="rounded-lg border border-danger/40 bg-surface-raised p-3 text-sm text-danger">
@@ -398,6 +423,7 @@ export function SequenceEditor({
         onSelectClip={setSelected}
         snap={seq.snap}
         onSnapChange={onSnapChange}
+        onReorderTrack={onReorderTrack}
         onSplit={(id, atMs) => void onSplit(id, atMs)}
         onUndo={undo}
         onRedo={redo}

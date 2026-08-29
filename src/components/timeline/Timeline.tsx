@@ -127,6 +127,7 @@ export function Timeline({
   clips: clipsProp,
   onClipsChange,
   onTracksChange,
+  onReorderTrack,
   playheadMs,
   onSeek,
   durationMs,
@@ -546,15 +547,26 @@ export function Timeline({
         >
           <div style={{ height: RULER_H, borderBottom: `1px solid ${C.border}` }} />
           <div className="flex flex-col gap-2 p-2">
-            {tracks.map((t) => (
-              <TrackHeader
-                key={t.id}
-                track={t}
-                onChange={(patch) =>
-                  onTracksChange?.(tracks.map((x) => (x.id === t.id ? { ...x, ...patch } : x)))
-                }
-              />
-            ))}
+            {tracks.map((t) => {
+              const overlayIdxs = tracks.reduce<number[]>((a, x, i) => {
+                if (x.kind === "overlay") a.push(i);
+                return a;
+              }, []);
+              const pos = overlayIdxs.indexOf(tracks.indexOf(t));
+              const reorderable = onReorderTrack && t.kind === "overlay" && overlayIdxs.length > 1;
+              return (
+                <TrackHeader
+                  key={t.id}
+                  track={t}
+                  onChange={(patch) =>
+                    onTracksChange?.(tracks.map((x) => (x.id === t.id ? { ...x, ...patch } : x)))
+                  }
+                  onReorder={reorderable ? (dir) => onReorderTrack!(t.id, dir) : undefined}
+                  canUp={pos > 0}
+                  canDown={pos >= 0 && pos < overlayIdxs.length - 1}
+                />
+              );
+            })}
           </div>
         </div>
 
@@ -721,9 +733,16 @@ function TBtn({
 function TrackHeader({
   track,
   onChange,
+  onReorder,
+  canUp,
+  canDown,
 }: {
   track: TimelineTrack;
   onChange: (patch: Partial<TimelineTrack>) => void;
+  /** Present only for reorderable (overlay) lanes. */
+  onReorder?: (direction: "up" | "down") => void;
+  canUp?: boolean;
+  canDown?: boolean;
 }) {
   const dot = ACCENT_BY_KIND[track.kind];
   return (
@@ -733,7 +752,26 @@ function TrackHeader({
     >
       <div className="flex items-center gap-1.5">
         <span style={{ width: 6, height: 6, borderRadius: 999, background: dot }} />
-        <span className="font-semibold">{track.label}</span>
+        <span className="min-w-0 flex-1 truncate font-semibold" title={track.label}>
+          {track.label}
+        </span>
+        {onReorder && (
+          <span className="flex shrink-0 flex-col leading-none opacity-0 transition-opacity group-hover:opacity-100">
+            {(["up", "down"] as const).map((dir) => (
+              <button
+                key={dir}
+                type="button"
+                aria-label={dir === "up" ? "Bring layer forward" : "Send layer back"}
+                disabled={dir === "up" ? !canUp : !canDown}
+                onClick={() => onReorder(dir)}
+                className="grid h-3 w-4 place-items-center text-[9px] disabled:opacity-25"
+                style={{ color: C.muted }}
+              >
+                {dir === "up" ? "▲" : "▼"}
+              </button>
+            ))}
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
         {(

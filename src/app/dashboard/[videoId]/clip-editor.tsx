@@ -864,6 +864,7 @@ export function ClipEditor({
               overlayWindows={overlayWindows}
               onOverlayTiming={applyOverlayTiming}
               onOverlayDeleted={removeOverlayLocal}
+              onOverlayReorder={reorderOverlayLocal}
               onChanged={softReset}
             />
           </div>
