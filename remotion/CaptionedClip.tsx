@@ -82,7 +82,16 @@ const Word: React.FC<{
     const progress = spoken ? Math.min(1, (tMs - word.startMs) / dur) : 0;
     const shown = spoken && !active ? word.text : word.text.slice(0, Math.ceil(progress * word.text.length));
     return (
-      <span style={{ display: "inline-block", margin: "0 0.18em", color: style.textColor }}>
+      <span
+        style={{
+          display: "inline-block",
+          margin: "0 0.18em",
+          // let a clipped gradient fill on the container show through
+          ...(gradientFill
+            ? { color: "inherit", WebkitTextFillColor: "inherit" }
+            : { color: style.textColor }),
+        }}
+      >
         {cased(shown)}
       </span>
     );
