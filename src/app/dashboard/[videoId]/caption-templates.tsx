@@ -61,8 +61,14 @@ export function splitTemplate(t: CaptionTemplate): SplitTemplateStyle {
   };
 }
 
-const SAMPLE = "your captions here";
-const CARD_W = 168;
+const SAMPLE = "Your caption";
+const CARD_W = 172;
+const CARD_H = 108;
+const NAME_H = 22;
+const PREVIEW_PAD = 10;
+/** Every card renders its sample at this on-card size, regardless of the
+ *  template's real `fontSizePx`, so the grid reads evenly. */
+const PREVIEW_FONT_PX = 16;
 
 /** A live mini-preview of a template, rendered through the same CSS as the burn. */
 const TemplateCard = memo(function TemplateCard({
@@ -76,8 +82,10 @@ const TemplateCard = memo(function TemplateCard({
 }) {
   const { text, panel } = useMemo(() => {
     const resolved = resolveTextStyle(template.style);
-    // Card is ~CARD_W wide against a 1080 frame; shrink px units to match.
-    return textStyleToCss(resolved, { scale: CARD_W / 1080 });
+    // Normalise to PREVIEW_FONT_PX: the card demonstrates the *look* (font,
+    // colour, stroke, glow, gradient, box) — not the template's scale.
+    const scale = PREVIEW_FONT_PX / Math.max(1, resolved.fontSizePx);
+    return textStyleToCss(resolved, { scale });
   }, [template]);
 
   return (
@@ -86,27 +94,41 @@ const TemplateCard = memo(function TemplateCard({
       onClick={onApply}
       aria-pressed={active}
       title={`${template.name} — apply`}
-      className="relative flex h-[96px] shrink-0 flex-col items-center justify-center overflow-hidden rounded-lg border-2 px-2 text-center transition-colors"
+      className="flex shrink-0 flex-col overflow-hidden rounded-lg border-2 transition-colors"
       style={{
         width: CARD_W,
+        height: CARD_H,
         background: "#0d0d10",
         borderColor: active ? "rgb(var(--c-accent))" : "rgb(var(--c-border))",
       }}
     >
-      <span style={(panel ?? undefined) as unknown as CSSProperties | undefined}>
-        <span
-          style={{
-            ...(text as unknown as CSSProperties),
-            display: "inline-block",
-            lineHeight: 1.1,
-            whiteSpace: "normal",
-            wordBreak: "break-word",
-          }}
-        >
-          {SAMPLE}
+      {/* preview: fixed box, equal padding, text centred and clipped */}
+      <span
+        className="flex min-h-0 flex-1 items-center justify-center overflow-hidden"
+        style={{ padding: PREVIEW_PAD }}
+      >
+        <span style={(panel ?? undefined) as unknown as CSSProperties | undefined}>
+          <span
+            style={{
+              ...(text as unknown as CSSProperties),
+              display: "inline-block",
+              lineHeight: 1.15,
+              maxWidth: "100%",
+              maxHeight: `${PREVIEW_FONT_PX * 1.15 * 2}px`,
+              overflow: "hidden",
+              whiteSpace: "normal",
+              wordBreak: "break-word",
+            }}
+          >
+            {SAMPLE}
+          </span>
         </span>
       </span>
-      <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white/85">
+      {/* name: fixed-height row, always in the same place */}
+      <span
+        className="w-full shrink-0 truncate border-t border-white/10 bg-black/40 px-2 text-center text-[10px] font-medium leading-none text-white/85"
+        style={{ height: NAME_H, lineHeight: `${NAME_H}px` }}
+      >
         {template.name}
       </span>
     </button>
