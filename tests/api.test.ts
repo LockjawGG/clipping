@@ -441,7 +441,7 @@ test("translateVideo rejects a bad target and a still-processing video", async (
   const { deps, videos } = makeDeps();
   const { videoId } = await createVideoFromUrl(deps, { url: "https://example.com/v.mp4" });
   videos.get(videoId)!.status = "READY";
-  await assert.rejects(() => translateVideo(deps, videoId, { target: "de" }));
+  await assert.rejects(() => translateVideo(deps, videoId, { target: "xx" }));
 
   videos.get(videoId)!.status = "TRANSCRIBING";
   await assert.rejects(

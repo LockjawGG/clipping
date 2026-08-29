@@ -7,6 +7,7 @@ import type { StorageProvider } from "../providers/types.ts";
 import type { JobKind } from "../jobs/types.ts";
 import { normalizeSourceUrl, sourceUrlHash } from "../ingest/url-cache.ts";
 import { ApiError } from "./http.ts";
+import { TRANSLATE_TARGETS } from "../translation/targets.ts";
 
 /**
  * The upload flow, as plain functions over injected deps so it can be tested
@@ -218,11 +219,7 @@ export async function updateVideo(deps: VideoServiceDeps, videoId: string, input
 }
 
 
-/**
- * Translation targets. Whisper's speech-translation only ever produces English,
- * so that's the sole option until a separate local MT model is wired in.
- */
-export const TRANSLATE_TARGETS = ["en"] as const;
+export { TRANSLATE_TARGETS } from "../translation/targets.ts";
 
 const translateSchema = z.object({
   target: z.enum(TRANSLATE_TARGETS),
@@ -241,16 +238,31 @@ export async function translateVideo(deps: VideoServiceDeps, videoId: string, in
   if (["PROBING", "TRANSCRIBING", "UPLOADING", "LIVE"].includes(video.status)) {
     throw new ApiError(409, "this video is still processing — try again once it's ready");
   }
-  if (!(await deps.storage.exists(video.storageKey))) {
-    throw new ApiError(409, "the source file for this video is missing");
+
+  // "en": Whisper re-listens to the audio and translates as it goes.
+  if (target === "en") {
+    if (!(await deps.storage.exists(video.storageKey))) {
+      throw new ApiError(409, "the source file for this video is missing");
+    }
+    const jobId = await deps.enqueue({
+      videoId,
+      kind: "EXTRACT_AUDIO",
+      payload: { task: "translate", translatedTo: "en" },
+    });
+    return { videoId, target, via: "whisper" as const, jobId };
   }
 
+  // Any other target: translate the existing transcript text offline.
+  const primary = await deps.db.transcript.findFirst({ where: { videoId, translatedTo: "" } });
+  if (!primary) {
+    throw new ApiError(409, "transcribe this video before translating it");
+  }
   const jobId = await deps.enqueue({
     videoId,
-    kind: "EXTRACT_AUDIO",
-    payload: { task: "translate", translatedTo: target },
+    kind: "TRANSLATE",
+    payload: { to: target, from: primary.language },
   });
-  return { videoId, target, jobId };
+  return { videoId, target, via: "argos" as const, jobId };
 }
 
 export async function confirmUpload(deps: VideoServiceDeps, videoId: string) {

@@ -8,6 +8,7 @@ import { CaptionControls, CAPTION_DEFAULTS, type CaptionConfig } from "./caption
 import { ClipPlayer, type PreviewWord } from "./clip-player";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
 import type { TranscriptView } from "../editor-pane";
+import { TRANSLATE_TARGETS } from "@/lib/translation/targets";
 import { OverlayPanel, type OverlayView } from "./overlay-panel";
 import type { WordStyle, WordStylePatch } from "./editable-transcript";
 import { SequenceEditor } from "./sequence-editor";
@@ -20,8 +21,7 @@ const ASPECTS = [
   ["PORTRAIT_4_5", "4:5"],
 ] as const;
 
-/** Languages offered for a manual re-transcribe. "" = auto-detect. Order and
- *  labels are display-only; the codes match TRANSCRIBE_LANGUAGES on the server. */
+/** Display names for transcript language codes. */
 const LANGUAGE_NAMES: Record<string, string> = {
   en: "English", es: "Spanish", fr: "French", de: "German", it: "Italian",
   pt: "Portuguese", nl: "Dutch", ru: "Russian", pl: "Polish", uk: "Ukrainian",
@@ -123,7 +123,6 @@ export function ClipEditor({
   const router = useRouter();
 
   const sourceLang = transcriptViews.find((t) => t.translatedTo === "")?.language ?? null;
-  const hasEnglishTranslation = transcriptViews.some((t) => t.translatedTo === "en");
 
   const [langBusy, setLangBusy] = useState(false);
   const [langError, setLangError] = useState<string | null>(null);
@@ -138,22 +137,24 @@ export function ClipEditor({
     [router],
   );
 
+  const availableTargets = new Set(
+    transcriptViews.filter((t) => t.translatedTo !== "").map((t) => t.translatedTo),
+  );
+
   const pickView = useCallback(
     async (value: string) => {
       setLangError(null);
-      if (value === "" || value === "en") {
-        if (value === "" || hasEnglishTranslation) {
-          showTranscript(value);
-          return;
-        }
+      if (value === "" || availableTargets.has(value)) {
+        showTranscript(value);
+        return;
       }
-      // value === "en" and it doesn't exist yet: generate it, then switch.
+      // Not generated yet — kick off the translation, then switch when it lands.
       setLangBusy(true);
       try {
         const res = await fetch(`/api/videos/${videoId}/translate`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ target: "en" }),
+          body: JSON.stringify({ target: value }),
         });
         if (!res.ok) {
           const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -162,10 +163,10 @@ export function ClipEditor({
         const started = Date.now();
         const tick = async () => {
           const r = await fetch(`/api/videos/${videoId}`).then((x) => x.json());
-          if ((r.translations ?? []).includes("en")) {
+          if ((r.translations ?? []).includes(value)) {
             setLangBusy(false);
-            showTranscript("en");
-          } else if (r.status === "FAILED" || Date.now() - started > 600_000) {
+            showTranscript(value);
+          } else if (r.status === "FAILED" || Date.now() - started > 900_000) {
             setLangBusy(false);
             setLangError("Translation didn't finish — try again.");
           } else {
@@ -178,7 +179,8 @@ export function ClipEditor({
         setLangError(e instanceof Error ? e.message : "couldn't start the translation");
       }
     },
-    [videoId, hasEnglishTranslation, showTranscript],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [videoId, showTranscript, transcriptViews],
   );
 
   // Debounced "soft reset": re-run the server components so an edit or delete the
@@ -980,9 +982,12 @@ export function ClipEditor({
               onChange={(e) => void pickView(e.target.value)}
             >
               <option value="">Original ({langName(sourceLang)})</option>
-              <option value="en">
-                English translation{hasEnglishTranslation ? "" : " — generate"}
-              </option>
+              {TRANSLATE_TARGETS.filter((c) => c !== sourceLang).map((code) => (
+                <option key={code} value={code}>
+                  {langName(code)}
+                  {availableTargets.has(code) ? "" : " — translate"}
+                </option>
+              ))}
             </select>
           </label>
           {langBusy && <span className="text-xs text-accent">Translating…</span>}

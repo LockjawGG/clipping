@@ -33,6 +33,8 @@ const schema = z.object({
     .enum(["whisper-local", "openai", "deepgram"])
     .default("whisper-local"),
   WHISPER_BINARY: z.string().default("whisper"),
+  // Python used to run scripts/translate.py (Argos Translate, fully offline).
+  PYTHON_BIN: z.string().default("python"),
   // Accuracy ladder (CPU speed drops roughly 2x per rung):
   //   base(.en) « small(.en) « medium(.en) « large-v3
   // Use the ".en" variant for English-only recordings — more accurate at a

@@ -5,7 +5,7 @@ import type { JobContext, JobKind, JobRecord } from "../src/lib/jobs/types.ts";
 import type { Segment, TranscriptResult } from "../src/lib/providers/types.ts";
 import type { MediaInfo } from "../src/lib/ffmpeg/run.ts";
 import type { PipelineDeps } from "../src/lib/pipeline/deps.ts";
-import { PIPELINE_HANDLERS } from "../src/lib/pipeline/index.ts";
+import { PIPELINE_HANDLERS, translateHandler } from "../src/lib/pipeline/index.ts";
 import {
   analyzeHandler,
   extractAudioHandler,
@@ -164,6 +164,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
         return { segmentCount: result.segments.length };
       },
       loadSegments: async () => spy.savedTranscript?.segments ?? SEGMENTS,
+      primaryLanguage: async () => "en",
       appendSegments: async () => ({ appended: 0, fromIndex: 0 }),
     },
     clips: {
@@ -190,6 +191,11 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       setStatus: async () => {},
       listForVideo: async () => [],
       deleteForVideo: async () => {},
+    },
+    textTranslator: {
+      name: "fake-mt",
+      translate: async (items: Array<{ id: string; text: string }>) =>
+        items.map((i) => ({ id: i.id, text: `[t] ${i.text}` })),
     },
     captions: { renderCaptioned: async () => {} },
     faces: { name: "none", detectTrack: async () => [] },
@@ -321,7 +327,7 @@ test("ANALYZE does not queue thumbnails when it produced no clips", async () => 
 
 test("ANALYZE no-ops (0 clips) when the recording has no speech", async () => {
   const { deps, spy } = makeDeps({
-    transcripts: { save: async () => ({ segmentCount: 0 }), loadSegments: async () => [], appendSegments: async () => ({ appended: 0, fromIndex: 0 }) },
+    transcripts: { save: async () => ({ segmentCount: 0 }), loadSegments: async () => [], primaryLanguage: async () => "en", appendSegments: async () => ({ appended: 0, fromIndex: 0 }) },
   });
   const out = (await analyzeHandler(ctx(deps, "ANALYZE"))) as { clipCount: number };
   assert.equal(out.clipCount, 0);
@@ -355,4 +361,38 @@ test("the ingest chain runs PROBE -> EXTRACT_AUDIO -> TRANSCRIBE -> ANALYZE -> T
   );
   assert.equal(spy.statuses.at(-1), "READY");
   assert.equal(spy.savedClips?.length, 1);
+});
+
+
+test("TRANSLATE writes a second transcript without touching the source or status", async () => {
+  const { deps, spy } = makeDeps();
+  spy.savedTranscript = {
+    provider: "whisper-local",
+    language: "ko",
+    segments: [
+      { startMs: 0, endMs: 2000, text: "안녕", words: [] },
+      { startMs: 2000, endMs: 4000, text: "세계", words: [] },
+    ],
+  };
+
+  const out = (await translateHandler(ctx(deps, "TRANSLATE", { to: "es", from: "ko" }))) as {
+    translatedTo: string;
+    from: string;
+    segmentCount: number;
+  };
+
+  assert.equal(out.translatedTo, "es");
+  assert.equal(out.from, "ko");
+  assert.equal(out.segmentCount, 2);
+  // saved as the "es" transcript, text run through the translator, timings kept
+  assert.equal(spy.savedTranscript.language, "es");
+  assert.deepEqual(
+    spy.savedTranscript.segments.map((x) => [x.startMs, x.endMs, x.text]),
+    [
+      [0, 2000, "[t] 안녕"],
+      [2000, 4000, "[t] 세계"],
+    ],
+  );
+  assert.ok(!spy.statuses.includes("TRANSCRIBING"), "status untouched");
+  assert.deepEqual(spy.enqueued, [], "no ANALYZE re-run");
 });

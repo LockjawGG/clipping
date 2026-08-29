@@ -314,7 +314,7 @@ test("animated captions: Remotion composites over the reframed clip, no SRT burn
 
 test("animated captions with no words in range fall back to a plain render", async () => {
   const { deps, spy } = makeDeps(target({ burnCaptions: true, captionAnimation: "KARAOKE" }), {
-    transcripts: { save: async () => ({ segmentCount: 0 }), loadSegments: async () => [], appendSegments: async () => ({ appended: 0, fromIndex: 0 }) },
+    transcripts: { save: async () => ({ segmentCount: 0 }), loadSegments: async () => [], primaryLanguage: async () => "en", appendSegments: async () => ({ appended: 0, fromIndex: 0 }) },
   } as unknown as Partial<PipelineDeps>);
   await renderHandler(ctx(deps, { renderId: "r7" }));
 

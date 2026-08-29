@@ -147,6 +147,7 @@ export default async function DashboardPage({
             startMs: true,
             endMs: true,
             speaker: true,
+            text: true,
             words: {
               orderBy: { index: "asc" },
               select: { id: true, text: true, startMs: true, endMs: true },
@@ -174,6 +175,7 @@ export default async function DashboardPage({
         startMs: s.startMs,
         endMs: s.endMs,
         speaker: s.speaker,
+        text: s.words.length ? s.words.map((w) => w.text).join(" ") : s.text,
         words: s.words.map((w) => ({
           id: w.id,
           text: w.text,

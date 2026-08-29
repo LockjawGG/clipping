@@ -23,7 +23,8 @@ export type JobKind =
   | "RENDER"
   | "THUMBNAIL"
   | "LIVE_TRANSCRIBE"
-  | "LIVE_FINALIZE";
+  | "LIVE_FINALIZE"
+  | "TRANSLATE";
 
 export interface JobRecord {
   id: string;

@@ -538,6 +538,9 @@ enum JobKind {
   // Stop pressed: concat the chunks into a source file, then rejoin the normal
   // chain (probe → full re-transcribe → analyze → thumbnail).
   LIVE_FINALIZE
+  // Offline text translation of an existing transcript into another language,
+  // stored as a separate Transcript row (translatedTo = the target code).
+  TRANSLATE
 }
 
 model Job {

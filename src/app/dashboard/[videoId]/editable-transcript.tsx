@@ -14,6 +14,8 @@ export interface TranscriptRow {
   startMs: number;
   endMs: number;
   speaker: string | null;
+  /** Row text — joined words for the source, the segment string for a translation. */
+  text: string;
   words: TranscriptWord[];
 }
 
@@ -170,6 +172,10 @@ export const EditableTranscript = memo(function EditableTranscript({
     if (q.length === 0) return { ids: [] as string[], set: new Set<string>() };
     const ids: string[] = [];
     for (const row of rows) {
+      if (row.words.length === 0) {
+        if (row.text.toLowerCase().includes(q)) ids.push(`row-${row.startMs}`);
+        continue;
+      }
       for (const w of row.words) {
         if (w.text.toLowerCase().includes(q)) ids.push(w.id);
       }
@@ -301,7 +307,16 @@ export const EditableTranscript = memo(function EditableTranscript({
             </span>
             <span>
               {row.speaker ? <span className="text-muted">{row.speaker}: </span> : null}
-              {row.words.map((w) => (
+              {row.words.length === 0 ? (
+                <span
+                  className={
+                    q && row.text.toLowerCase().includes(q) ? "bg-amber-400/25 rounded px-0.5" : undefined
+                  }
+                >
+                  {row.text}
+                </span>
+              ) : (
+                row.words.map((w) => (
                 <Word
                   key={w.id}
                   word={w}
@@ -312,7 +327,8 @@ export const EditableTranscript = memo(function EditableTranscript({
                   onToggleSelect={onToggleSelect}
                   onSeek={onSeek}
                 />
-              ))}
+                ))
+              )}
             </span>
           </li>
         ))}

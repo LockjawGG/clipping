@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { env } from "../env.ts";
 import { db } from "../db.ts";
 import { FfmpegRunner } from "../ffmpeg/run.ts";
+import { ArgosTranslator } from "../translation/text.ts";
 import { NullFaceDetector } from "../faces/detector.ts";
 import { YtDlpFetcher } from "./fetcher.ts";
 import { FsSourceCache } from "./source-cache.ts";
@@ -11,6 +12,8 @@ import { getStorage } from "../storage/index.ts";
 import { getTranscription } from "../transcription/index.ts";
 import { getAnalysis } from "../analysis/index.ts";
 import { enqueueJob } from "../jobs/prisma-store.ts";
+import { join } from "node:path";
+
 import type { Segment } from "../providers/types.ts";
 import type {
   ClipRepo,
@@ -129,6 +132,13 @@ export function prismaTranscriptRepo(client: PrismaClient): TranscriptRepo {
         },
         { timeout: 120_000, maxWait: 10_000 },
       );
+    },
+    async primaryLanguage(videoId) {
+      const t = await client.transcript.findFirst({
+        where: { videoId, translatedTo: "" },
+        select: { language: true },
+      });
+      return t?.language ?? null;
     },
     async loadSegments(videoId, translatedTo = "") {
       const rows = await client.transcriptSegment.findMany({
@@ -453,6 +463,10 @@ export function buildPipelineDeps(): PipelineDeps {
     analysis: getAnalysis(),
     videos: prismaVideoRepo(db),
     transcripts: prismaTranscriptRepo(db),
+    textTranslator: new ArgosTranslator({
+      python: env.PYTHON_BIN,
+      scriptPath: join(process.cwd(), "scripts", "translate.py"),
+    }),
     clips: prismaClipRepo(db),
     renders: prismaRenderRepo(db),
     thumbnails: prismaThumbnailRepo(db),

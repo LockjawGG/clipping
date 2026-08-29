@@ -1,4 +1,5 @@
 import type { Ffmpeg, MediaInfo } from "../ffmpeg/run.ts";
+import type { TextTranslator } from "../translation/text.ts";
 import type { CaptionStyle } from "../captions/presets.ts";
 import type { FaceDetector } from "../faces/detector.ts";
 import type { MediaFetcher } from "./fetcher.ts";
@@ -50,6 +51,8 @@ export interface TranscriptRepo {
   ): Promise<{ segmentCount: number }>;
   /** Segments of one transcript. `translatedTo` "" (default) = the source. */
   loadSegments(videoId: string, translatedTo?: string): Promise<Segment[]>;
+  /** Detected language of the source transcript, or null if there is none. */
+  primaryLanguage(videoId: string): Promise<string | null>;
   /**
    * Append segments to the video's transcript (creating it if absent) — used by
    * rolling live transcription. Segment/word start/end are already offset to the
@@ -199,6 +202,7 @@ export interface PipelineDeps {
   analysis: AnalysisProvider;
   videos: VideoRepo;
   transcripts: TranscriptRepo;
+  textTranslator: TextTranslator;
   clips: ClipRepo;
   renders: RenderRepo;
   thumbnails: ThumbnailRepo;
