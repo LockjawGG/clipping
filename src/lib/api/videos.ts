@@ -51,6 +51,7 @@ export interface VideoDb {
     create(args: { data: Record<string, unknown> }): Promise<{ id: string }>;
     findUnique(args: { where: { id: string } }): Promise<VideoRecord | null>;
     update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<unknown>;
+    delete(args: { where: { id: string } }): Promise<unknown>;
   };
   clip: { count(args: { where: { videoId: string } }): Promise<number> };
   transcript: {
@@ -226,27 +227,26 @@ export async function retryVideo(deps: VideoServiceDeps, videoId: string) {
 }
 
 /**
- * Stop a stuck / failing ingest. Its live jobs go CANCELLED (the worker polls
- * this and aborts the in-flight download / transcription), and the video is
- * marked FAILED so it leaves the "Processing" group. "Retry processing" can
- * still pick it back up afterwards.
+ * Cancel a stuck / failing ingest and remove it entirely: live jobs go
+ * CANCELLED first (the worker polls this and aborts the in-flight download /
+ * transcription), then the video row is deleted — Prisma cascades to its jobs,
+ * transcript and clips — and its source file is cleaned up. Refuses a READY
+ * video (nothing to cancel; deleting finished work needs its own action).
  */
 export async function cancelVideo(deps: VideoServiceDeps, videoId: string) {
   const video = await ownedVideo(deps, videoId);
-  if (video.status === "READY" || video.status === "FAILED") {
-    return { videoId, cancelled: 0, note: "not processing" };
+  if (video.status === "READY") {
+    throw new ApiError(409, "video has finished processing — cancel only applies to in-progress or failed ingests");
   }
 
   const res = await deps.db.job.updateMany({
     where: { videoId, status: { in: ["QUEUED", "PROCESSING"] } },
     data: { status: "CANCELLED", errorMessage: "cancelled by user" },
   });
-  await deps.db.video.update({
-    where: { id: videoId },
-    data: { status: "FAILED", errorMessage: "Cancelled — download/transcription stopped." },
-  });
+  await deps.db.video.delete({ where: { id: videoId } });
+  await deps.storage.delete(video.storageKey).catch(() => {});
 
-  return { videoId, cancelled: res.count };
+  return { videoId, cancelled: res.count, removed: true };
 }
 
 export async function getVideoStatus(deps: VideoServiceDeps, videoId: string) {

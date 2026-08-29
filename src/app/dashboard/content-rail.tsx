@@ -109,18 +109,25 @@ export function ContentRail({
     router.refresh();
   }
 
+  /** Cancel + remove a stuck / failed video entirely (jobs, row, source file). */
   async function cancel(videoId: string) {
     setMenuFor(null);
     try {
       const res = await fetch(`/api/videos/${videoId}/cancel`, { method: "POST" });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        alert(`Couldn't cancel: ${body.error ?? `HTTP ${res.status}`}`);
+        alert(`Couldn't remove: ${body.error ?? `HTTP ${res.status}`}`);
+        return;
       }
     } catch {
-      alert("Couldn't cancel — the server didn't respond.");
+      alert("Couldn't remove — the server didn't respond.");
+      return;
     }
-    router.refresh();
+    if (videoId === activeVideoId) {
+      router.push(`/dashboard?project=${activeProjectId}`);
+    } else {
+      router.refresh();
+    }
   }
 
   async function rename(videoId: string, name: string, original: string) {
@@ -277,7 +284,7 @@ export function ContentRail({
                         Retry processing
                       </button>
                     )}
-                    {GROUPS[0].match(v.status) && (
+                    {v.status !== "READY" && (
                       <button
                         className="text-danger"
                         onClick={(e) => {
@@ -285,7 +292,7 @@ export function ContentRail({
                           cancel(v.id);
                         }}
                       >
-                        Cancel
+                        {GROUPS[0].match(v.status) ? "Cancel & remove" : "Remove"}
                       </button>
                     )}
                     <button

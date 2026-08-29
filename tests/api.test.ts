@@ -60,6 +60,10 @@ function fakeDb() {
         Object.assign(videos.get(where.id)!, data);
         return {};
       },
+      async delete({ where }) {
+        videos.delete(where.id);
+        return {};
+      },
     },
     clip: { count: async () => 3 },
     transcript: { findUnique: async () => ({ language: "en" }) },
@@ -259,30 +263,45 @@ test("getVideoStatus returns the poll shape and 404s when missing", async () => 
 
 // --- cancelVideo -----------------------------------------
 
-test("cancelVideo CANCELs live jobs and marks the video FAILED", async () => {
+test("cancelVideo CANCELs live jobs, deletes the video, and removes its source", async () => {
   const { deps, videos, jobUpdates } = makeDeps();
+  const deleted: string[] = [];
+  deps.storage.delete = async (key) => {
+    deleted.push(key);
+  };
   const { videoId } = await createVideoFromUrl(deps, { url: "https://example.com/v.mp4" });
+  const storageKey = videos.get(videoId)!.storageKey;
 
   const out = await cancelVideo(deps, videoId);
 
-  assert.equal(out.cancelled, 1);
-  assert.equal(videos.get(videoId)!.status, "FAILED");
-  assert.match(String(videos.get(videoId)!.errorMessage), /Cancelled/);
-  // the job write targets this video's still-live jobs
-  const [call] = jobUpdates;
+  assert.equal(out.removed, true);
+  assert.equal(videos.has(videoId), false); // row gone
+  assert.deepEqual(deleted, [storageKey]); // source cleaned up
+  const [call] = jobUpdates; // live jobs cancelled first
   assert.equal((call.where as { videoId: string }).videoId, videoId);
   assert.equal((call.data as { status: string }).status, "CANCELLED");
 });
 
-test("cancelVideo is a no-op on a READY or FAILED video", async () => {
-  const { deps, videos, jobUpdates } = makeDeps();
+test("cancelVideo removes a FAILED video too", async () => {
+  const { deps, videos } = makeDeps();
+  const { videoId } = await createVideoFromUrl(deps, { url: "https://example.com/v.mp4" });
+  videos.get(videoId)!.status = "FAILED";
+
+  const out = await cancelVideo(deps, videoId);
+  assert.equal(out.removed, true);
+  assert.equal(videos.has(videoId), false);
+});
+
+test("cancelVideo refuses a READY video (409)", async () => {
+  const { deps, videos } = makeDeps();
   const { videoId } = await createVideoFromUrl(deps, { url: "https://example.com/v.mp4" });
   videos.get(videoId)!.status = "READY";
 
-  const out = await cancelVideo(deps, videoId);
-  assert.equal(out.cancelled, 0);
-  assert.equal(jobUpdates.length, 0);
-  assert.equal(videos.get(videoId)!.status, "READY");
+  await assert.rejects(
+    () => cancelVideo(deps, videoId),
+    (e: unknown) => e instanceof ApiError && e.status === 409,
+  );
+  assert.equal(videos.has(videoId), true); // untouched
 });
 
 test("cancelVideo 404s for an unknown video", async () => {
