@@ -27,6 +27,47 @@ const SOURCES: { id: Source; label: string; glyph: string; hint: string }[] = [
   { id: "browser", label: "Browser Tab", glyph: "▤", hint: "One tab, with the option to share that tab's audio." },
 ];
 
+/**
+ * Capture preferences persist across sessions — set the source and audio
+ * switches once and every later Go Live starts from them. The browser's own
+ * "Share system audio" checkbox in the screen picker is a separate,
+ * per-session consent the app can't pre-answer; the note under the button
+ * explains when it needs ticking.
+ */
+const PREF_KEY = "clipper.golive.prefs";
+
+interface Prefs {
+  source: Source;
+  wantMic: boolean;
+  wantSystem: boolean;
+}
+
+const DEFAULT_PREFS: Prefs = { source: "monitor", wantMic: true, wantSystem: true };
+
+function loadPrefs(): Prefs {
+  if (typeof window === "undefined") return DEFAULT_PREFS;
+  try {
+    const raw = window.localStorage.getItem(PREF_KEY);
+    if (!raw) return DEFAULT_PREFS;
+    const p = JSON.parse(raw) as Partial<Prefs>;
+    return {
+      source: p.source === "window" || p.source === "browser" ? p.source : "monitor",
+      wantMic: p.wantMic !== false,
+      wantSystem: p.wantSystem !== false,
+    };
+  } catch {
+    return DEFAULT_PREFS;
+  }
+}
+
+function savePrefs(p: Prefs): void {
+  try {
+    window.localStorage.setItem(PREF_KEY, JSON.stringify(p));
+  } catch {
+    /* storage unavailable — the in-memory state still holds for this tab */
+  }
+}
+
 const fmtClock = (ms: number) => {
   const s = Math.floor(ms / 1000);
   const h = Math.floor(s / 3600);
@@ -47,9 +88,9 @@ const fmtClock = (ms: number) => {
 export function GoLive({ projectId }: { projectId?: string }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("idle");
-  const [source, setSource] = useState<Source>("monitor");
-  const [wantMic, setWantMic] = useState(true);
-  const [wantSystem, setWantSystem] = useState(true);
+  const [source, setSource] = useState<Source>(() => loadPrefs().source);
+  const [wantMic, setWantMic] = useState(() => loadPrefs().wantMic);
+  const [wantSystem, setWantSystem] = useState(() => loadPrefs().wantSystem);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -105,6 +146,10 @@ export function GoLive({ projectId }: { projectId?: string }) {
   }, []);
 
   useEffect(() => () => teardown(), [teardown]);
+
+  useEffect(() => {
+    savePrefs({ source, wantMic, wantSystem });
+  }, [source, wantMic, wantSystem]);
 
   /* ---- recovery: sessions whose tab never came back, and unsent fragments ---- */
   const loadRecoverable = useCallback(async () => {
@@ -454,7 +499,10 @@ export function GoLive({ projectId }: { projectId?: string }) {
           <div>
             <p className="rail-heading mb-1.5">Audio</p>
             <label className="mb-1.5 flex cursor-pointer items-center justify-between rounded-lg border border-border px-3 py-2 text-xs">
-              <span className="font-medium">Microphone</span>
+              <div className="flex flex-col">
+                <span className="font-medium">Microphone</span>
+                <span className="text-[10px] text-muted">Your voice. Remembered too.</span>
+              </div>
               <input
                 type="checkbox"
                 className="switch"
@@ -463,7 +511,12 @@ export function GoLive({ projectId }: { projectId?: string }) {
               />
             </label>
             <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border px-3 py-2 text-xs">
-              <span className="font-medium">System audio</span>
+              <div className="flex flex-col">
+                <span className="font-medium">System audio</span>
+                <span className="text-[10px] text-muted">
+                  Computer sound. Remembered for every recording.
+                </span>
+              </div>
               <input
                 type="checkbox"
                 className="switch"
@@ -471,6 +524,13 @@ export function GoLive({ projectId }: { projectId?: string }) {
                 onChange={(e) => setWantSystem(e.target.checked)}
               />
             </label>
+            {wantSystem && (
+              <p className="mt-1.5 text-[10px] text-muted">
+                Chrome asks once per recording: tick <strong>“Share system audio”</strong> in its
+                screen-picker dialog. That checkbox is the browser&rsquo;s, not ours — we can&rsquo;t
+                pre-answer it.
+              </p>
+            )}
           </div>
 
           <button type="button" onClick={start} className="btn btn-primary">
