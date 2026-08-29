@@ -35,6 +35,13 @@ export const liveTranscribeHandler: JobHandler<PipelineDeps> = async ({ job, dep
   if (!chunk) return { skipped: "chunk gone" };
   if (chunk.status === "DONE") return { skipped: "already done" };
 
+  // The browser registers the chunk (this job) and PUTs its bytes as two
+  // separate requests, so the upload may still be in flight when we get here.
+  // Not a failure — let the job retry rather than burning the chunk.
+  if (!(await deps.storage.exists(chunk.storageKey))) {
+    throw new Error(`live chunk ${chunk.index} not uploaded yet — will retry`);
+  }
+
   const work = jobWorkDir(deps.tempDir, job.id);
   const raw = scratchPath(work, "chunk.webm");
   const wav = scratchPath(work, "chunk.wav");
@@ -74,14 +81,27 @@ export const liveFinalizeHandler: JobHandler<PipelineDeps> = async ({ job, deps,
   const work = jobWorkDir(deps.tempDir, job.id);
   const localPaths: string[] = [];
   for (let i = 0; i < chunks.length; i++) {
+    // A chunk whose upload never landed (browser died / network) is skipped
+    // rather than sinking the whole recording.
+    if (!(await deps.storage.exists(chunks[i].storageKey))) continue;
     const p = scratchPath(work, `${String(i).padStart(5, "0")}.webm`);
     await deps.storage.getToFile(chunks[i].storageKey, p);
     localPaths.push(p);
     await setProgress((0.4 * (i + 1)) / chunks.length);
   }
+  if (localPaths.length === 0) {
+    await deps.videos.setError(job.videoId, "Live recording had no usable audio.");
+    return { chunks: 0 };
+  }
 
   const source = scratchPath(work, "source.webm");
-  await deps.ffmpeg.concatAudio(localPaths, source, signal);
+  // Screen recordings carry a video stream — stream-copy concat of WebM leaves
+  // broken timestamps (plays black past the first segment), so re-encode those.
+  // Mic-only recordings are audio and copy-concat cleanly.
+  const firstProbe = await deps.ffmpeg.probe(localPaths[0], signal).catch(() => null);
+  const hasVideo = !!firstProbe && firstProbe.videoCodec !== null;
+  if (hasVideo) await deps.ffmpeg.concatAv(localPaths, source, signal);
+  else await deps.ffmpeg.concatAudio(localPaths, source, signal);
   await deps.storage.putFile(video.storageKey, source, "video/webm");
   await setProgress(0.55);
 

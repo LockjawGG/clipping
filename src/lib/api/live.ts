@@ -74,7 +74,13 @@ export interface LiveServiceDeps {
   userId: string;
   defaultProjectId: () => Promise<string>;
   assertProjectOwned: (projectId: string) => Promise<void>;
-  enqueue: (input: { videoId: string; kind: JobKind; payload?: unknown }) => Promise<string>;
+  enqueue: (input: {
+    videoId: string;
+    kind: JobKind;
+    payload?: unknown;
+    runAfter?: Date;
+    maxAttempts?: number;
+  }) => Promise<string>;
 }
 
 async function ownedLiveVideo(deps: LiveServiceDeps, videoId: string): Promise<VideoRow> {
@@ -114,7 +120,15 @@ export async function addLiveChunk(deps: LiveServiceDeps, videoId: string, input
     data: { videoId, index, startMs, durationMs: durationMs ?? null, storageKey },
   });
   const uploadUrl = await deps.storage.createUploadUrl(storageKey, mime);
-  await deps.enqueue({ videoId, kind: "LIVE_TRANSCRIBE", payload: { chunkId: chunk.id } });
+  // The browser PUTs the bytes right after this responds, so give the upload a
+  // head start and extra attempts — the handler also re-checks existence.
+  await deps.enqueue({
+    videoId,
+    kind: "LIVE_TRANSCRIBE",
+    payload: { chunkId: chunk.id },
+    runAfter: new Date(Date.now() + 4_000),
+    maxAttempts: 6,
+  });
 
   return {
     chunkId: chunk.id,

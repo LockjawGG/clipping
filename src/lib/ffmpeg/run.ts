@@ -9,6 +9,7 @@ import {
   type CaptionBurnStyle,
   type OverlayCompositeItem,
   buildConcatAudioArgs,
+  buildConcatAvArgs,
   buildCutArgs,
   buildExtractAudioArgs,
   buildOverlayCompositeArgs,
@@ -21,6 +22,14 @@ import type { FocalPoint } from "../faces/track.ts";
 import { focalTrackToCropExpr } from "./track-crop.ts";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Windows-only: pip/winget console shims (`ffmpeg.exe`, `ffprobe.exe`) sporadically
+ * fail to spawn from a non-console Node process with STATUS_DLL_INIT_FAILED and
+ * friends. A quick retry almost always clears it. Same set the whisper runner uses.
+ */
+const FLAKY_SPAWN_EXIT = new Set([3221225794, 3221225781, 3221225595]);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export interface MediaInfo {
   durationMs: number;
@@ -130,8 +139,10 @@ export interface OverlayCompositeOptions {
 export interface Ffmpeg {
   probe(inputPath: string, signal?: AbortSignal): Promise<MediaInfo>;
   extractAudio(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void>;
-  /** Join self-contained media chunks in order, no re-encode (audio or A/V webm). */
+  /** Join self-contained audio chunks in order, no re-encode. */
   concatAudio(inputPaths: string[], outputPath: string, signal?: AbortSignal): Promise<void>;
+  /** Join self-contained A/V WebM chunks, re-encoding to one continuous stream. */
+  concatAv(inputPaths: string[], outputPath: string, signal?: AbortSignal): Promise<void>;
   /** Frame-accurate trim (re-encode, never stream-copy). */
   cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void>;
   /** Scale/crop to an aspect preset, optionally burning subtitles. */
@@ -185,14 +196,25 @@ export class FfmpegRunner implements Ffmpeg {
     await this.exec(this.ffmpegPath, buildExtractAudioArgs({ inputPath, outputPath }), signal);
   }
 
-  async concatAudio(inputPaths: string[], outputPath: string, signal?: AbortSignal): Promise<void> {
-    if (inputPaths.length === 0) throw new Error("concatAudio: no inputs");
+  private async writeConcatList(inputPaths: string[], outputPath: string): Promise<string> {
     await mkdir(dirname(outputPath), { recursive: true });
     const listPath = join(dirname(outputPath), "concat.txt");
     // concat demuxer: single-quote each path, escaping embedded quotes.
     const body = inputPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n") + "\n";
     await writeFile(listPath, body, "utf8");
+    return listPath;
+  }
+
+  async concatAudio(inputPaths: string[], outputPath: string, signal?: AbortSignal): Promise<void> {
+    if (inputPaths.length === 0) throw new Error("concatAudio: no inputs");
+    const listPath = await this.writeConcatList(inputPaths, outputPath);
     await this.exec(this.ffmpegPath, buildConcatAudioArgs({ listPath, outputPath }), signal);
+  }
+
+  async concatAv(inputPaths: string[], outputPath: string, signal?: AbortSignal): Promise<void> {
+    if (inputPaths.length === 0) throw new Error("concatAv: no inputs");
+    const listPath = await this.writeConcatList(inputPaths, outputPath);
+    await this.exec(this.ffmpegPath, buildConcatAvArgs({ listPath, outputPath }), signal);
   }
 
   async cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void> {
@@ -272,15 +294,23 @@ export class FfmpegRunner implements Ffmpeg {
   }
 
   private async exec(bin: string, args: string[], signal?: AbortSignal) {
-    try {
-      return await execFileAsync(bin, args, { signal, maxBuffer: this.maxBuffer });
-    } catch (err) {
-      const e = err as NodeJS.ErrnoException & { stderr?: string };
-      if (e.code === "ENOENT") {
-        throw new Error(`ffmpeg binary not found: ${bin} (set FFMPEG_PATH / FFPROBE_PATH)`);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await execFileAsync(bin, args, { signal, maxBuffer: this.maxBuffer });
+      } catch (err) {
+        const e = err as NodeJS.ErrnoException & { stderr?: string };
+        if (e.code === "ENOENT") {
+          throw new Error(`ffmpeg binary not found: ${bin} (set FFMPEG_PATH / FFPROBE_PATH)`);
+        }
+        const flakySpawn =
+          typeof e.code === "number" && FLAKY_SPAWN_EXIT.has(e.code) && !e.stderr;
+        if (flakySpawn && attempt < 4 && !signal?.aborted) {
+          await sleep(150 * attempt);
+          continue;
+        }
+        const tail = (e.stderr ?? "").split("\n").slice(-4).join("\n").trim();
+        throw new Error(`${bin} failed (${e.code ?? "?"})${tail ? `:\n${tail}` : ""}`);
       }
-      const tail = (e.stderr ?? "").split("\n").slice(-4).join("\n").trim();
-      throw new Error(`${bin} failed (${e.code ?? "?"})${tail ? `:\n${tail}` : ""}`);
     }
   }
 }

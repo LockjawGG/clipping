@@ -216,6 +216,14 @@ export const thumbnailHandler: JobHandler<PipelineDeps> = async ({ job, deps, si
   const source = await deps.source.ensureLocal(job.videoId, sourceKey, signal);
   const work = jobWorkDir(deps.tempDir, job.id);
 
+  // Audio-only sources (e.g. a mic-only live recording) have no frame to grab —
+  // ffmpeg would just error with "Output file does not contain any stream".
+  const probe = await deps.ffmpeg.probe(source, signal).catch(() => null);
+  if (probe && probe.videoCodec === null && probe.width === null) {
+    if (!clipId) await deps.source.evict(job.videoId);
+    return { generated: 0, skipped: "no video stream" };
+  }
+
   let generated = 0;
   const total = targets.length + (needPoster ? 1 : 0);
   try {

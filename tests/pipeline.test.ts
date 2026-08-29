@@ -90,6 +90,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
         spy.extracted.push([i, o]);
       },
       concatAudio: async () => {},
+      concatAv: async () => {},
       cut: async () => {},
       reframe: async () => {},
       reframeTracked: async () => {},

@@ -189,6 +189,41 @@ export function buildConcatAudioArgs({ listPath, outputPath }: ConcatAudioArgs):
   return ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", outputPath];
 }
 
+/**
+ * Join self-contained A/V WebM chunks (MediaRecorder stop/start segments) into
+ * one clean file. Stream-copy concat of Matroska/WebM leaves non-monotonic
+ * timestamps and plays black after the first segment, so this re-encodes to a
+ * single continuous VP8/Opus stream with regenerated PTS.
+ */
+export function buildConcatAvArgs({ listPath, outputPath }: ConcatAudioArgs): string[] {
+  assertSafePath(listPath);
+  assertSafePath(outputPath);
+  return [
+    "-y",
+    "-fflags",
+    "+genpts",
+    "-f",
+    "concat",
+    "-safe",
+    "0",
+    "-i",
+    listPath,
+    "-c:v",
+    "libvpx",
+    "-b:v",
+    "2M",
+    "-deadline",
+    "realtime",
+    "-cpu-used",
+    "5",
+    "-c:a",
+    "libopus",
+    "-b:a",
+    "128k",
+    outputPath,
+  ];
+}
+
 export interface CutArgs {
   inputPath: string;
   outputPath: string;

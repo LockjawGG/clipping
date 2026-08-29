@@ -124,7 +124,11 @@ test("addLiveChunk stores a chunk, returns a PUT, and enqueues LIVE_TRANSCRIBE",
   const out = await addLiveChunk(deps, videoId, { index: 0, startMs: 0 });
   assert.match(out.upload.url, /chunks\/00000\.webm$/);
   assert.equal(chunks.length, 1);
-  assert.deepEqual(enqueued.at(-1), { videoId, kind: "LIVE_TRANSCRIBE", payload: { chunkId: out.chunkId } });
+  const last = enqueued.at(-1) as { videoId: string; kind: string; payload: unknown; maxAttempts?: number };
+  assert.equal(last.videoId, videoId);
+  assert.equal(last.kind, "LIVE_TRANSCRIBE");
+  assert.deepEqual(last.payload, { chunkId: out.chunkId });
+  assert.equal(last.maxAttempts, 6);
 });
 
 test("addLiveChunk 409s once the recording is no longer LIVE", async () => {
@@ -196,7 +200,7 @@ test("LIVE_TRANSCRIBE transcribes a chunk and appends offset segments", async ()
   const deps = {
     tempDir: "/tmp/live-test",
     ffmpeg: { extractAudio: async () => {} },
-    storage: { getToFile: async () => {} },
+    storage: { getToFile: async () => {}, exists: async () => true },
     transcription: {
       transcribe: async () => ({
         provider: "fake",
@@ -230,10 +234,16 @@ test("LIVE_FINALIZE concats chunks, re-transcribes, and queues ANALYZE", async (
     tempDir: "/tmp/live-test",
     ffmpeg: {
       concatAudio: async () => calls.push("concat"),
-      probe: async () => ({ durationMs: 24_000, hasAudio: true }),
+      concatAv: async () => calls.push("concatAv"),
+      probe: async () => ({ durationMs: 24_000, hasAudio: true, videoCodec: null }),
       extractAudio: async () => calls.push("extract"),
     },
-    storage: { getToFile: async () => {}, putFile: async () => calls.push("put"), delete: async () => {} },
+    storage: {
+      getToFile: async () => {},
+      putFile: async () => calls.push("put"),
+      delete: async () => {},
+      exists: async () => true,
+    },
     videos: {
       get: async () => ({ id: "vidL", storageKey: "videos/vidL/source.webm", durationMs: null, status: "PROBING" }),
       applyProbe: async () => {},

@@ -161,13 +161,25 @@ export function GoLive({ projectId }: { projectId?: string }) {
       });
       streams.current.push(mic);
 
-      const AC: typeof AudioContext =
-        window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const ac = new AC();
-      audioCtx.current = ac;
-      const dest = ac.createMediaStreamDestination();
-      ac.createMediaStreamSource(mic).connect(dest);
-      if (screenAudio) ac.createMediaStreamSource(screenAudio).connect(dest);
+      // Only spin up an AudioContext when we actually need to *mix* two audio
+      // sources (mic + screen). A suspended AudioContext produces no samples,
+      // which stalls MediaRecorder's muxer and yields a black/frozen video — so
+      // the mic-only path skips it entirely and records the mic track directly.
+      let audioTracks: MediaStreamTrack[];
+      if (screenAudio) {
+        const AC: typeof AudioContext =
+          window.AudioContext ??
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const ac = new AC();
+        audioCtx.current = ac;
+        if (ac.state === "suspended") await ac.resume().catch(() => {});
+        const dest = ac.createMediaStreamDestination();
+        ac.createMediaStreamSource(mic).connect(dest);
+        ac.createMediaStreamSource(screenAudio).connect(dest);
+        audioTracks = dest.stream.getAudioTracks();
+      } else {
+        audioTracks = mic.getAudioTracks();
+      }
 
       const create = await fetch("/api/live", {
         method: "POST",
@@ -177,11 +189,8 @@ export function GoLive({ projectId }: { projectId?: string }) {
       if (!create.ok) throw new Error((await create.json().catch(() => ({}))).error ?? "couldn't start the session");
       videoId.current = ((await create.json()) as { videoId: string }).videoId;
 
-      // With a screen: record screen video + mixed audio. Mic-only: audio only.
-      const recStream = new MediaStream([
-        ...(screenVideo ? [screenVideo] : []),
-        ...dest.stream.getAudioTracks(),
-      ]);
+      // With a screen: record screen video + audio. Mic-only: audio only.
+      const recStream = new MediaStream([...(screenVideo ? [screenVideo] : []), ...audioTracks]);
       const pick = (cands: string[]) => cands.find((c) => MediaRecorder.isTypeSupported(c));
       const mime = screenVideo
         ? pick([
