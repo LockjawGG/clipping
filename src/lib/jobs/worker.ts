@@ -109,23 +109,42 @@ export class JobWorker<Deps> {
       return;
     }
 
-    // Keep the lease alive through long, silent steps (a 1GB download).
+    // Per-job abort: fires on worker shutdown OR when the user cancels this job.
+    const jobAbort = new AbortController();
+    const onShutdown = () => jobAbort.abort();
+    this.controller.signal.addEventListener("abort", onShutdown);
+    let cancelled = false;
+
+    // Keep the lease alive through long, silent steps (a 1GB download), and
+    // poll for a user cancellation so the handler (and its yt-dlp / ffmpeg
+    // subprocess, which gets the signal) is stopped promptly.
     const beat = setInterval(() => {
       void store.heartbeat(job.id).catch(() => {});
+      void store
+        .isCancelled(job.id)
+        .then((c) => {
+          if (c) {
+            cancelled = true;
+            jobAbort.abort();
+          }
+        })
+        .catch(() => {});
     }, this.cfg.heartbeatMs);
     (beat as unknown as { unref?: () => void }).unref?.();
 
     const ctx: JobContext<Deps> = {
       job,
       deps,
-      signal: this.controller.signal,
+      signal: jobAbort.signal,
       setProgress: (fraction) => store.setProgress(job.id, Math.max(0, Math.min(1, fraction))),
     };
 
     try {
       const result = await handler(ctx);
+      if (cancelled) return; // user cancelled — leave the row CANCELLED
       await store.complete(job.id, result ?? {});
     } catch (err) {
+      if (cancelled) return; // cancelled: swallow the abort error, keep it CANCELLED
       if (this.controller.signal.aborted) {
         // Shutting down — hand the job straight back, no attempt spent.
         await store.retry(job.id, new Date(this.cfg.now()));
@@ -140,6 +159,7 @@ export class JobWorker<Deps> {
       }
     } finally {
       clearInterval(beat);
+      this.controller.signal.removeEventListener("abort", onShutdown);
       await cleanup?.(job).catch(() => {});
     }
   }

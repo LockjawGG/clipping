@@ -59,34 +59,45 @@ export function createPrismaJobStore(db: PrismaClient): JobStore {
       return row ? toRecord(row) : null;
     },
 
+    // complete / fail / retry / setProgress only touch a still-PROCESSING row.
+    // If the user cancelled the job mid-flight (status -> CANCELLED), a late
+    // finish by the worker is a harmless no-op instead of resurrecting it.
     async complete(id, result) {
-      await db.job.update({
-        where: { id },
+      await db.job.updateMany({
+        where: { id, status: "PROCESSING" },
         data: { status: "COMPLETED", progress: 1, result: asJson(result), errorMessage: null },
       });
     },
 
     async fail(id, errorMessage) {
-      await db.job.update({
-        where: { id },
+      await db.job.updateMany({
+        where: { id, status: "PROCESSING" },
         data: { status: "FAILED", errorMessage: errorMessage.slice(0, 2000) },
       });
     },
 
     async retry(id, runAfter) {
-      await db.job.update({
-        where: { id },
+      await db.job.updateMany({
+        where: { id, status: "PROCESSING" },
         data: { status: "QUEUED", runAfter },
       });
     },
 
     async setProgress(id, fraction) {
-      await db.job.update({ where: { id }, data: { progress: fraction } });
+      await db.job.updateMany({
+        where: { id, status: "PROCESSING" },
+        data: { progress: fraction },
+      });
     },
 
     async heartbeat(id) {
       // `@updatedAt` bumps on any write; touch a cheap column.
       await db.job.updateMany({ where: { id, status: "PROCESSING" }, data: { progress: { increment: 0 } } });
+    },
+
+    async isCancelled(id) {
+      const r = await db.job.findUnique({ where: { id }, select: { status: true } });
+      return r == null || r.status === "CANCELLED";
     },
 
     async reclaimStale(staleBefore) {

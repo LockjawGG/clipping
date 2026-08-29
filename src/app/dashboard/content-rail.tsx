@@ -109,6 +109,12 @@ export function ContentRail({
     router.refresh();
   }
 
+  async function cancel(videoId: string) {
+    setMenuFor(null);
+    await fetch(`/api/videos/${videoId}/cancel`, { method: "POST" });
+    router.refresh();
+  }
+
   async function rename(videoId: string, name: string, original: string) {
     setRenaming(null);
     const trimmed = name.trim();
@@ -261,6 +267,17 @@ export function ContentRail({
                         }}
                       >
                         Retry processing
+                      </button>
+                    )}
+                    {GROUPS[0].match(v.status) && (
+                      <button
+                        className="text-danger"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          cancel(v.id);
+                        }}
+                      >
+                        Cancel
                       </button>
                     )}
                     <button

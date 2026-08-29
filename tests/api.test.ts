@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import type { StorageProvider } from "../src/lib/providers/types.ts";
 import type { VideoDb, VideoRecord, VideoServiceDeps } from "../src/lib/api/videos.ts";
 import {
+  cancelVideo,
   confirmUpload,
   createUploadSchema,
   createVideoFromUrl,
@@ -33,6 +34,7 @@ function fakeStorage(over: Partial<StorageProvider> = {}): StorageProvider {
 
 function fakeDb() {
   const videos = new Map<string, VideoRecord & { projectId: string }>();
+  const jobUpdates: Array<{ where: Record<string, unknown>; data: Record<string, unknown> }> = [];
   let seq = 0;
   const db: VideoDb = {
     video: {
@@ -63,18 +65,22 @@ function fakeDb() {
     transcript: { findUnique: async () => ({ language: "en" }) },
     job: {
       findMany: async () => [],
-      updateMany: async () => ({ count: 0 }),
+      updateMany: async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        jobUpdates.push(args);
+        return { count: 1 };
+      },
     },
   };
-  return { db, videos };
+  return { db, videos, jobUpdates };
 }
 
 function makeDeps(over: Partial<VideoServiceDeps> = {}): {
   deps: VideoServiceDeps;
   enqueued: Array<{ videoId: string; kind: string; payload?: unknown }>;
   videos: ReturnType<typeof fakeDb>["videos"];
+  jobUpdates: ReturnType<typeof fakeDb>["jobUpdates"];
 } {
-  const { db, videos } = fakeDb();
+  const { db, videos, jobUpdates } = fakeDb();
   const enqueued: Array<{ videoId: string; kind: string; payload?: unknown }> = [];
   const deps: VideoServiceDeps = {
     db,
@@ -90,7 +96,7 @@ function makeDeps(over: Partial<VideoServiceDeps> = {}): {
     },
     ...over,
   };
-  return { deps, enqueued, videos };
+  return { deps, enqueued, videos, jobUpdates };
 }
 
 // --- schema ------------------------------------------------------
@@ -247,6 +253,42 @@ test("getVideoStatus returns the poll shape and 404s when missing", async () => 
 
   await assert.rejects(
     () => getVideoStatus(deps, "missing"),
+    (e: unknown) => e instanceof ApiError && e.status === 404,
+  );
+});
+
+// --- cancelVideo -----------------------------------------
+
+test("cancelVideo CANCELs live jobs and marks the video FAILED", async () => {
+  const { deps, videos, jobUpdates } = makeDeps();
+  const { videoId } = await createVideoFromUrl(deps, { url: "https://example.com/v.mp4" });
+
+  const out = await cancelVideo(deps, videoId);
+
+  assert.equal(out.cancelled, 1);
+  assert.equal(videos.get(videoId)!.status, "FAILED");
+  assert.match(String(videos.get(videoId)!.errorMessage), /Cancelled/);
+  // the job write targets this video's still-live jobs
+  const [call] = jobUpdates;
+  assert.equal((call.where as { videoId: string }).videoId, videoId);
+  assert.equal((call.data as { status: string }).status, "CANCELLED");
+});
+
+test("cancelVideo is a no-op on a READY or FAILED video", async () => {
+  const { deps, videos, jobUpdates } = makeDeps();
+  const { videoId } = await createVideoFromUrl(deps, { url: "https://example.com/v.mp4" });
+  videos.get(videoId)!.status = "READY";
+
+  const out = await cancelVideo(deps, videoId);
+  assert.equal(out.cancelled, 0);
+  assert.equal(jobUpdates.length, 0);
+  assert.equal(videos.get(videoId)!.status, "READY");
+});
+
+test("cancelVideo 404s for an unknown video", async () => {
+  const { deps } = makeDeps();
+  await assert.rejects(
+    () => cancelVideo(deps, "missing"),
     (e: unknown) => e instanceof ApiError && e.status === 404,
   );
 });

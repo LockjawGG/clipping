@@ -55,6 +55,11 @@ export interface JobStore {
   /** Touch the row so a live job keeps its lease (see `reclaimStale`). */
   heartbeat(id: string): Promise<void>;
   /**
+   * True when the row is CANCELLED (or gone) — the worker polls this for a live
+   * job and aborts its handler so an in-flight download / transcription stops.
+   */
+  isCancelled(id: string): Promise<boolean>;
+  /**
    * Requeue jobs stuck in PROCESSING since before `staleBefore` — a worker that
    * claimed them died without finishing. Returns how many were reclaimed.
    */

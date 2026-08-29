@@ -100,6 +100,11 @@ class MemoryStore implements JobStore {
     if (r && r.status === "PROCESSING") r.updatedAt = new Date(this.clock());
   }
 
+  async isCancelled(id: string): Promise<boolean> {
+    const r = this.rows.get(id);
+    return r == null || r.status === "CANCELLED";
+  }
+
   clock: () => number = () => Date.now();
   async reclaimStale(staleBefore: Date): Promise<number> {
     let n = 0;
@@ -286,6 +291,37 @@ test("a running job heartbeats to keep its lease", async () => {
 
   assert.ok(store.heartbeats.length >= 2, `heartbeats: ${store.heartbeats.length}`);
   assert.equal(store.rows.get("j1")!.status, "COMPLETED");
+});
+
+test("a job cancelled mid-flight is aborted and stays CANCELLED (no retry, no complete)", async () => {
+  const store = new MemoryStore();
+  store.add({ id: "j1", kind: "FETCH", maxAttempts: 3 });
+
+  let sawAbort = false;
+  const worker = new JobWorker({
+    store,
+    deps,
+    heartbeatMs: 5,
+    handlers: {
+      FETCH: (ctx) =>
+        new Promise<void>((_resolve, reject) => {
+          ctx.signal.addEventListener("abort", () => {
+            sawAbort = true;
+            reject(new Error("aborted"));
+          });
+        }),
+    },
+  });
+
+  worker.start();
+  await new Promise((r) => setTimeout(r, 15)); // let it claim + start
+  store.rows.get("j1")!.status = "CANCELLED"; // user hits Cancel
+  await new Promise((r) => setTimeout(r, 20)); // next heartbeat tick aborts it
+  await worker.stop();
+
+  assert.equal(sawAbort, true, "handler received the abort");
+  assert.equal(store.rows.get("j1")!.status, "CANCELLED", "left CANCELLED, not retried/failed");
+  assert.equal(store.rows.get("j1")!.attempts, 1, "no extra attempt burned");
 });
 
 test("cleanup runs after every job, success or failure", async () => {

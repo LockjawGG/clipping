@@ -225,6 +225,30 @@ export async function retryVideo(deps: VideoServiceDeps, videoId: string) {
   return { videoId, requeued: res.count };
 }
 
+/**
+ * Stop a stuck / failing ingest. Its live jobs go CANCELLED (the worker polls
+ * this and aborts the in-flight download / transcription), and the video is
+ * marked FAILED so it leaves the "Processing" group. "Retry processing" can
+ * still pick it back up afterwards.
+ */
+export async function cancelVideo(deps: VideoServiceDeps, videoId: string) {
+  const video = await ownedVideo(deps, videoId);
+  if (video.status === "READY" || video.status === "FAILED") {
+    return { videoId, cancelled: 0, note: "not processing" };
+  }
+
+  const res = await deps.db.job.updateMany({
+    where: { videoId, status: { in: ["QUEUED", "PROCESSING"] } },
+    data: { status: "CANCELLED", errorMessage: "cancelled by user" },
+  });
+  await deps.db.video.update({
+    where: { id: videoId },
+    data: { status: "FAILED", errorMessage: "Cancelled — download/transcription stopped." },
+  });
+
+  return { videoId, cancelled: res.count };
+}
+
 export async function getVideoStatus(deps: VideoServiceDeps, videoId: string) {
   const video = await ownedVideo(deps, videoId);
 
