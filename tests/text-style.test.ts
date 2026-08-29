@@ -189,9 +189,27 @@ test("every template is well-formed and category-consistent", () => {
   }
 });
 
-test("each category has at least three templates", () => {
+test("every category is stocked and the library is deep", () => {
   for (const c of CAPTION_TEMPLATE_CATEGORIES) {
-    assert.ok(templatesByCategory(c.id).length >= 3, `${c.id} is thin`);
+    assert.ok(templatesByCategory(c.id).length >= 6, `${c.id} is thin`);
+  }
+  assert.ok(CAPTION_TEMPLATES.length >= 50, `library has ${CAPTION_TEMPLATES.length}`);
+});
+
+test("every template's animation is a known CaptionAnimation", () => {
+  const known = new Set([
+    "NONE",
+    "WORD_BY_WORD",
+    "POP",
+    "SCALE",
+    "BOUNCE",
+    "FADE",
+    "KARAOKE",
+    "SLIDE_UP",
+    "TYPEWRITER",
+  ]);
+  for (const t of CAPTION_TEMPLATES) {
+    assert.ok(known.has(t.animation), `${t.id} -> ${t.animation}`);
   }
 });
 
