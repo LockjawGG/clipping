@@ -6,6 +6,9 @@ import { useRouter } from "next/navigation";
 export interface TranscriptWord {
   id: string;
   text: string;
+  /** Absolute ms in the source video. */
+  startMs: number;
+  endMs: number;
 }
 export interface TranscriptRow {
   startMs: number;
@@ -41,17 +44,22 @@ export function wordSpanCss(s: WordStyle | undefined): React.CSSProperties {
   };
 }
 
-/** One transcript word: single-click selects it, double-click edits its text. */
+/**
+ * One transcript word: single-click seeks the preview to it (and selects it for
+ * caption styling); double-click edits its text.
+ */
 const Word = memo(function Word({
   word,
   style,
   selected,
   onToggleSelect,
+  onSeek,
 }: {
   word: TranscriptWord;
   style: WordStyle | undefined;
   selected: boolean;
   onToggleSelect: (id: string) => void;
+  onSeek: (absStartMs: number) => void;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
@@ -98,14 +106,17 @@ const Word = memo(function Word({
   return (
     <button
       type="button"
-      onClick={() => onToggleSelect(word.id)}
+      onClick={() => {
+        onSeek(word.startMs);
+        onToggleSelect(word.id);
+      }}
       onDoubleClick={() => setEditing(true)}
       aria-pressed={selected}
       style={wordSpanCss(style)}
       className={`rounded px-0.5 ${busy ? "opacity-50" : ""} ${
         selected ? "bg-accent/30 ring-1 ring-accent" : "hover:bg-accent/15"
       }`}
-      title="Click to select · double-click to fix a typo"
+      title="Click to jump the preview here · double-click to fix a typo"
     >
       {value}
     </button>
@@ -120,6 +131,8 @@ interface Props {
   onApplyStyle: (patch: WordStylePatch) => void;
   onReset: () => void;
   onClearSelection: () => void;
+  /** Jump the preview to a word (absolute ms in the source video). */
+  onSeek: (absStartMs: number) => void;
 }
 
 /**
@@ -136,6 +149,7 @@ export const EditableTranscript = memo(function EditableTranscript({
   onApplyStyle,
   onReset,
   onClearSelection,
+  onSeek,
 }: Props) {
   if (rows.length === 0) {
     return <p className="text-xs text-muted">No transcript for this range.</p>;
@@ -213,6 +227,7 @@ export const EditableTranscript = memo(function EditableTranscript({
                   style={styles[w.id]}
                   selected={selectedIds.has(w.id)}
                   onToggleSelect={onToggleSelect}
+                  onSeek={onSeek}
                 />
               ))}
             </span>

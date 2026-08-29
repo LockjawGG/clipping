@@ -166,7 +166,12 @@ export default async function DashboardPage({
         startMs: s.startMs,
         endMs: s.endMs,
         speaker: s.speaker,
-        words: s.words.map((w) => ({ id: w.id, text: w.text })),
+        words: s.words.map((w) => ({
+          id: w.id,
+          text: w.text,
+          startMs: w.startMs,
+          endMs: w.endMs,
+        })),
       }));
       /** Segments that overlap each clip's window — the clip's own transcript. */
       const transcriptByClip = Object.fromEntries(

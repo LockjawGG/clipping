@@ -23,6 +23,9 @@ interface Props {
   caption: CaptionConfig;
   wordStyles: Record<string, WordStyle>;
   renderUrl: string | null;
+  /** Seek the preview to `ms` (clip-relative). `n` changes even on a repeat
+   *  request for the same position so the effect re-fires. */
+  seekToMs?: { ms: number; n: number } | null;
   overlays: OverlayView[];
   selectedOverlayId: string | null;
   onSelectOverlay: (id: string | null) => void;
@@ -55,6 +58,7 @@ export const ClipPlayer = memo(function ClipPlayer({
   caption,
   wordStyles,
   renderUrl,
+  seekToMs,
   overlays,
   selectedOverlayId,
   onSelectOverlay,
@@ -192,6 +196,18 @@ export const ClipPlayer = memo(function ClipPlayer({
     setPosMs(relMs);
     onPlayhead(relMs);
   }
+
+  // Seek requested from outside (a transcript word click). Only in source mode —
+  // the rendered file has a different timebase.
+  useEffect(() => {
+    if (!seekToMs || mode !== "source") return;
+    const v = videoRef.current;
+    if (!v) return;
+    v.pause();
+    setPlaying(false);
+    scrub(Math.min(Math.max(0, seekToMs.ms), spanMs));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seekToMs?.n]);
 
   // --- caption drag ---
   function onOverlayPointerDown(e: React.PointerEvent) {

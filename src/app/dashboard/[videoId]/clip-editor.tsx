@@ -123,6 +123,19 @@ export function ClipEditor({
   const [busy, setBusy] = useState<"save" | "render" | "delete" | "thumb" | "save-to" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playheadMs, setPlayheadMs] = useState(0);
+  // A seek requested from the transcript (click a word). `n` forces the player's
+  // effect to re-run even when the same word is clicked twice.
+  const [seekReq, setSeekReq] = useState<{ ms: number; n: number } | null>(null);
+  const seekToWord = useCallback(
+    (absStartMs: number) => {
+      const rel = Math.min(
+        Math.max(0, absStartMs - clip.startMs),
+        Math.max(0, clip.endMs - clip.startMs - 1),
+      );
+      setSeekReq({ ms: rel, n: Date.now() });
+    },
+    [clip.startMs, clip.endMs],
+  );
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const [dropActive, setDropActive] = useState(false);
   const [overlayError, setOverlayError] = useState<string | null>(null);
@@ -707,6 +720,7 @@ export function ClipEditor({
         caption={captionDraft}
         wordStyles={wordStyles}
         renderUrl={clip.render?.downloadUrl ?? null}
+        seekToMs={seekReq}
         overlays={overlays}
         selectedOverlayId={selectedOverlayId}
         onSelectOverlay={setSelectedOverlayId}
@@ -873,8 +887,8 @@ export function ClipEditor({
 
       <div className="flex flex-col gap-1.5">
         <p className="text-xs font-medium text-muted">
-          Transcript for this clip — double-click a word to fix a typo, or select words to colour /
-          bold them as captions
+          Transcript for this clip — click a word to jump the preview there, double-click to fix a
+          typo, or select words to colour / bold them as captions
         </p>
         <EditableTranscript
           rows={transcript}
@@ -884,6 +898,7 @@ export function ClipEditor({
           onApplyStyle={applyWordStyle}
           onReset={resetWordStyle}
           onClearSelection={clearWordSelection}
+          onSeek={seekToWord}
         />
       </div>
 
