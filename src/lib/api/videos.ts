@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import type { StorageProvider } from "../providers/types.ts";
 import type { JobKind } from "../jobs/types.ts";
+import { normalizeSourceUrl, sourceUrlHash } from "../ingest/url-cache.ts";
 import { ApiError } from "./http.ts";
 
 /**
@@ -50,6 +51,15 @@ export interface VideoDb {
   video: {
     create(args: { data: Record<string, unknown> }): Promise<{ id: string }>;
     findUnique(args: { where: { id: string } }): Promise<VideoRecord | null>;
+    findFirst(args: {
+      where: {
+        sourceUrlHash: string;
+        status: string;
+        project: { userId: string };
+      };
+      orderBy?: unknown;
+      select?: unknown;
+    }): Promise<{ id: string; projectId: string } | null>;
     update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<unknown>;
     delete(args: { where: { id: string } }): Promise<unknown>;
   };
@@ -88,6 +98,8 @@ export interface VideoServiceDeps {
   db: VideoDb;
   storage: StorageProvider;
   maxUploadBytes: number;
+  /** The signed-in user — scopes the "already transcribed this URL" lookup. */
+  userId: string;
   /** The user's default project — new videos land here when none is given. */
   defaultProjectId: () => Promise<string>;
   /** Throws 404 unless the project is owned by the signed-in user. */
@@ -137,9 +149,25 @@ export async function createVideoUpload(deps: VideoServiceDeps, input: unknown) 
   };
 }
 
-/** Ingest from a URL: create the row, enqueue FETCH (yt-dlp downloads server-side). */
+/**
+ * Ingest from a URL: create the row, enqueue FETCH (yt-dlp downloads
+ * server-side). If the same normalised URL has already been transcribed for this
+ * user, reuse that video instead of downloading and transcribing it again.
+ */
 export async function createVideoFromUrl(deps: VideoServiceDeps, input: unknown) {
   const { url, projectId: wanted } = createFromUrlSchema.parse(input);
+
+  const normalized = normalizeSourceUrl(url);
+  const hash = sourceUrlHash(normalized);
+
+  const cached = await deps.db.video.findFirst({
+    where: { sourceUrlHash: hash, status: "READY", project: { userId: deps.userId } },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, projectId: true },
+  });
+  if (cached) {
+    return { videoId: cached.id, projectId: cached.projectId, status: "READY" as const, reused: true };
+  }
 
   const projectId = await resolveProjectId(deps, wanted);
   const storageKey = `videos/${randomUUID()}/source.mp4`;
@@ -150,11 +178,13 @@ export async function createVideoFromUrl(deps: VideoServiceDeps, input: unknown)
       status: "UPLOADING",
       originalFilename: url.slice(0, 500),
       storageKey,
+      sourceUrl: normalized,
+      sourceUrlHash: hash,
     },
   });
 
   const jobId = await deps.enqueue({ videoId: video.id, kind: "FETCH", payload: { url } });
-  return { videoId: video.id, jobId, status: "FETCHING" as const };
+  return { videoId: video.id, jobId, status: "FETCHING" as const, reused: false };
 }
 
 /** 404 (not 403) for a video the caller doesn't own — don't leak ids. */

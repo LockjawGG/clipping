@@ -31,6 +31,7 @@ export function videoService(userId: string): VideoServiceDeps {
     db: db as unknown as VideoServiceDeps["db"],
     storage: getStorage(),
     maxUploadBytes: env.MAX_UPLOAD_BYTES,
+    userId,
     defaultProjectId: () => getOrCreateProject(db, userId),
     assertProjectOwned: ownsProject(userId),
     enqueue: (input) => enqueueJob(db, input),

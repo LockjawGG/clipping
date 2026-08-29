@@ -33,7 +33,10 @@ function fakeStorage(over: Partial<StorageProvider> = {}): StorageProvider {
 }
 
 function fakeDb() {
-  const videos = new Map<string, VideoRecord & { projectId: string }>();
+  const videos = new Map<
+    string,
+    VideoRecord & { projectId: string; sourceUrlHash?: string | null; userId?: string }
+  >();
   const jobUpdates: Array<{ where: Record<string, unknown>; data: Record<string, unknown> }> = [];
   let seq = 0;
   const db: VideoDb = {
@@ -50,11 +53,24 @@ function fakeDb() {
           width: null,
           height: null,
           errorMessage: null,
+          sourceUrlHash: (data.sourceUrlHash as string | undefined) ?? null,
         });
         return { id };
       },
       async findUnique({ where }) {
         return videos.get(where.id) ?? null;
+      },
+      async findFirst({ where }) {
+        for (const v of [...videos.values()].reverse()) {
+          if (
+            v.sourceUrlHash === where.sourceUrlHash &&
+            v.status === where.status &&
+            (v.userId ?? "proj1-owner") === where.project.userId
+          ) {
+            return { id: v.id, projectId: v.projectId };
+          }
+        }
+        return null;
       },
       async update({ where, data }) {
         Object.assign(videos.get(where.id)!, data);
@@ -90,6 +106,7 @@ function makeDeps(over: Partial<VideoServiceDeps> = {}): {
     db,
     storage: fakeStorage(),
     maxUploadBytes: 5_000_000,
+    userId: "proj1-owner",
     defaultProjectId: async () => "proj1",
     assertProjectOwned: async (projectId: string) => {
       if (projectId !== "proj1") throw new ApiError(404, "not found");
@@ -132,6 +149,35 @@ test("createVideoFromUrl stores a row and enqueues a FETCH job with the url", as
   assert.deepEqual(enqueued, [
     { videoId: out.videoId, kind: "FETCH", payload: { url: "https://www.youtube.com/watch?v=abc" } },
   ]);
+});
+
+test("createVideoFromUrl reuses an already-transcribed URL instead of re-ingesting", async () => {
+  const { deps, enqueued } = makeDeps();
+  // first submission -> ingests
+  const first = await createVideoFromUrl(deps, { url: "https://youtu.be/abc?si=track123" });
+  assert.equal(first.reused, false);
+  // mark it done, as the pipeline would
+  const dbVideo = (deps.db.video as unknown as {
+    findUnique: (a: { where: { id: string } }) => Promise<{ status: string } | null>;
+  });
+  (await dbVideo.findUnique({ where: { id: first.videoId } }))!.status = "READY";
+
+  // same video, different tracking params + fragment -> cache hit, no new job
+  const again = await createVideoFromUrl(deps, {
+    url: "https://youtu.be/abc?si=DIFFERENT#t=10",
+  });
+  assert.equal(again.reused, true);
+  assert.equal(again.videoId, first.videoId);
+  assert.equal(again.status, "READY");
+  assert.equal(enqueued.length, 1, "no second FETCH enqueued");
+});
+
+test("createVideoFromUrl does not reuse a URL that is still processing", async () => {
+  const { deps, enqueued } = makeDeps();
+  await createVideoFromUrl(deps, { url: "https://example.com/v.mp4" }); // stays UPLOADING
+  const second = await createVideoFromUrl(deps, { url: "https://example.com/v.mp4" });
+  assert.equal(second.reused, false);
+  assert.equal(enqueued.length, 2);
 });
 
 test("createVideoFromUrl rejects non-URLs and non-http schemes", async () => {

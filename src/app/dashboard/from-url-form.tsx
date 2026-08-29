@@ -76,11 +76,24 @@ export function FromUrlForm({ projectId }: { projectId?: string }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ url: url.trim(), projectId }),
       });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "could not start");
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        videoId?: string;
+        projectId?: string;
+        reused?: boolean;
+      };
+      if (!res.ok) throw new Error(body.error ?? "could not start");
       setUrl("");
       setResult(null);
       setPhase("input");
-      router.refresh();
+      if (body.reused && body.videoId) {
+        // Already transcribed this link — jump straight to it.
+        router.push(
+          `/dashboard?project=${body.projectId ?? projectId ?? ""}&video=${body.videoId}`,
+        );
+      } else {
+        router.refresh();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "could not start the download");
     } finally {
