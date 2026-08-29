@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os, { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
@@ -85,6 +86,25 @@ export function parseWhisperCueEndMs(line: string): number | null {
   );
 }
 
+/**
+ * Windows exit codes for "the exe exists but its runtime wouldn't load" —
+ * 0xC0000142 STATUS_DLL_INIT_FAILED, 0xC0000135 STATUS_DLL_NOT_FOUND,
+ * 0xC000007B STATUS_INVALID_IMAGE_FORMAT. Common (and intermittent) with the
+ * pip `Scripts\*.exe` console-script shims when spawned from a non-console
+ * parent. Retrying the spawn almost always clears it.
+ */
+const FLAKY_EXIT = new Set([3221225794, 3221225781, 3221225595]);
+
+function isTransientSpawn(err: unknown, binaryExists: boolean): boolean {
+  const e = err as NodeJS.ErrnoException & { message?: string };
+  if (binaryExists && e.code === "ENOENT") return true; // shim vanished for a beat
+  if (e.code === "EBUSY" || e.code === "ETXTBSY" || e.code === "EAGAIN") return true;
+  const m = /exited (\d+)/.exec(e.message ?? "");
+  return m ? FLAKY_EXIT.has(Number(m[1])) : false;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export class WhisperLocalProvider implements TranscriptionProvider {
   readonly name = "whisper-local";
 
@@ -109,13 +129,36 @@ export class WhisperLocalProvider implements TranscriptionProvider {
     ];
     if (options.language) args.push("--language", options.language);
 
+    const binaryExists = existsSync(this.opts.binary);
+    const jsonPath = join(outDir, `${basename(audioPath, extname(audioPath))}.json`);
     try {
-      await this.run(args, options);
-      const jsonPath = join(outDir, `${basename(audioPath, extname(audioPath))}.json`);
-      const raw = JSON.parse(await readFile(jsonPath, "utf8")) as WhisperJson;
+      // The pip console-script shim on Windows is flaky when spawned from a
+      // non-console parent: it either fails to start, or "runs" (exit 0) while
+      // the real Python whisper never executes and no JSON is written. Retry
+      // both cases a few times before giving up.
+      let raw: WhisperJson | null = null;
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        try {
+          await this.run(args, options);
+          if (existsSync(jsonPath)) {
+            raw = JSON.parse(await readFile(jsonPath, "utf8")) as WhisperJson;
+            break;
+          }
+          // ran but produced nothing — treat as transient
+          if (attempt === 4 || options.signal?.aborted) {
+            throw new Error("whisper produced no output");
+          }
+        } catch (err) {
+          if (attempt === 4 || options.signal?.aborted || !isTransientSpawn(err, binaryExists)) {
+            throw err;
+          }
+        }
+        await sleep(attempt * 500);
+      }
+      if (!raw) throw new Error("whisper produced no output after 4 attempts");
       return parseWhisperJson(raw, this.opts.model);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      if (!binaryExists && (err as NodeJS.ErrnoException).code === "ENOENT") {
         throw new ProviderUnavailableError(
           "transcription:whisper-local",
           `the "${this.opts.binary}" binary is not on PATH (set WHISPER_BINARY)`,
@@ -143,6 +186,11 @@ export class WhisperLocalProvider implements TranscriptionProvider {
           // Python is block-buffered on a pipe; without this its cue lines sit
           // in a buffer until exit and `onProgress` never fires mid-run.
           PYTHONUNBUFFERED: "1",
+          // Whisper prints the transcript to stdout. On Windows that's cp1252,
+          // so any non-Latin text raises UnicodeEncodeError *inside* whisper and
+          // it silently "Skips" the file — no JSON, exit 0. Force UTF-8 so it
+          // always finishes and writes its output.
+          PYTHONIOENCODING: "utf-8",
           OMP_NUM_THREADS: String(cores),
           MKL_NUM_THREADS: String(cores),
         },

@@ -2,6 +2,9 @@ import type { JobHandler } from "../jobs/types.ts";
 import type { Segment } from "../providers/types.ts";
 import { jobWorkDir, type PipelineDeps, scratchPath } from "./deps.ts";
 
+/** Pin the language for short live chunks (8s is too little to auto-detect). */
+const LIVE_LANGUAGE = process.env.LIVE_LANGUAGE ?? "en";
+
 /**
  * Live-capture handlers.
  *
@@ -39,7 +42,11 @@ export const liveTranscribeHandler: JobHandler<PipelineDeps> = async ({ job, dep
   try {
     await deps.storage.getToFile(chunk.storageKey, raw);
     await deps.ffmpeg.extractAudio(raw, wav, signal);
-    const result = await deps.transcription.transcribe(wav, { wordTimestamps: true, signal });
+    const result = await deps.transcription.transcribe(wav, {
+      wordTimestamps: true,
+      signal,
+      ...(LIVE_LANGUAGE ? { language: LIVE_LANGUAGE } : {}),
+    });
 
     await deps.transcripts.appendSegments(chunk.videoId, {
       provider: result.provider,

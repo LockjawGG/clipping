@@ -34,6 +34,12 @@ const schema = z.object({
     .default("whisper-local"),
   WHISPER_BINARY: z.string().default("whisper"),
   WHISPER_MODEL: z.string().default("large-v3"),
+  /**
+   * Language for rolling live-capture chunks. A short 8s slice is too little for
+   * reliable auto-detection (it language-hops), so live transcription pins this.
+   * The full re-transcribe on Stop still auto-detects. Empty = auto-detect.
+   */
+  LIVE_LANGUAGE: z.string().default("en"),
   OPENAI_API_KEY: z.string().optional(),
   DEEPGRAM_API_KEY: z.string().optional(),
 
