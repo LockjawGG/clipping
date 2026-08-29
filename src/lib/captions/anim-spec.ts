@@ -115,7 +115,7 @@ export const BUILTIN_TEXT_ANIMATIONS: Record<string, TextAnimation> = {
         scope: "word",
         phase: "intro",
         tracks: [
-          { prop: "scale", from: 1.35, to: 1, ease: "spring", spring: { damping: 12, stiffness: 200 } },
+          { prop: "scale", from: 1.16, to: 1, ease: "spring", spring: { damping: 12, stiffness: 200 } },
         ],
       },
     ],
@@ -129,7 +129,7 @@ export const BUILTIN_TEXT_ANIMATIONS: Record<string, TextAnimation> = {
       {
         scope: "word",
         phase: "active",
-        tracks: [{ prop: "scale", from: 1.12, to: 1.12, durMs: 0, ease: "linear" }],
+        tracks: [{ prop: "scale", from: 1.06, to: 1.06, durMs: 0, ease: "linear" }],
       },
     ],
   },

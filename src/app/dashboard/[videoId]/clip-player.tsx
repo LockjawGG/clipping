@@ -429,6 +429,11 @@ export const ClipPlayer = memo(function ClipPlayer({
               );
               const explicitColor =
                 manual.color !== undefined || ruleCss.color !== undefined || anim.highlighted;
+              // reserve the overflow of a scaled word so it can't collide with
+              // the next one (transform:scale doesn't affect layout).
+              const sv = Number(anim.css.transform.match(/scale\(([\d.]+)\)/)?.[1] ?? 1);
+              const scaleMx =
+                sv > 1.001 ? `${(w.text.length * 0.3 * (sv - 1)).toFixed(3)}em` : null;
               return (
                 <Fragment key={w.id ?? i}>
                   {gap}
@@ -436,6 +441,7 @@ export const ClipPlayer = memo(function ClipPlayer({
                     style={{
                       display: "inline-block",
                       ...(anim.css as unknown as React.CSSProperties),
+                      ...(scaleMx ? { marginLeft: scaleMx, marginRight: scaleMx } : {}),
                       ...(anim.highlighted ? { color: richStyle.highlightColor } : {}),
                       ...(gradientFill && !explicitColor
                         ? { color: "inherit", WebkitTextFillColor: "inherit" }

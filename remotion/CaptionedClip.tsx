@@ -96,6 +96,7 @@ const Word: React.FC<{
 
   let transform = "none";
   let opacity = 1;
+  let scaleVal = 1;
 
   const popScale = active ? pick(animId, "word", "intro", "scale") : undefined;
   const holdScale = active ? pick(animId, "word", "active", "scale") : undefined;
@@ -104,9 +105,11 @@ const Word: React.FC<{
 
   if (popScale && popScale.ease === "spring") {
     const sp = spring({ frame: Math.max(0, sinceStart), fps, config: popScale.spring ?? SPRING_FALLBACK });
-    transform = `scale(${interpolate(sp, [0, 1], [popScale.from, popScale.to])})`;
+    scaleVal = interpolate(sp, [0, 1], [popScale.from, popScale.to]);
+    transform = `scale(${scaleVal})`;
   } else if (holdScale) {
-    transform = `scale(${holdScale.to})`;
+    scaleVal = holdScale.to;
+    transform = `scale(${scaleVal})`;
   } else if (bounceY && bounceY.ease === "spring") {
     const sp = spring({ frame: Math.max(0, sinceStart), fps, config: bounceY.spring ?? SPRING_FALLBACK });
     transform = `translateY(${interpolate(sp, [0, 1], [bounceY.from, bounceY.to])}px)`;
@@ -130,12 +133,19 @@ const Word: React.FC<{
       ? "inherit"
       : style.textColor;
 
+  // A scaled word overflows its box (transform doesn't reserve layout). Reserve
+  // roughly the overflow with horizontal margin so it never collides with the
+  // next word; it eases back to 0 as the pop settles.
+  const scaleMx =
+    scaleVal > 1.001 ? `${(word.text.length * 0.3 * (scaleVal - 1)).toFixed(3)}em` : undefined;
+
   return (
     <span
       style={{
         display: "inline-block",
         transform,
         opacity,
+        ...(scaleMx ? { marginLeft: scaleMx, marginRight: scaleMx } : {}),
         color: baseColor,
         ...(gradientFill && !overrideColor ? { WebkitTextFillColor: "inherit" } : {}),
         ...ruleCss,
@@ -272,6 +282,7 @@ export const CaptionedClip: React.FC<CaptionedClipProps> = ({
                     fontWeight: style.fontWeight,
                     lineHeight: 1.15,
                     textAlign: style.alignment,
+                    wordSpacing: "0.14em",
                     color: style.textColor,
                     WebkitTextStroke: `${style.outlineWidthPx}px ${style.outlineColor}`,
                     paintOrder: "stroke fill",

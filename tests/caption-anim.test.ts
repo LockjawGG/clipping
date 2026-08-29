@@ -191,10 +191,11 @@ test("fade ramps opacity in just before the word", () => {
 
 test("pop starts scaled up and relaxes toward 1", () => {
   const start = captionWordAnim("pop", 1000, WORD, "wow");
-  assert.match(start.css.transform, /scale\(1\.3/); // ~1.35 at elapsed 0
+  const s0 = Number(start.css.transform.match(/scale\(([\d.]+)\)/)![1]);
+  assert.ok(s0 > 1.1, `pops in, got ${start.css.transform}`); // ~1.16 at elapsed 0
   const later = captionWordAnim("pop", 1350, WORD, "wow");
-  const m = later.css.transform.match(/scale\(([\d.]+)\)/);
-  assert.ok(m && Number(m[1]) < 1.15, `relaxes, got ${later.css.transform}`);
+  const s1 = Number(later.css.transform.match(/scale\(([\d.]+)\)/)![1]);
+  assert.ok(s1 < s0, `relaxes toward 1, got ${later.css.transform}`);
 });
 
 test("karaoke keeps a word highlighted after it is spoken", () => {
