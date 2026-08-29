@@ -492,6 +492,14 @@ model Overlay {
   // render (the eye toggle in the layer strip).
   hidden  Boolean @default(false)
 
+  // Freestanding text elements (Text & Captions phase 3). For kind=TEXT:
+  // `styleJson` is a JSON partial TextStyle, `animationJson` a JSON
+  // { intro?, loop?, outro? } of animation preset ids + overrides, and `role`
+  // groups the element for the browser / inspector. Null / default for IMAGE.
+  styleJson     String?
+  animationJson String?
+  role          String  @default("title")
+
   clip  Clip   @relation(fields: [clipId], references: [id], onDelete: Cascade)
   asset Asset? @relation(fields: [assetId], references: [id], onDelete: Cascade)
 

@@ -6,6 +6,8 @@ import type { OverlayServiceDeps } from "../src/lib/api/overlays.ts";
 import {
   createOverlayFromAsset,
   createOverlaySchema,
+  createTextOverlay,
+  createTextOverlaySchema,
   deleteOverlay,
   listClipOverlays,
   listClipOverlaysBulk,
@@ -272,6 +274,66 @@ test("listClipOverlays 404s for a clip the caller does not own", async () => {
     () => listClipOverlays(deps, "c1"),
     (e: unknown) => e instanceof ApiError && e.status === 404,
   );
+});
+
+// --- text overlays --------------------------------------------------------
+
+test("createTextOverlaySchema enforces content bounds and roles", () => {
+  assert.throws(() => createTextOverlaySchema.parse({ content: "" }));
+  assert.throws(() => createTextOverlaySchema.parse({ content: "x".repeat(501) }));
+  assert.throws(() => createTextOverlaySchema.parse({ content: "hi", role: "banner" }));
+  assert.equal(createTextOverlaySchema.parse({ content: "  hi  " }).content, "hi");
+  assert.equal(
+    createTextOverlaySchema.parse({ content: "hi", styleJson: null }).styleJson,
+    null,
+  );
+});
+
+test("createTextOverlay places a text element with no asset", async () => {
+  const { deps, overlays } = makeDeps();
+  const v = await createTextOverlay(deps, "c1", {
+    content: "BREAKING",
+    role: "title",
+    styleJson: '{"glass":true}',
+  });
+  assert.equal(v.kind, "TEXT");
+  assert.equal(v.text, "BREAKING");
+  assert.equal(v.name, "BREAKING", "layer-strip label falls back to the text");
+  assert.equal(v.assetId, null);
+  assert.equal(v.url, null);
+  assert.equal(v.role, "title");
+  assert.equal(v.styleJson, '{"glass":true}');
+  assert.equal(overlays.get(v.id)!.kind, "TEXT");
+});
+
+test("createTextOverlay stacks zIndex above existing overlays", async () => {
+  const { deps } = makeDeps();
+  await createOverlayFromAsset(deps, "c1", { assetId: "img1" }); // z 1
+  const t = await createTextOverlay(deps, "c1", { content: "Title" }); // z 2
+  assert.equal(t.zIndex, 2);
+});
+
+test("createTextOverlay rejects a start past the clip end (422)", async () => {
+  const { deps } = makeDeps();
+  await assert.rejects(
+    () => createTextOverlay(deps, "c1", { content: "late", startMs: 12_000 }),
+    (e: unknown) => e instanceof ApiError && e.status === 422,
+  );
+});
+
+test("updateOverlay can edit a text element's content, style and role", async () => {
+  const { deps, overlays } = makeDeps();
+  const { id } = await createTextOverlay(deps, "c1", { content: "old" });
+  const v = await updateOverlay(deps, id, {
+    content: "new copy",
+    role: "lowerThird",
+    styleJson: '{"fill":{"kind":"linear-gradient","stops":["#a","#b"]}}',
+  });
+  assert.equal(v.text, "new copy");
+  assert.equal(v.role, "lowerThird");
+  assert.equal(v.name, "new copy");
+  assert.match(v.styleJson!, /linear-gradient/);
+  assert.equal(overlays.get(id)!.content, "new copy");
 });
 
 // --- update -----------------------------------------------------------

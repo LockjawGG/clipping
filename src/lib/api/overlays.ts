@@ -12,6 +12,10 @@ import { ApiError } from "./http.ts";
 
 const unit = z.number().min(0).max(1);
 
+/** Freestanding text elements are grouped by role for the browser / inspector. */
+export const TEXT_OVERLAY_ROLES = ["title", "lowerThird", "callout", "social"] as const;
+export type TextOverlayRole = (typeof TEXT_OVERLAY_ROLES)[number];
+
 export const createOverlaySchema = z.object({
   assetId: z.string().min(1),
   startMs: z.number().int().min(0).nullable().optional(),
@@ -23,8 +27,24 @@ export const createOverlaySchema = z.object({
   opacity: unit.optional(),
 });
 
+export const createTextOverlaySchema = z.object({
+  content: z.string().trim().min(1).max(500),
+  role: z.enum(TEXT_OVERLAY_ROLES).optional(),
+  startMs: z.number().int().min(0).nullable().optional(),
+  endMs: z.number().int().min(0).nullable().optional(),
+  x: unit.optional(),
+  y: unit.optional(),
+  scale: z.number().min(0.02).max(4).optional(),
+  rotation: z.number().min(-180).max(180).optional(),
+  opacity: unit.optional(),
+  styleJson: z.string().max(20000).nullable().optional(),
+  animationJson: z.string().max(8000).nullable().optional(),
+});
+
 export const updateOverlaySchema = z
   .object({
+    content: z.string().trim().min(1).max(500),
+    role: z.enum(TEXT_OVERLAY_ROLES),
     startMs: z.number().int().min(0).nullable(),
     endMs: z.number().int().min(0).nullable(),
     x: unit,
@@ -33,6 +53,8 @@ export const updateOverlaySchema = z
     rotation: z.number().min(-180).max(180),
     opacity: unit,
     hidden: z.boolean(),
+    styleJson: z.string().max(20000).nullable(),
+    animationJson: z.string().max(8000).nullable(),
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, "nothing to update")
@@ -61,6 +83,9 @@ interface OverlayRow {
   endMs: number | null;
   zIndex: number;
   hidden: boolean;
+  styleJson: string | null;
+  animationJson: string | null;
+  role: string;
 }
 
 interface AssetLite {
@@ -147,6 +172,8 @@ function toView(o: OverlayRow, url: string | null, assetName: string | null) {
     kind: o.kind,
     name: assetName ?? o.content,
     url,
+    /** The text for a TEXT overlay; null for image/GIF. */
+    text: o.kind === "TEXT" ? o.content : null,
     x: o.x,
     y: o.y,
     scale: o.scale,
@@ -156,6 +183,9 @@ function toView(o: OverlayRow, url: string | null, assetName: string | null) {
     endMs: o.endMs,
     zIndex: o.zIndex,
     hidden: o.hidden,
+    styleJson: o.styleJson ?? null,
+    animationJson: o.animationJson ?? null,
+    role: o.role ?? "title",
   };
 }
 
@@ -269,6 +299,53 @@ export async function createOverlayFromAsset(
   return toView(row, url, asset.name);
 }
 
+/**
+ * Add a freestanding text element to a clip. Unlike an image overlay it has no
+ * asset — the text is stored in `content`, and `styleJson` / `animationJson`
+ * carry the rich style and animation.
+ */
+export async function createTextOverlay(
+  deps: OverlayServiceDeps,
+  clipId: string,
+  input: unknown,
+): Promise<OverlayView> {
+  const parsed = createTextOverlaySchema.parse(input);
+  const clip = await ownedClip(deps, clipId);
+
+  const clipLenMs = clip.endMs - clip.startMs;
+  const startMs = parsed.startMs ?? null;
+  const endMs = parsed.endMs ?? null;
+  if (startMs !== null && startMs >= clipLenMs) {
+    throw new ApiError(422, "startMs is past the end of the clip");
+  }
+  if (startMs !== null && endMs !== null && endMs <= startMs) {
+    throw new ApiError(422, "endMs must be after startMs");
+  }
+
+  const top = await deps.db.overlay.aggregate({ where: { clipId }, _max: { zIndex: true } });
+
+  const row = await deps.db.overlay.create({
+    data: {
+      clipId,
+      kind: "TEXT",
+      content: parsed.content,
+      assetId: null,
+      role: parsed.role ?? "title",
+      x: parsed.x ?? 0.5,
+      y: parsed.y ?? 0.35,
+      scale: parsed.scale ?? 1,
+      rotation: parsed.rotation ?? 0,
+      opacity: parsed.opacity ?? 1,
+      startMs,
+      endMs,
+      styleJson: parsed.styleJson ?? null,
+      animationJson: parsed.animationJson ?? null,
+      zIndex: (top._max.zIndex ?? 0) + 1,
+    },
+  });
+  return toView(row, null, null);
+}
+
 export async function updateOverlay(
   deps: OverlayServiceDeps,
   overlayId: string,
@@ -283,7 +360,20 @@ export async function updateOverlay(
   }
 
   const data: Record<string, unknown> = {};
-  for (const k of ["startMs", "endMs", "x", "y", "scale", "rotation", "opacity", "hidden"] as const) {
+  for (const k of [
+    "content",
+    "role",
+    "startMs",
+    "endMs",
+    "x",
+    "y",
+    "scale",
+    "rotation",
+    "opacity",
+    "hidden",
+    "styleJson",
+    "animationJson",
+  ] as const) {
     if (patch[k] !== undefined) data[k] = patch[k];
   }
   const row = await deps.db.overlay.update({ where: { id: overlayId }, data });
