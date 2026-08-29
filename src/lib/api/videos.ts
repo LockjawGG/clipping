@@ -265,6 +265,28 @@ export async function translateVideo(deps: VideoServiceDeps, videoId: string, in
   return { videoId, target, via: "argos" as const, jobId };
 }
 
+/**
+ * Re-run transcription on a video that is already done — used after the
+ * project's transcription terms change, or to pick up a better model. Chains
+ * EXTRACT_AUDIO -> TRANSCRIBE -> ANALYZE, which replaces the source transcript
+ * (translations are left as they are). Refuses while an ingest is mid-flight.
+ */
+export async function retranscribeVideo(deps: VideoServiceDeps, videoId: string) {
+  const video = await ownedVideo(deps, videoId);
+  if (["PROBING", "TRANSCRIBING", "UPLOADING", "LIVE"].includes(video.status)) {
+    throw new ApiError(409, "this video is still processing");
+  }
+  if (!(await deps.storage.exists(video.storageKey))) {
+    throw new ApiError(409, "the source file for this video is missing");
+  }
+  await deps.db.video.update({
+    where: { id: videoId },
+    data: { status: "PROBING", errorMessage: null },
+  });
+  const jobId = await deps.enqueue({ videoId, kind: "EXTRACT_AUDIO" });
+  return { videoId, status: "PROBING" as const, jobId };
+}
+
 export async function confirmUpload(deps: VideoServiceDeps, videoId: string) {
   const video = await ownedVideo(deps, videoId);
 

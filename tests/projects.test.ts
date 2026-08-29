@@ -6,7 +6,8 @@ import {
   createProject,
   deleteProject,
   listProjects,
-  renameProject,
+  updateProject,
+  parseTranscriptTerms,
 } from "../src/lib/api/projects.ts";
 import { ApiError } from "../src/lib/api/http.ts";
 
@@ -14,15 +15,16 @@ interface Row {
   id: string;
   userId: string;
   name: string;
+  transcriptTerms: string;
   createdAt: Date;
   videos: number;
 }
 
 function makeDeps(userId = "u1") {
   const rows = new Map<string, Row>([
-    ["p1", { id: "p1", userId: "u1", name: "My Project", createdAt: new Date(1), videos: 2 }],
-    ["p2", { id: "p2", userId: "u1", name: "B-roll", createdAt: new Date(2), videos: 0 }],
-    ["pX", { id: "pX", userId: "someone-else", name: "Theirs", createdAt: new Date(3), videos: 0 }],
+    ["p1", { id: "p1", userId: "u1", name: "My Project", transcriptTerms: "", createdAt: new Date(1), videos: 2 }],
+    ["p2", { id: "p2", userId: "u1", name: "B-roll", transcriptTerms: "", createdAt: new Date(2), videos: 0 }],
+    ["pX", { id: "pX", userId: "someone-else", name: "Theirs", transcriptTerms: "", createdAt: new Date(3), videos: 0 }],
   ]);
   let seq = 0;
   const db: ProjectDb = {
@@ -31,20 +33,22 @@ function makeDeps(userId = "u1") {
         [...rows.values()]
           .filter((r) => r.userId === where.userId)
           .sort((a, b) => +a.createdAt - +b.createdAt)
-          .map((r) => ({ id: r.id, name: r.name, createdAt: r.createdAt, _count: { videos: r.videos } })),
+          .map((r) => ({ id: r.id, name: r.name, transcriptTerms: r.transcriptTerms, createdAt: r.createdAt, _count: { videos: r.videos } })),
       findUnique: async ({ where }) => {
         const r = rows.get(where.id);
         return r ? { id: r.id, userId: r.userId } : null;
       },
       create: async ({ data }) => {
         const id = `new${++seq}`;
-        const row = { id, userId: data.userId, name: data.name, createdAt: new Date(100 + seq), videos: 0 };
+        const row = { id, userId: data.userId, name: data.name, transcriptTerms: "", createdAt: new Date(100 + seq), videos: 0 };
         rows.set(id, row);
         return { id, name: row.name, createdAt: row.createdAt };
       },
       update: async ({ where, data }) => {
-        rows.get(where.id)!.name = data.name;
-        return { id: where.id, name: data.name };
+        const r = rows.get(where.id)!;
+        if (data.name !== undefined) r.name = data.name;
+        if (data.transcriptTerms !== undefined) r.transcriptTerms = data.transcriptTerms;
+        return { id: where.id, name: r.name, transcriptTerms: r.transcriptTerms };
       },
       delete: async ({ where }) => {
         rows.delete(where.id);
@@ -75,20 +79,27 @@ test("createProject attaches to the user", async () => {
   assert.equal((await listProjects(deps)).length, 3);
 });
 
-test("renameProject changes the name", async () => {
+test("updateProject renames and sets transcription terms", async () => {
   const { deps, rows } = makeDeps();
-  await renameProject(deps, "p2", { name: "Cutdowns" });
+  await updateProject(deps, "p2", { name: "Cutdowns" });
   assert.equal(rows.get("p2")!.name, "Cutdowns");
+  await updateProject(deps, "p2", { transcriptTerms: "Acme, Zephyr\nQuoll" });
+  assert.equal(rows.get("p2")!.transcriptTerms, "Acme, Zephyr\nQuoll");
+  assert.equal(rows.get("p2")!.name, "Cutdowns", "name untouched when only terms change");
 });
 
-test("renameProject on someone else's project is 404", async () => {
+test("parseTranscriptTerms splits, trims, and dedupes", () => {
+  assert.deepEqual(parseTranscriptTerms("Acme,  Zephyr \n Quoll\nAcme"), ["Acme", "Zephyr", "Quoll"]);
+  assert.deepEqual(parseTranscriptTerms("   "), []);
+});
+
+test("updateProject on someone else's project is 404", async () => {
   const { deps } = makeDeps();
   await assert.rejects(
-    () => renameProject(deps, "pX", { name: "hax" }),
+    () => updateProject(deps, "pX", { name: "hax" }),
     (e: unknown) => e instanceof ApiError && e.status === 404,
   );
 });
-
 test("deleteProject removes an owned project", async () => {
   const { deps, rows } = makeDeps();
   await deleteProject(deps, "p2");

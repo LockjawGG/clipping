@@ -37,6 +37,8 @@ export interface VideoRepo {
   setFilename(id: string, originalFilename: string): Promise<void>;
   /** Point the video at a different object, e.g. when finalising changes container. */
   setStorageKey(id: string, storageKey: string): Promise<void>;
+  /** The video's project's custom transcription terms, parsed to a clean list. */
+  transcriptionTerms(id: string): Promise<string[]>;
 }
 
 export interface TranscriptRepo {

@@ -233,9 +233,11 @@ export const liveFinalizeHandler: JobHandler<PipelineDeps> = async ({ job, deps,
   await deps.videos.setStatus(job.videoId, "TRANSCRIBING");
   const wav = scratchPath(work, "audio.wav");
   await deps.ffmpeg.extractAudio(source, wav, signal);
+  const vocabulary = await Promise.resolve(deps.videos.transcriptionTerms?.(job.videoId) ?? []).catch(() => []);
   const result = await deps.transcription.transcribe(wav, {
     wordTimestamps: true,
     signal,
+    ...(vocabulary.length ? { vocabulary } : {}),
     durationMs: info.durationMs ?? undefined,
     // Skip language detection when the deployment pins one — a touch faster and
     // it can't misfire on a quiet opening.

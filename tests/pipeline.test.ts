@@ -154,6 +154,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       },
       setError: async () => {},
       setStorageKey: async () => {},
+      transcriptionTerms: async () => [],
       setFilename: async (_id, name) => {
         spy.filename = name;
       },

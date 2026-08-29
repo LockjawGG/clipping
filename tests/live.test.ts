@@ -303,6 +303,7 @@ test("LIVE_FINALIZE reassembles fragments, re-transcribes, and queues ANALYZE", 
     videos: {
       get: async () => ({ id: "vidL", storageKey: "videos/vidL/source.webm", durationMs: null, status: "PROBING" }),
       applyProbe: async () => {},
+      transcriptionTerms: async () => [],
       setStatus: async (_id: string, s: string) => calls.push(`status:${s}`),
       setError: async () => {},
     },
@@ -468,6 +469,7 @@ test("LIVE_FINALIZE stops at a truncated fragment rather than splicing past it",
     videos: {
       get: async () => ({ id: "vidT", storageKey: "videos/vidT/source.webm", durationMs: null, status: "PROBING" }),
       applyProbe: async () => {},
+      transcriptionTerms: async () => [],
       setStatus: async () => {},
       setError: async () => {},
     },
@@ -522,6 +524,7 @@ function finalizeFake(opts: { videoCodec: string | null; backwards?: number; dup
     videos: {
       get: async () => ({ id: "vidX", storageKey, durationMs: null, status: "PROBING" }),
       applyProbe: async () => {},
+      transcriptionTerms: async () => [],
       setStatus: async () => {},
       setError: async () => {},
       setStorageKey: async (_id: string, k: string) => {

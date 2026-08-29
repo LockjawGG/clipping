@@ -41,6 +41,9 @@ model Project {
   id        String   @id @default(cuid())
   userId    String
   name      String
+  /// Proper nouns / jargon fed to the transcriber as an initial prompt so it
+  /// spells them right. Freeform, comma or newline separated.
+  transcriptTerms String @default("")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

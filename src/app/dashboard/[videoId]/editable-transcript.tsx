@@ -146,6 +146,8 @@ interface Props {
   onClearSelection: () => void;
   /** Jump the preview to a word (absolute ms in the source video). */
   onSeek: (absStartMs: number) => void;
+  /** Make a clip spanning the currently-selected words (absolute ms). */
+  onClipFromSelection?: (startMs: number, endMs: number) => void;
 }
 
 /**
@@ -163,6 +165,7 @@ export const EditableTranscript = memo(function EditableTranscript({
   onReset,
   onClearSelection,
   onSeek,
+  onClipFromSelection,
 }: Props) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
@@ -182,6 +185,18 @@ export const EditableTranscript = memo(function EditableTranscript({
     }
     return { ids, set: new Set(ids) };
   }, [rows, q]);
+
+  const selectedSpan = useMemo(() => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const row of rows)
+      for (const w of row.words)
+        if (selectedIds.has(w.id)) {
+          lo = Math.min(lo, w.startMs);
+          hi = Math.max(hi, w.endMs);
+        }
+    return lo <= hi ? { startMs: lo, endMs: hi } : null;
+  }, [rows, selectedIds]);
 
   const [activeIdx, setActiveIdx] = useState(0);
   useEffect(() => setActiveIdx(0), [q]);
@@ -293,6 +308,16 @@ export const EditableTranscript = memo(function EditableTranscript({
           <button type="button" onClick={onReset} className="btn btn-ghost btn-sm text-muted hover:text-danger">
             Reset
           </button>
+          {onClipFromSelection && selectedSpan && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              title="Create a clip spanning these words"
+              onClick={() => onClipFromSelection(selectedSpan.startMs, selectedSpan.endMs)}
+            >
+              Clip from selection
+            </button>
+          )}
           <button type="button" onClick={onClearSelection} className="btn btn-ghost btn-sm ml-auto">
             Done
           </button>

@@ -4,6 +4,7 @@ import { env } from "../env.ts";
 import { db } from "../db.ts";
 import { FfmpegRunner } from "../ffmpeg/run.ts";
 import { ArgosTranslator } from "../translation/text.ts";
+import { parseTranscriptTerms } from "../api/projects.ts";
 import { NullFaceDetector } from "../faces/detector.ts";
 import { YtDlpFetcher } from "./fetcher.ts";
 import { FsSourceCache } from "./source-cache.ts";
@@ -67,6 +68,13 @@ export function prismaVideoRepo(client: PrismaClient): VideoRepo {
     },
     async setStorageKey(id, storageKey) {
       await client.video.update({ where: { id }, data: { storageKey } });
+    },
+    async transcriptionTerms(id) {
+      const v = await client.video.findUnique({
+        where: { id },
+        select: { project: { select: { transcriptTerms: true } } },
+      });
+      return parseTranscriptTerms(v?.project.transcriptTerms ?? "");
     },
   };
 }

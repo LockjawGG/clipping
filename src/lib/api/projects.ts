@@ -9,11 +9,17 @@ import { ApiError } from "./http.ts";
 
 const nameSchema = z.string().trim().min(1).max(80);
 export const createProjectSchema = z.object({ name: nameSchema });
-export const renameProjectSchema = z.object({ name: nameSchema });
+export const updateProjectSchema = z
+  .object({
+    name: nameSchema.optional(),
+    transcriptTerms: z.string().max(4000).optional(),
+  })
+  .refine((v) => v.name !== undefined || v.transcriptTerms !== undefined, "nothing to update");
 
 interface ProjectRow {
   id: string;
   name: string;
+  transcriptTerms: string;
   createdAt: Date;
   _count: { videos: number };
 }
@@ -35,8 +41,8 @@ export interface ProjectDb {
     }>;
     update(args: {
       where: { id: string };
-      data: { name: string };
-    }): Promise<{ id: string; name: string }>;
+      data: { name?: string; transcriptTerms?: string };
+    }): Promise<{ id: string; name: string; transcriptTerms: string }>;
     delete(args: { where: { id: string } }): Promise<unknown>;
     count(args: { where: { userId: string } }): Promise<number>;
   };
@@ -61,6 +67,7 @@ export async function listProjects(deps: ProjectServiceDeps) {
   return rows.map((p) => ({
     id: p.id,
     name: p.name,
+    transcriptTerms: p.transcriptTerms,
     createdAt: p.createdAt,
     videoCount: p._count.videos,
   }));
@@ -69,14 +76,32 @@ export async function listProjects(deps: ProjectServiceDeps) {
 export async function createProject(deps: ProjectServiceDeps, input: unknown) {
   const { name } = createProjectSchema.parse(input);
   const project = await deps.db.project.create({ data: { userId: deps.userId, name } });
-  return { id: project.id, name: project.name, createdAt: project.createdAt, videoCount: 0 };
+  return { id: project.id, name: project.name, transcriptTerms: "", createdAt: project.createdAt, videoCount: 0 };
 }
 
-export async function renameProject(deps: ProjectServiceDeps, projectId: string, input: unknown) {
-  const { name } = renameProjectSchema.parse(input);
+export async function updateProject(deps: ProjectServiceDeps, projectId: string, input: unknown) {
+  const { name, transcriptTerms } = updateProjectSchema.parse(input);
   await ownProject(deps, projectId);
-  const updated = await deps.db.project.update({ where: { id: projectId }, data: { name } });
-  return { id: updated.id, name: updated.name };
+  const updated = await deps.db.project.update({
+    where: { id: projectId },
+    data: {
+      ...(name !== undefined ? { name } : {}),
+      ...(transcriptTerms !== undefined ? { transcriptTerms } : {}),
+    },
+  });
+  return { id: updated.id, name: updated.name, transcriptTerms: updated.transcriptTerms };
+}
+
+/** Split freeform comma / newline separated project terms into a clean list. */
+export function parseTranscriptTerms(raw: string): string[] {
+  return [
+    ...new Set(
+      raw
+        .split(/[,\r\n]+/)
+        .map((t) => t.trim())
+        .filter(Boolean),
+    ),
+  ].slice(0, 200);
 }
 
 export async function deleteProject(deps: ProjectServiceDeps, projectId: string) {

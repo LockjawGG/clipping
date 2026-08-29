@@ -9,6 +9,7 @@ import { RailThumb } from "./rail-thumb";
 export interface ProjectSummary {
   id: string;
   name: string;
+  transcriptTerms: string;
   videoCount: number;
 }
 export interface FavoriteClip {
@@ -33,6 +34,7 @@ export function ProjectRail({
   const [draftName, setDraftName] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [termsFor, setTermsFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -79,6 +81,12 @@ export function ProjectRail({
     setRenaming(null);
     if (!name.trim()) return;
     await api("PATCH", `/api/projects/${id}`, { name: name.trim() });
+    router.refresh();
+  }
+
+  async function saveTerms(id: string, transcriptTerms: string) {
+    setTermsFor(null);
+    await api("PATCH", `/api/projects/${id}`, { transcriptTerms });
     router.refresh();
   }
 
@@ -164,9 +172,35 @@ export function ProjectRail({
           {menuFor === p.id && (
             <div className="menu right-2 top-9">
               <button onClick={() => setRenaming(p.id)}>Rename</button>
+              <button
+                onClick={() => {
+                  setMenuFor(null);
+                  setTermsFor(p.id);
+                }}
+              >
+                Transcription terms
+              </button>
               <button className="text-danger" onClick={() => remove(p.id)}>
                 Delete project
               </button>
+            </div>
+          )}
+          {termsFor === p.id && (
+            <div className="mx-1 my-1 flex flex-col gap-1">
+              <textarea
+                autoFocus
+                rows={3}
+                defaultValue={p.transcriptTerms}
+                placeholder="Names, brands, jargon — comma or line separated. The transcriber uses these to spell them right."
+                className="field w-full text-xs"
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setTermsFor(null);
+                }}
+                onBlur={(e) => saveTerms(p.id, e.target.value)}
+              />
+              <span className="px-1 text-[10px] text-muted">
+                Applies to new transcriptions. Re-transcribe a video to apply it now.
+              </span>
             </div>
           )}
         </div>

@@ -137,12 +137,14 @@ export const transcribeHandler: JobHandler<PipelineDeps> = async ({ job, deps, s
   await setProgress(0.2);
 
   const video = await deps.videos.get(job.videoId);
+  const vocabulary = await Promise.resolve(deps.videos.transcriptionTerms?.(job.videoId) ?? []).catch(() => []);
   let lastPct = -1;
   let jobFraction = 0.2;
   let lastBeat = 0;
   const result = await deps.transcription.transcribe(wav, {
     language: payload.language,
     task: payload.task,
+    ...(vocabulary.length ? { vocabulary } : {}),
     diarize: payload.diarize,
     wordTimestamps: true,
     signal,

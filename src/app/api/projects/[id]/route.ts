@@ -1,6 +1,6 @@
 import { readJson, route } from "@/lib/api/http.ts";
 import { projectService } from "@/lib/api/service.ts";
-import { deleteProject, renameProject } from "@/lib/api/projects.ts";
+import { deleteProject, updateProject } from "@/lib/api/projects.ts";
 import { requireUserId } from "@/lib/auth/session.ts";
 
 export const runtime = "nodejs";
@@ -11,7 +11,7 @@ type Ctx = { params: Promise<{ id: string }> };
 export const PATCH = route<Ctx>(async (req, { params }) => {
   const userId = await requireUserId();
   const { id } = await params;
-  return Response.json(await renameProject(projectService(userId), id, await readJson(req)));
+  return Response.json(await updateProject(projectService(userId), id, await readJson(req)));
 });
 
 /** DELETE /api/projects/:id — refuses to remove the user's last project. */

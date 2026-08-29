@@ -188,6 +188,33 @@ export function ClipEditor({
     [videoId, showTranscript, transcriptViews],
   );
 
+  const reTranscribe = useCallback(async () => {
+    if (
+      !window.confirm(
+        "Re-transcribe this video? Replaces the current transcript and its AI-suggested clips.",
+      )
+    )
+      return;
+    setLangError(null);
+    setLangBusy(true);
+    try {
+      const res = await fetch(`/api/videos/${videoId}/retranscribe`, { method: "POST" });
+      if (!res.ok) throw new Error(String(res.status));
+      const started = Date.now();
+      const tick = async () => {
+        const r = await fetch(`/api/videos/${videoId}`).then((x) => x.json());
+        if (r.status === "READY" || r.status === "FAILED" || Date.now() - started > 600_000) {
+          setLangBusy(false);
+          router.refresh();
+        } else setTimeout(tick, 3000);
+      };
+      setTimeout(tick, 3000);
+    } catch {
+      setLangBusy(false);
+      setLangError("couldn't start re-transcription");
+    }
+  }, [videoId, router]);
+
   // Debounced "soft reset": re-run the server components so an edit or delete the
   // user just made is reflected everywhere (the preview, other clips, render
   // state, the rails) without a full reload. Bursts of edits collapse into one.
@@ -349,6 +376,25 @@ export function ClipEditor({
     });
   }, []);
   const clearWordSelection = useCallback(() => setSelectedWords(new Set()), []);
+
+  const clipFromSelection = useCallback(
+    async (startMs: number, endMs: number) => {
+      try {
+        const res = await fetch(`/api/videos/${videoId}/clips`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ startMs: Math.round(startMs), endMs: Math.round(endMs) }),
+        });
+        if (res.ok) {
+          setSelectedWords(new Set());
+          router.refresh();
+        }
+      } catch {
+        /* ignore */
+      }
+    },
+    [videoId, router],
+  );
 
   const applyWordStyle = useCallback((patch: WordStylePatch) => {
     setSelectedWords((sel) => {
@@ -1107,11 +1153,21 @@ export function ClipEditor({
                 .{f}
               </a>
             ))}
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={langBusy}
+              title="Re-run transcription with the project's current terms"
+              onClick={() => void reTranscribe()}
+            >
+              Re-transcribe
+            </button>
           </span>
         </div>
         {langError && <p className="text-xs text-danger">{langError}</p>}
         <EditableTranscript
           rows={transcript}
+          onClipFromSelection={clipFromSelection}
           styles={wordStyles}
           selectedIds={selectedWords}
           onToggleSelect={toggleWordSelect}
