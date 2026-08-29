@@ -8,6 +8,7 @@ import {
   createOverlaySchema,
   deleteOverlay,
   listClipOverlays,
+  listClipOverlaysBulk,
   reorderOverlay,
   updateOverlay,
   updateOverlaySchema,
@@ -60,10 +61,13 @@ function makeDeps(over: Partial<OverlayServiceDeps> = {}) {
 
   const db: OverlayServiceDeps["db"] = {
     overlay: {
-      findMany: async ({ where }) =>
-        [...overlays.values()]
-          .filter((o) => o.clipId === where.clipId)
-          .sort((a, b) => a.zIndex - b.zIndex) as never,
+      findMany: async ({ where }) => {
+        const inClip = (id: string) =>
+          typeof where.clipId === "string" ? id === where.clipId : where.clipId.in.includes(id);
+        return [...overlays.values()]
+          .filter((o) => inClip(o.clipId))
+          .sort((a, b) => a.zIndex - b.zIndex) as never;
+      },
       findUnique: async ({ where }) => (overlays.get(where.id) ?? null) as never,
       create: async ({ data }) => {
         const id = `o${++seq}`;
@@ -94,6 +98,8 @@ function makeDeps(over: Partial<OverlayServiceDeps> = {}) {
     },
     asset: {
       findUnique: async ({ where }) => (assets[where.id] as never) ?? null,
+      findMany: async ({ where }) =>
+        Object.values(assets).filter((a) => where.id.in.includes(a.id)) as never,
     },
   };
 
@@ -209,6 +215,41 @@ test("createOverlayFromAsset 404s when the caller owns nothing", async () => {
     () => createOverlayFromAsset(deps, "c1", { assetId: "img1" }),
     (e: unknown) => e instanceof ApiError && e.status === 404,
   );
+});
+
+test("listClipOverlaysBulk groups by clip, resolves assets once, and fills empties", async () => {
+  const { deps, overlays } = makeDeps();
+  const row = (id: string, clipId: string, assetId: string | null, zIndex: number): Ov => ({
+    id, clipId, kind: "IMAGE", content: id, assetId,
+    x: 0.5, y: 0.5, scale: 1, rotation: 0, opacity: 1,
+    startMs: null, endMs: null, zIndex, hidden: false,
+  });
+  overlays.set("o1", row("o1", "c1", "img1", 1));
+  overlays.set("o2", row("o2", "c1", "gif1", 2));
+  overlays.set("o3", row("o3", "c2", "img1", 1));
+  overlays.set("o4", row("o4", "c2", null, 2)); // no asset -> null url/name
+
+  let signs = 0;
+  const spyStorage = fakeStorage({
+    createDownloadUrl: async (k) => {
+      signs++;
+      return `https://dl/${k}`;
+    },
+  });
+
+  const out = await listClipOverlaysBulk({ ...deps, storage: spyStorage }, ["c1", "c2", "c3"]);
+
+  assert.deepEqual(Object.keys(out).sort(), ["c1", "c2", "c3"]);
+  assert.equal(out.c3.length, 0); // asked-for clip with nothing still present
+  assert.deepEqual(out.c1.map((o) => o.id), ["o1", "o2"]); // sorted by zIndex
+  assert.equal(out.c1[0].url, "https://dl/assets/image/a.png");
+  assert.equal(out.c2.find((o) => o.id === "o4")!.url, null);
+  assert.equal(signs, 2); // two distinct storage keys (img1, gif1) signed once each
+});
+
+test("listClipOverlaysBulk short-circuits on an empty id list", async () => {
+  const { deps } = makeDeps();
+  assert.deepEqual(await listClipOverlaysBulk(deps, []), {});
 });
 
 // --- list -------------------------------------------------------------

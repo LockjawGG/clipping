@@ -83,7 +83,10 @@ interface ClipLite {
 
 export interface OverlayDb {
   overlay: {
-    findMany(args: { where: { clipId: string }; orderBy?: unknown }): Promise<OverlayRow[]>;
+    findMany(args: {
+      where: { clipId: string | { in: string[] } };
+      orderBy?: unknown;
+    }): Promise<OverlayRow[]>;
     findUnique(args: { where: { id: string } }): Promise<OverlayRow | null>;
     create(args: { data: Record<string, unknown> }): Promise<OverlayRow>;
     update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<OverlayRow>;
@@ -101,6 +104,7 @@ export interface OverlayDb {
   };
   asset: {
     findUnique(args: { where: { id: string } }): Promise<AssetLite | null>;
+    findMany(args: { where: { id: { in: string[] } } }): Promise<AssetLite[]>;
   };
 }
 
@@ -172,6 +176,46 @@ export async function listClipOverlays(
       return toView(o, url, asset?.name ?? null);
     }),
   );
+}
+
+/**
+ * Overlays for many clips at once: one `overlay.findMany`, one `asset.findMany`,
+ * and one signed URL per distinct storage key — instead of N queries per clip.
+ * Ownership is the caller's responsibility (all `clipIds` must belong to a video
+ * it has already checked). Every id in `clipIds` gets an entry.
+ */
+export async function listClipOverlaysBulk(
+  deps: OverlayServiceDeps,
+  clipIds: string[],
+): Promise<Record<string, OverlayView[]>> {
+  const out: Record<string, OverlayView[]> = Object.fromEntries(clipIds.map((id) => [id, []]));
+  if (clipIds.length === 0) return out;
+
+  const rows = await deps.db.overlay.findMany({
+    where: { clipId: { in: clipIds } },
+    orderBy: { zIndex: "asc" },
+  });
+  if (rows.length === 0) return out;
+
+  const assetIds = [...new Set(rows.map((r) => r.assetId).filter((x): x is string => x != null))];
+  const assets = assetIds.length
+    ? await deps.db.asset.findMany({ where: { id: { in: assetIds } } })
+    : [];
+  const assetById = new Map(assets.map((a) => [a.id, a]));
+
+  const urlByKey = new Map<string, string>();
+  await Promise.all(
+    [...new Set(assets.map((a) => a.storageKey))].map(async (key) => {
+      urlByKey.set(key, await deps.storage.createDownloadUrl(key));
+    }),
+  );
+
+  for (const o of rows) {
+    const asset = o.assetId ? assetById.get(o.assetId) : undefined;
+    const url = asset ? (urlByKey.get(asset.storageKey) ?? null) : null;
+    (out[o.clipId] ??= []).push(toView(o, url, asset?.name ?? null));
+  }
+  return out;
 }
 
 export async function createOverlayFromAsset(

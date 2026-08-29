@@ -6,8 +6,8 @@ import { clipService, projectService } from "@/lib/api/service.ts";
 import { listVideoClips } from "@/lib/api/clips.ts";
 import { listProjects } from "@/lib/api/projects.ts";
 import { listAssets } from "@/lib/api/assets.ts";
-import { listClipOverlays } from "@/lib/api/overlays.ts";
-import { listClipWordStyles } from "@/lib/api/caption-styles.ts";
+import { listClipOverlaysBulk } from "@/lib/api/overlays.ts";
+import { listClipWordStylesBulk } from "@/lib/api/caption-styles.ts";
 import { assetService, overlayService, captionStyleService } from "@/lib/api/service.ts";
 import { getStorage } from "@/lib/storage/index.ts";
 
@@ -176,22 +176,13 @@ export default async function DashboardPage({
         ]),
       );
 
-      /** Library assets dropped onto each clip, bottom-to-top. */
-      const overlaysByClip = Object.fromEntries(
-        await Promise.all(
-          clips.map(async (c) => [c.id, await listClipOverlays(overlayService(userId), c.id)] as const),
-        ),
-      );
-
-      /** Per-word caption style overrides, per clip. */
-      const wordStylesByClip = Object.fromEntries(
-        await Promise.all(
-          clips.map(
-            async (c) =>
-              [c.id, await listClipWordStyles(captionStyleService(userId), c.id)] as const,
-          ),
-        ),
-      );
+      const clipIds = clips.map((c) => c.id);
+      const [overlaysByClip, wordStylesByClip] = await Promise.all([
+        /** Library assets dropped onto each clip, bottom-to-top. */
+        listClipOverlaysBulk(overlayService(userId), clipIds),
+        /** Per-word caption style overrides, per clip. */
+        listClipWordStylesBulk(captionStyleService(userId), clipIds),
+      ]);
 
       editor = (
         <EditorPane

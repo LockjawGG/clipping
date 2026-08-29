@@ -8,6 +8,7 @@ import {
   clearClipWordStyles,
   isResetPatch,
   listClipWordStyles,
+  listClipWordStylesBulk,
   wordStyleSchema,
 } from "../src/lib/api/caption-styles.ts";
 import { ApiError } from "../src/lib/api/http.ts";
@@ -32,8 +33,11 @@ function makeDeps(over: Partial<CaptionStyleServiceDeps> = {}) {
         where.id === "c1" ? ({ id: "c1", video: { projectId: "p1" } } as never) : null,
     },
     captionWordStyle: {
-      findMany: async ({ where }) =>
-        [...rows.values()].filter((r) => r.clipId === where.clipId) as never,
+      findMany: async ({ where }) => {
+        const inClip = (id: string) =>
+          typeof where.clipId === "string" ? id === where.clipId : where.clipId.in.includes(id);
+        return [...rows.values()].filter((r) => inClip(r.clipId)) as never;
+      },
       findUnique: async ({ where }) =>
         (rows.get(key(where.clipId_wordId.clipId, where.clipId_wordId.wordId)) ?? null) as never,
       upsert: async ({ where, create, update }) => {
@@ -91,6 +95,28 @@ test("isResetPatch is true only when every attribute is null/absent", () => {
 });
 
 // --- apply / list -------------------------------------------------------
+
+test("listClipWordStylesBulk groups many clips in one query and fills empties", async () => {
+  const { deps, rows } = makeDeps();
+  const r = (clipId: string, wordId: string, color: string | null): Row => ({
+    id: `${clipId}:${wordId}`, clipId, wordId, color, bold: null, italic: null, sizeScale: null,
+  });
+  rows.set("c1:w1", r("c1", "w1", "#FFE600"));
+  rows.set("c1:w2", r("c1", "w2", "#00FF00"));
+  rows.set("c2:w9", r("c2", "w9", "#FF0000"));
+
+  const out = await listClipWordStylesBulk(deps, ["c1", "c2", "c3"]);
+  assert.deepEqual(Object.keys(out).sort(), ["c1", "c2", "c3"]);
+  assert.deepEqual(out.c3, {}); // asked-for clip with no styles
+  assert.equal(out.c1.w1.color, "#FFE600");
+  assert.equal(out.c1.w2.color, "#00FF00");
+  assert.equal(out.c2.w9.color, "#FF0000");
+});
+
+test("listClipWordStylesBulk short-circuits on an empty id list", async () => {
+  const { deps } = makeDeps();
+  assert.deepEqual(await listClipWordStylesBulk(deps, []), {});
+});
 
 test("applyWordStyles creates rows and merges successive patches", async () => {
   const { deps, rows } = makeDeps();

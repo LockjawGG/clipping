@@ -59,7 +59,9 @@ export interface CaptionStyleDb {
     findUnique(args: { where: { id: string }; select?: unknown }): Promise<ClipLite | null>;
   };
   captionWordStyle: {
-    findMany(args: { where: { clipId: string } }): Promise<StyleRow[]>;
+    findMany(args: {
+      where: { clipId: string | { in: string[] } };
+    }): Promise<StyleRow[]>;
     findUnique(args: {
       where: { clipId_wordId: { clipId: string; wordId: string } };
     }): Promise<StyleRow | null>;
@@ -105,6 +107,24 @@ export async function listClipWordStyles(
   const rows = await deps.db.captionWordStyle.findMany({ where: { clipId } });
   const out: Record<string, WordStyle> = {};
   for (const r of rows) out[r.wordId] = toStyle(r);
+  return out;
+}
+
+/**
+ * Word styles for many clips at once, in a single query. The caller is
+ * responsible for ownership (all `clipIds` must belong to a video it has already
+ * checked). Every id in `clipIds` gets an entry, empty when it has no styles.
+ */
+export async function listClipWordStylesBulk(
+  deps: CaptionStyleServiceDeps,
+  clipIds: string[],
+): Promise<Record<string, Record<string, WordStyle>>> {
+  const out: Record<string, Record<string, WordStyle>> = Object.fromEntries(
+    clipIds.map((id) => [id, {}]),
+  );
+  if (clipIds.length === 0) return out;
+  const rows = await deps.db.captionWordStyle.findMany({ where: { clipId: { in: clipIds } } });
+  for (const r of rows) (out[r.clipId] ??= {})[r.wordId] = toStyle(r);
   return out;
 }
 
