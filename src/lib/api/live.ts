@@ -107,7 +107,8 @@ export async function addLiveChunk(deps: LiveServiceDeps, videoId: string, input
   const video = await ownedLiveVideo(deps, videoId);
   if (video.status !== "LIVE") throw new ApiError(409, "this recording is no longer live");
 
-  const mime = contentType && /^audio\/[-\w.+]+$/.test(contentType) ? contentType : "audio/webm";
+  const mime =
+    contentType && /^(audio|video)\/[-\w.+]+$/.test(contentType) ? contentType : "video/webm";
   const storageKey = `videos/${videoId}/chunks/${String(index).padStart(5, "0")}.webm`;
   const chunk = await deps.db.liveChunk.create({
     data: { videoId, index, startMs, durationMs: durationMs ?? null, storageKey },

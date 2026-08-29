@@ -116,6 +116,9 @@ export function GoLive({ projectId }: { projectId?: string }) {
       // Screen picker FIRST, while the click's user-activation is still fresh —
       // an `await getUserMedia` before it consumes the gesture and Chrome then
       // rejects getDisplayMedia with NotAllowedError.
+      // Screen video track we'll actually record (when capturing the screen),
+      // plus any screen audio to mix in.
+      let screenVideo: MediaStreamTrack | null = null;
       let screenAudio: MediaStream | null = null;
       if (includeScreen && !navigator.mediaDevices?.getDisplayMedia) {
         setNote("Screen capture isn’t available in this browser — recording the mic only.");
@@ -123,7 +126,7 @@ export function GoLive({ projectId }: { projectId?: string }) {
         let disp: MediaStream;
         try {
           disp = await navigator.mediaDevices.getDisplayMedia({
-            video: true,
+            video: { frameRate: 30 },
             audio: {
               echoCancellation: false,
               noiseSuppression: false,
@@ -133,18 +136,20 @@ export function GoLive({ projectId }: { projectId?: string }) {
         } catch (e) {
           if (e instanceof DOMException && (e.name === "NotAllowedError" || e.name === "AbortError")) {
             setNote("Screen share cancelled — recording the mic only.");
-            disp = new MediaStream(); // fall through with mic only
+            disp = new MediaStream();
           } else {
             throw e;
           }
         }
         streams.current.push(disp);
-        // Keep the video track alive but unused (stopping it can end the whole
-        // capture on some browsers); getDisplayMedia can't be audio-only.
-        disp.getVideoTracks().forEach((t) => (t.enabled = false));
+        screenVideo = disp.getVideoTracks()[0] ?? null;
+        // If the user stops sharing from the browser's own bar, end the session.
+        screenVideo?.addEventListener("ended", () => {
+          if (recording.current) void stop();
+        });
         if (disp.getAudioTracks().length === 0) {
           setNote(
-            "That source has no audio — recording the mic only. In the picker choose a Chrome tab (tick “Share tab audio”) or “Entire screen”.",
+            "That source has no audio — mic audio only (screen is still recorded). Tip: a Chrome tab with “Share tab audio”, or “Entire screen”, carries sound.",
           );
         } else {
           screenAudio = disp;
@@ -172,10 +177,20 @@ export function GoLive({ projectId }: { projectId?: string }) {
       if (!create.ok) throw new Error((await create.json().catch(() => ({}))).error ?? "couldn't start the session");
       videoId.current = ((await create.json()) as { videoId: string }).videoId;
 
-      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : "audio/webm";
-      const rec = new MediaRecorder(dest.stream, { mimeType: mime });
+      // With a screen: record screen video + mixed audio. Mic-only: audio only.
+      const recStream = new MediaStream([
+        ...(screenVideo ? [screenVideo] : []),
+        ...dest.stream.getAudioTracks(),
+      ]);
+      const pick = (cands: string[]) => cands.find((c) => MediaRecorder.isTypeSupported(c));
+      const mime = screenVideo
+        ? pick([
+            "video/webm;codecs=vp9,opus",
+            "video/webm;codecs=vp8,opus",
+            "video/webm",
+          ]) ?? "video/webm"
+        : pick(["audio/webm;codecs=opus", "audio/webm"]) ?? "audio/webm";
+      const rec = new MediaRecorder(recStream, { mimeType: mime });
       recorder.current = rec;
       recording.current = true;
       rec.ondataavailable = (e) => {

@@ -130,7 +130,7 @@ export interface OverlayCompositeOptions {
 export interface Ffmpeg {
   probe(inputPath: string, signal?: AbortSignal): Promise<MediaInfo>;
   extractAudio(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void>;
-  /** Join self-contained audio chunks in order (no re-encode). */
+  /** Join self-contained media chunks in order, no re-encode (audio or A/V webm). */
   concatAudio(inputPaths: string[], outputPath: string, signal?: AbortSignal): Promise<void>;
   /** Frame-accurate trim (re-encode, never stream-copy). */
   cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void>;
