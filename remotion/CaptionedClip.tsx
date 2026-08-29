@@ -69,7 +69,12 @@ const Word: React.FC<{
   const cased = (t: string) => (style.uppercase ? t.toUpperCase() : t);
 
   if (anim.reveal === "word" && !spoken) {
-    return <span style={{ opacity: 0 }}>{cased(word.text)} </span>;
+    // Same box model as a shown word so the line doesn't shift as words reveal.
+    return (
+      <span style={{ display: "inline-block", margin: "0 0.18em", opacity: 0 }}>
+        {cased(word.text)}
+      </span>
+    );
   }
 
   if (anim.reveal === "char") {

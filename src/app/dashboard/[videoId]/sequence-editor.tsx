@@ -385,21 +385,25 @@ export function SequenceEditor({
     [seq],
   );
 
-  /** ▲▼ on an overlay lane header — swap it with its neighbour lane. The write
-   *  goes through the editor (which owns the Layers panel + the /reorder call). */
+  /** ▲▼ on an overlay/caption lane header — swap it with its neighbour lane
+   *  (image and text lanes share one zIndex stack). The write goes through the
+   *  editor (which owns the Layers panel + the /reorder call). */
   const onReorderTrack = useCallback(
     (trackId: string, direction: "up" | "down") => {
       if (!isOverlayTrack(trackId)) return;
+      let swapped = false;
       setSeq((s) => {
         if (!s) return s;
         const t = [...s.tracks];
         const i = t.findIndex((x) => x.id === trackId);
         const j = direction === "up" ? i - 1 : i + 1;
-        if (i < 0 || j < 0 || j >= t.length || t[j].kind !== "OVERLAY") return s;
+        const isLaneKind = (k: string) => k === "OVERLAY" || k === "TEXT";
+        if (i < 0 || j < 0 || j >= t.length || !isLaneKind(t[j].kind)) return s;
         [t[i], t[j]] = [t[j], t[i]];
+        swapped = true;
         return { ...s, tracks: t };
       });
-      onOverlayReorder?.(overlayIdFromTrack(trackId), direction);
+      if (swapped) onOverlayReorder?.(overlayIdFromTrack(trackId), direction);
     },
     [onOverlayReorder],
   );
