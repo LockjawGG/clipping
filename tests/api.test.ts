@@ -6,6 +6,7 @@ import type { StorageProvider } from "../src/lib/providers/types.ts";
 import type { VideoDb, VideoRecord, VideoServiceDeps } from "../src/lib/api/videos.ts";
 import {
   cancelVideo,
+  deleteVideo,
   confirmUpload,
   createUploadSchema,
   createVideoFromUrl,
@@ -354,6 +355,34 @@ test("cancelVideo 404s for an unknown video", async () => {
   const { deps } = makeDeps();
   await assert.rejects(
     () => cancelVideo(deps, "missing"),
+    (e: unknown) => e instanceof ApiError && e.status === 404,
+  );
+});
+
+// --- deleteVideo -----------------------------------------
+
+test("deleteVideo removes a READY video, its jobs, and its source", async () => {
+  const { deps, videos, jobUpdates } = makeDeps();
+  const deleted: string[] = [];
+  deps.storage.delete = async (key) => {
+    deleted.push(key);
+  };
+  const { videoId } = await createVideoFromUrl(deps, { url: "https://example.com/v.mp4" });
+  const storageKey = videos.get(videoId)!.storageKey;
+  videos.get(videoId)!.status = "READY";
+
+  const out = await deleteVideo(deps, videoId);
+
+  assert.equal(out.removed, true);
+  assert.equal(videos.has(videoId), false);
+  assert.deepEqual(deleted, [storageKey]);
+  assert.equal((jobUpdates[0]?.data as { status: string }).status, "CANCELLED");
+});
+
+test("deleteVideo 404s for an unknown video", async () => {
+  const { deps } = makeDeps();
+  await assert.rejects(
+    () => deleteVideo(deps, "missing"),
     (e: unknown) => e instanceof ApiError && e.status === 404,
   );
 });

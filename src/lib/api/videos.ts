@@ -279,6 +279,26 @@ export async function cancelVideo(deps: VideoServiceDeps, videoId: string) {
   return { videoId, cancelled: res.count, removed: true };
 }
 
+/**
+ * Delete a video and everything under it, at any status. Any in-flight jobs are
+ * CANCELLED first (the worker aborts them), then the row is deleted — Prisma
+ * cascades to jobs, transcript and clips — and the source file is removed.
+ * Unlike `cancelVideo`, this accepts a READY video (the "Delete" action in the
+ * content rail).
+ */
+export async function deleteVideo(deps: VideoServiceDeps, videoId: string) {
+  const video = await ownedVideo(deps, videoId);
+
+  await deps.db.job.updateMany({
+    where: { videoId, status: { in: ["QUEUED", "PROCESSING"] } },
+    data: { status: "CANCELLED", errorMessage: "deleted by user" },
+  });
+  await deps.db.video.delete({ where: { id: videoId } });
+  await deps.storage.delete(video.storageKey).catch(() => {});
+
+  return { videoId, removed: true };
+}
+
 export async function getVideoStatus(deps: VideoServiceDeps, videoId: string) {
   const video = await ownedVideo(deps, videoId);
 

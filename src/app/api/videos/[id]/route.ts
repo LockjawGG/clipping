@@ -1,6 +1,6 @@
 import { readJson, route } from "@/lib/api/http.ts";
 import { videoService } from "@/lib/api/service.ts";
-import { getVideoStatus, updateVideo } from "@/lib/api/videos.ts";
+import { deleteVideo, getVideoStatus, updateVideo } from "@/lib/api/videos.ts";
 import { requireUserId } from "@/lib/auth/session.ts";
 
 export const runtime = "nodejs";
@@ -20,4 +20,11 @@ export const PATCH = route<Ctx>(async (req, { params }) => {
   const userId = await requireUserId();
   const { id } = await params;
   return Response.json(await updateVideo(videoService(userId), id, await readJson(req)));
+});
+
+/** DELETE /api/videos/:id — remove the video and its clips/transcript/jobs. */
+export const DELETE = route<Ctx>(async (_req, { params }) => {
+  const userId = await requireUserId();
+  const { id } = await params;
+  return Response.json(await deleteVideo(videoService(userId), id));
 });

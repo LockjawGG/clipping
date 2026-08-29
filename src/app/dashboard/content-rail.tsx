@@ -133,6 +133,28 @@ export function ContentRail({
     }
   }
 
+  /** Delete a video outright (any status), including its clips + transcript. */
+  async function remove(videoId: string, name: string) {
+    setMenuFor(null);
+    if (!window.confirm(`Delete “${name}”? This removes its clips and transcript too.`)) return;
+    try {
+      const res = await fetch(`/api/videos/${videoId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        alert(`Couldn't delete: ${body.error ?? `HTTP ${res.status}`}`);
+        return;
+      }
+    } catch {
+      alert("Couldn't delete — the server didn't respond.");
+      return;
+    }
+    if (videoId === activeVideoId) {
+      router.push(`/dashboard?project=${activeProjectId}`);
+    } else {
+      router.refresh();
+    }
+  }
+
   async function rename(videoId: string, name: string, original: string) {
     setRenaming(null);
     const trimmed = name.trim();
@@ -297,17 +319,6 @@ export function ContentRail({
                         Retry processing
                       </button>
                     )}
-                    {v.status !== "READY" && (
-                      <button
-                        className="text-danger"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          cancel(v.id);
-                        }}
-                      >
-                        {GROUPS[0].match(v.status) ? "Cancel & remove" : "Remove"}
-                      </button>
-                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -329,6 +340,26 @@ export function ContentRail({
                         no other project
                       </button>
                     )}
+                    {GROUPS[0].match(v.status) && (
+                      <button
+                        className="text-danger"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          cancel(v.id);
+                        }}
+                      >
+                        Cancel &amp; remove
+                      </button>
+                    )}
+                    <button
+                      className="text-danger"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        remove(v.id, v.name);
+                      }}
+                    >
+                      Delete
+                    </button>
                   </div>
                 )}
               </div>
