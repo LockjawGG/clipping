@@ -3,15 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-const CHUNK_MS = 8_000;
-const POLL_MS = 3_000;
-
-interface LiveSeg {
-  index: number;
-  startMs: number;
-  text: string;
-  speaker: string | null;
-}
+/** How often the recorder flushes a fragment to storage (crash-durability). */
+const FLUSH_MS = 20_000;
 
 type Phase = "idle" | "arming" | "recording" | "finalizing";
 
@@ -21,9 +14,12 @@ const fmtClock = (ms: number) => {
 };
 
 /**
- * Record mic (and optionally screen) audio in the browser, upload it in ~8s
- * self-contained WebM chunks, and watch the transcript build. Stop finalises it
- * into a normal clippable video (chunks concatenated + re-transcribed).
+ * Record mic (and optionally screen) audio in the browser as ONE continuous
+ * MediaRecorder stream, flushing a fragment to storage every {@link FLUSH_MS}
+ * purely so a crash can't lose everything. Nothing is transcribed while
+ * recording — Stop reassembles the fragments and transcribes the whole thing
+ * once at full quality, which is far more accurate (and cheaper) than decoding
+ * dozens of tiny isolated chunks.
  */
 export function GoLive({ projectId }: { projectId?: string }) {
   const router = useRouter();
@@ -31,7 +27,6 @@ export function GoLive({ projectId }: { projectId?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
-  const [segments, setSegments] = useState<LiveSeg[]>([]);
 
   const videoId = useRef<string | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
@@ -39,25 +34,14 @@ export function GoLive({ projectId }: { projectId?: string }) {
   const audioCtx = useRef<AudioContext | null>(null);
   const chunkIndex = useRef(0);
   const startedAt = useRef(0);
-  // Background tabs throttle setInterval hard (~1/min), which would stall the 8s
-  // chunk cutter and freeze the rolling transcript while you're on another tab.
-  // A Worker timer keeps ticking at full rate when the tab is hidden.
-  const chunkTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const chunkWorker = useRef<Worker | null>(null);
-  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const clockTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const onVisible = useRef<(() => void) | null>(null);
   const recording = useRef(false);
-  const lastSeg = useRef(-1);
 
   const teardown = useCallback(() => {
     recording.current = false;
-    [chunkTimer, pollTimer, clockTimer].forEach((t) => {
-      if (t.current) clearInterval(t.current);
-      t.current = null;
-    });
-    chunkWorker.current?.terminate();
-    chunkWorker.current = null;
+    if (clockTimer.current) clearInterval(clockTimer.current);
+    clockTimer.current = null;
     if (onVisible.current) {
       document.removeEventListener("visibilitychange", onVisible.current);
       onVisible.current = null;
@@ -80,54 +64,32 @@ export function GoLive({ projectId }: { projectId?: string }) {
     const id = videoId.current;
     if (!id || blob.size === 0) return;
     const index = chunkIndex.current++;
-    const startMs = index * CHUNK_MS;
     try {
       const res = await fetch(`/api/live/${id}/chunk`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ index, startMs, contentType: blob.type || "audio/webm" }),
+        body: JSON.stringify({ index, startMs: index * FLUSH_MS, contentType: blob.type || "audio/webm" }),
       });
-      if (!res.ok) throw new Error(`chunk ${index}: HTTP ${res.status}`);
-      const { upload } = (await res.json()) as { upload: { url: string; method: string; headers: Record<string, string> } };
-      const put = await fetch(upload.url, { method: upload.method, headers: upload.headers, body: blob });
-      if (!put.ok) throw new Error(`chunk ${index} upload: HTTP ${put.status}`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "a chunk failed to upload");
-    }
-  }, []);
-
-  const pollTranscript = useCallback(async () => {
-    const id = videoId.current;
-    if (!id) return;
-    try {
-      const res = await fetch(`/api/live/${id}/transcript?after=${lastSeg.current}`);
-      if (!res.ok) return;
-      const { segments: segs, lastIndex } = (await res.json()) as {
-        segments: LiveSeg[];
-        lastIndex: number;
+      if (!res.ok) throw new Error(`fragment ${index}: HTTP ${res.status}`);
+      const { upload } = (await res.json()) as {
+        upload: { url: string; method: string; headers: Record<string, string> };
       };
-      if (segs.length) {
-        setSegments((prev) => [...prev, ...segs]);
-        lastSeg.current = lastIndex;
-      }
-    } catch {
-      /* transient */
+      const put = await fetch(upload.url, { method: upload.method, headers: upload.headers, body: blob });
+      if (!put.ok) throw new Error(`fragment ${index} upload: HTTP ${put.status}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "a fragment failed to upload");
     }
   }, []);
 
   async function start() {
     setError(null);
     setNote(null);
-    setSegments([]);
     setPhase("arming");
     chunkIndex.current = 0;
-    lastSeg.current = -1;
     try {
       // Screen picker FIRST, while the click's user-activation is still fresh —
       // an `await getUserMedia` before it consumes the gesture and Chrome then
       // rejects getDisplayMedia with NotAllowedError.
-      // Screen video track we'll actually record (when capturing the screen),
-      // plus any screen audio to mix in.
       let screenVideo: MediaStreamTrack | null = null;
       let screenAudio: MediaStream | null = null;
       if (navigator.mediaDevices?.getDisplayMedia) {
@@ -209,46 +171,22 @@ export function GoLive({ projectId }: { projectId?: string }) {
       const recStream = new MediaStream([...(screenVideo ? [screenVideo] : []), ...audioTracks]);
       const pick = (cands: string[]) => cands.find((c) => MediaRecorder.isTypeSupported(c));
       const mime = screenVideo
-        ? pick([
-            "video/webm;codecs=vp9,opus",
-            "video/webm;codecs=vp8,opus",
-            "video/webm",
-          ]) ?? "video/webm"
+        ? pick(["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]) ?? "video/webm"
         : pick(["audio/webm;codecs=opus", "audio/webm"]) ?? "audio/webm";
       const rec = new MediaRecorder(recStream, { mimeType: mime });
       recorder.current = rec;
       recording.current = true;
+      // One continuous recording; timeslice just flushes a fragment periodically.
+      // The fragments are a single stream in pieces — reassembled server-side —
+      // so there are no per-chunk encode gaps to hurt transcription accuracy.
       rec.ondataavailable = (e) => {
         if (e.data.size > 0) void uploadChunk(e.data);
       };
-      rec.onstop = () => {
-        if (recording.current) rec.start(); // roll into the next chunk
-      };
-      rec.start();
+      rec.start(FLUSH_MS);
 
       startedAt.current = Date.now();
       setElapsedMs(0);
       setPhase("recording");
-
-      // Cut a self-contained blob every CHUNK_MS; onstop restarts recording.
-      const cut = () => {
-        try {
-          recorder.current?.stop();
-        } catch {
-          /* ignore */
-        }
-      };
-      try {
-        const src = `let h;onmessage=e=>{if(e.data==='go'){h=setInterval(()=>postMessage(0),${CHUNK_MS})}else{clearInterval(h)}}`;
-        const w = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
-        w.onmessage = cut;
-        w.postMessage("go");
-        chunkWorker.current = w;
-      } catch {
-        // Worker blocked (CSP) — fall back to a main-thread timer (throttled in
-        // background tabs, but better than nothing).
-        chunkTimer.current = setInterval(cut, CHUNK_MS);
-      }
 
       // Returning to the tab can leave a mixing AudioContext suspended — resume it.
       const vis = () => {
@@ -257,7 +195,6 @@ export function GoLive({ projectId }: { projectId?: string }) {
       document.addEventListener("visibilitychange", vis);
       onVisible.current = vis;
 
-      pollTimer.current = setInterval(() => void pollTranscript(), POLL_MS);
       clockTimer.current = setInterval(() => setElapsedMs(Date.now() - startedAt.current), 500);
     } catch (e) {
       teardown();
@@ -281,8 +218,8 @@ export function GoLive({ projectId }: { projectId?: string }) {
     setPhase("finalizing");
     recording.current = false;
     teardown();
-    // give the last blob a beat to upload
-    await new Promise((r) => setTimeout(r, 800));
+    // give the final fragment a beat to upload
+    await new Promise((r) => setTimeout(r, 1200));
     if (id) {
       try {
         await fetch(`/api/live/${id}/stop`, { method: "POST" });
@@ -306,14 +243,15 @@ export function GoLive({ projectId }: { projectId?: string }) {
           <p className="text-[11px] text-muted">
             You’ll be asked to pick a screen or tab to share (tick “Share system audio” /
             “Share tab audio” for its sound) — or skip that to record just your mic.
-            Transcribes as you speak; Stop turns it into a normal clip-able video.
+            The transcript is generated in full when you press Stop, which then turns it
+            into a normal clip-able video.
           </p>
         </>
       )}
 
       {(phase === "arming" || phase === "finalizing") && (
         <p className="text-xs text-muted">
-          {phase === "arming" ? "Requesting devices…" : "Finalising — building the recording…"}
+          {phase === "arming" ? "Requesting devices…" : "Finalising — building the recording & transcript…"}
         </p>
       )}
 
@@ -326,18 +264,9 @@ export function GoLive({ projectId }: { projectId?: string }) {
               ■ Stop
             </button>
           </div>
-          <div className="max-h-48 overflow-y-auto rounded-lg border border-border bg-surface-raised p-2 text-xs leading-relaxed">
-            {segments.length === 0 ? (
-              <span className="text-muted">Listening… transcript appears here as you talk.</span>
-            ) : (
-              segments.map((s) => (
-                <span key={s.index}>
-                  {s.speaker ? <span className="text-muted">{s.speaker}: </span> : null}
-                  {s.text}{" "}
-                </span>
-              ))
-            )}
-          </div>
+          <p className="rounded-lg border border-border bg-surface-raised p-2 text-xs leading-relaxed text-muted">
+            Recording… the full transcript is generated when you press Stop.
+          </p>
         </>
       )}
 

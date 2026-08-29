@@ -7,11 +7,13 @@ import type { JobKind } from "../jobs/types.ts";
 import { ApiError } from "./http.ts";
 
 /**
- * Live capture: the browser records mic (and optionally screen) audio, uploads
- * it in ~8s WebM chunks while the session runs, and each chunk is transcribed
- * on its own. On Stop the chunks are concatenated into the video's source and
- * the whole thing is re-transcribed at full quality (LIVE_FINALIZE), after
- * which it's an ordinary clippable video.
+ * Live capture: the browser records mic (and optionally screen) audio as one
+ * continuous MediaRecorder stream, flushing a fragment to storage every few
+ * seconds purely for crash-durability. Nothing is transcribed while recording.
+ * On Stop the fragments are reassembled into the video's source and the whole
+ * thing is transcribed once at full quality (LIVE_FINALIZE) — far more accurate
+ * and cheaper than decoding dozens of tiny isolated chunks — after which it's
+ * an ordinary clippable video.
  */
 
 export const startLiveSchema = z.object({
@@ -107,7 +109,12 @@ export async function startLive(deps: LiveServiceDeps, input: unknown) {
   return { videoId: video.id, projectId: resolved };
 }
 
-/** Register the next chunk: a presigned PUT + a LIVE_TRANSCRIBE job. */
+/**
+ * Register the next recording fragment and hand back a presigned PUT. These
+ * fragments are MediaRecorder timeslice output — only the first is
+ * self-contained; the rest are continuation segments — so they're never
+ * transcribed individually, just stored in order and reassembled on Stop.
+ */
 export async function addLiveChunk(deps: LiveServiceDeps, videoId: string, input: unknown) {
   const { index, startMs, durationMs, contentType } = addChunkSchema.parse(input);
   const video = await ownedLiveVideo(deps, videoId);
@@ -120,15 +127,6 @@ export async function addLiveChunk(deps: LiveServiceDeps, videoId: string, input
     data: { videoId, index, startMs, durationMs: durationMs ?? null, storageKey },
   });
   const uploadUrl = await deps.storage.createUploadUrl(storageKey, mime);
-  // The browser PUTs the bytes right after this responds, so give the upload a
-  // head start and extra attempts — the handler also re-checks existence.
-  await deps.enqueue({
-    videoId,
-    kind: "LIVE_TRANSCRIBE",
-    payload: { chunkId: chunk.id },
-    runAfter: new Date(Date.now() + 4_000),
-    maxAttempts: 6,
-  });
 
   return {
     chunkId: chunk.id,

@@ -224,6 +224,22 @@ export function buildConcatAvArgs({ listPath, outputPath }: ConcatAudioArgs): st
   ];
 }
 
+export interface RemuxArgs {
+  inputPath: string;
+  outputPath: string;
+}
+
+/**
+ * Rewrite a container without touching the streams — used to turn a raw
+ * concatenation of MediaRecorder timeslice fragments into a clean, seekable
+ * file (regenerated timestamps + a Cues index).
+ */
+export function buildRemuxArgs({ inputPath, outputPath }: RemuxArgs): string[] {
+  assertSafePath(inputPath);
+  assertSafePath(outputPath);
+  return ["-y", "-fflags", "+genpts", "-i", inputPath, "-c", "copy", outputPath];
+}
+
 export interface CutArgs {
   inputPath: string;
   outputPath: string;

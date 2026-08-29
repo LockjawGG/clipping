@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { StorageProvider } from "../src/lib/providers/types.ts";
 import type { LiveServiceDeps } from "../src/lib/api/live.ts";
@@ -118,17 +121,14 @@ test("startLive creates a LIVE video in the default project", async () => {
   assert.equal(out.projectId, "p1");
 });
 
-test("addLiveChunk stores a chunk, returns a PUT, and enqueues LIVE_TRANSCRIBE", async () => {
+test("addLiveChunk stores a fragment and returns a PUT, without queuing any job", async () => {
   const { deps, chunks, enqueued } = makeDeps();
   const { videoId } = await startLive(deps, {});
   const out = await addLiveChunk(deps, videoId, { index: 0, startMs: 0 });
   assert.match(out.upload.url, /chunks\/00000\.webm$/);
   assert.equal(chunks.length, 1);
-  const last = enqueued.at(-1) as { videoId: string; kind: string; payload: unknown; maxAttempts?: number };
-  assert.equal(last.videoId, videoId);
-  assert.equal(last.kind, "LIVE_TRANSCRIBE");
-  assert.deepEqual(last.payload, { chunkId: out.chunkId });
-  assert.equal(last.maxAttempts, 6);
+  assert.ok(out.chunkId);
+  assert.deepEqual(enqueued, []); // fragments are transcribed only at finalize
 });
 
 test("addLiveChunk 409s once the recording is no longer LIVE", async () => {
@@ -228,18 +228,23 @@ test("LIVE_TRANSCRIBE transcribes a chunk and appends offset segments", async ()
   assert.equal(chunkStatus, "DONE");
 });
 
-test("LIVE_FINALIZE concats chunks, re-transcribes, and queues ANALYZE", async () => {
+test("LIVE_FINALIZE reassembles fragments, re-transcribes, and queues ANALYZE", async () => {
   const calls: string[] = [];
+  const dir = await mkdtemp(join(tmpdir(), "live-fin-"));
   const deps = {
-    tempDir: "/tmp/live-test",
+    tempDir: dir,
     ffmpeg: {
-      concatAudio: async () => calls.push("concat"),
-      concatAv: async () => calls.push("concatAv"),
+      remux: async (i: string, o: string) => {
+        calls.push("remux");
+        await writeFile(o, await readFile(i));
+      },
       probe: async () => ({ durationMs: 24_000, hasAudio: true, videoCodec: null }),
       extractAudio: async () => calls.push("extract"),
     },
     storage: {
-      getToFile: async () => {},
+      getToFile: async (_k: string, p: string) => {
+        await writeFile(p, Buffer.from("webm-fragment-bytes"));
+      },
       putFile: async () => calls.push("put"),
       delete: async () => {},
       exists: async () => true,
@@ -262,8 +267,8 @@ test("LIVE_FINALIZE concats chunks, re-transcribes, and queues ANALYZE", async (
   } as unknown as PipelineDeps;
 
   const out = await liveFinalizeHandler(jobCtx(deps, "LIVE_FINALIZE", null));
-  assert.deepEqual(out, { chunks: 2, segments: 0 });
-  assert.ok(calls.includes("concat"));
+  assert.deepEqual(out, { chunks: 2, usedChunks: 2, segments: 0 });
+  assert.ok(calls.includes("remux"));
   assert.ok(calls.includes("put"));
   assert.ok(calls.includes("status:READY"));
   assert.ok(calls.includes("enqueue:ANALYZE"));

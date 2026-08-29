@@ -15,6 +15,7 @@ import {
   buildOverlayCompositeArgs,
   buildProbeArgs,
   buildReframeArgs,
+  buildRemuxArgs,
   buildThumbnailArgs,
   buildTrackedReframeArgs,
 } from "./args.ts";
@@ -143,6 +144,8 @@ export interface Ffmpeg {
   concatAudio(inputPaths: string[], outputPath: string, signal?: AbortSignal): Promise<void>;
   /** Join self-contained A/V WebM chunks, re-encoding to one continuous stream. */
   concatAv(inputPaths: string[], outputPath: string, signal?: AbortSignal): Promise<void>;
+  /** Rewrite a container (stream copy) to fix timestamps / add a seek index. */
+  remux(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void>;
   /** Frame-accurate trim (re-encode, never stream-copy). */
   cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void>;
   /** Scale/crop to an aspect preset, optionally burning subtitles. */
@@ -215,6 +218,11 @@ export class FfmpegRunner implements Ffmpeg {
     if (inputPaths.length === 0) throw new Error("concatAv: no inputs");
     const listPath = await this.writeConcatList(inputPaths, outputPath);
     await this.exec(this.ffmpegPath, buildConcatAvArgs({ listPath, outputPath }), signal);
+  }
+
+  async remux(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void> {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await this.exec(this.ffmpegPath, buildRemuxArgs({ inputPath, outputPath }), signal);
   }
 
   async cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void> {
