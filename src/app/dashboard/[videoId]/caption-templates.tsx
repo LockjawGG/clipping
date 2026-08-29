@@ -227,51 +227,72 @@ export const TemplateBrowser = memo(function TemplateBrowser({
   onApply,
 }: Props) {
   const [category, setCategory] = useState<BrowserCategory>("clean");
-  const list = useMemo(
-    () => (category === "mine" ? [] : CAPTION_TEMPLATES.filter((t) => t.category === category)),
-    [category],
-  );
-  const blurb =
-    category === "mine"
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+
+  const list = useMemo(() => {
+    if (q) {
+      return CAPTION_TEMPLATES.filter(
+        (t) => t.name.toLowerCase().includes(q) || t.category.includes(q),
+      );
+    }
+    return category === "mine" ? [] : CAPTION_TEMPLATES.filter((t) => t.category === category);
+  }, [q, category]);
+
+  const blurb = q
+    ? `${list.length} match${list.length === 1 ? "" : "es"}`
+    : category === "mine"
       ? "Your saved styles"
       : CAPTION_TEMPLATE_CATEGORIES.find((c) => c.id === category)?.blurb;
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3" aria-disabled={disabled}>
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-muted">Templates</span>
-        {blurb && <span className="hidden text-[11px] text-muted sm:inline">{blurb}</span>}
+      <div className="flex items-center justify-between gap-2">
+        <span className="shrink-0 text-xs font-medium text-muted">Templates</span>
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search styles…"
+          aria-label="Search templates"
+          className="field w-32 py-0.5 text-xs sm:w-44"
+        />
+        {blurb && <span className="hidden flex-1 text-right text-[11px] text-muted md:inline">{blurb}</span>}
       </div>
 
-      <div className="seg flex-wrap self-start" role="tablist" aria-label="Template category">
-        {CAPTION_TEMPLATE_CATEGORIES.map((c) => (
+      {!q && (
+        <div className="seg flex-wrap self-start" role="tablist" aria-label="Template category">
+          {CAPTION_TEMPLATE_CATEGORIES.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              role="tab"
+              aria-selected={category === c.id}
+              onClick={() => setCategory(c.id)}
+            >
+              {c.label}
+            </button>
+          ))}
           <button
-            key={c.id}
             type="button"
             role="tab"
-            aria-selected={category === c.id}
-            onClick={() => setCategory(c.id)}
+            aria-selected={category === "mine"}
+            onClick={() => setCategory("mine")}
           >
-            {c.label}
+            Mine
           </button>
-        ))}
-        <button
-          type="button"
-          role="tab"
-          aria-selected={category === "mine"}
-          onClick={() => setCategory("mine")}
-        >
-          Mine
-        </button>
-      </div>
+        </div>
+      )}
 
-      {category === "mine" ? (
+      {!q && category === "mine" ? (
         <MyTemplates
           disabled={disabled}
           activeId={activeId}
           savedTick={savedTick}
           onApply={onApply}
         />
+      ) : q && list.length === 0 ? (
+        <p className="text-xs text-muted">No styles match “{query.trim()}”.</p>
       ) : (
         <div
           className={`flex gap-2 overflow-x-auto pb-1 ${disabled ? "pointer-events-none opacity-50" : ""}`}
