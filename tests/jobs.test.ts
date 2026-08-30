@@ -208,6 +208,23 @@ test("runOnce processes at most `concurrency` jobs per batch", async () => {
   assert.deepEqual(statuses, ["COMPLETED", "COMPLETED", "QUEUED"]);
 });
 
+/**
+ * Wait for something the worker does, not for a length of time.
+ *
+ * These tests drive a real timer loop, so a fixed sleep quietly asserts that
+ * the machine was fast enough — and under load it is not: the heartbeat test
+ * below failed in CI-like conditions having seen one tick in 40ms instead of
+ * two. Polling the condition keeps each test about the behaviour it names and
+ * simply lets a slow machine take longer.
+ */
+async function waitFor(what: string, cond: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 2));
+  }
+}
+
 test("start() drains the queue and stop() halts the loop", async () => {
   const store = new MemoryStore();
   for (const id of ["a", "b", "c"]) store.add({ id, kind: "ANALYZE" });
@@ -221,7 +238,9 @@ test("start() drains the queue and stop() halts the loop", async () => {
   });
 
   worker.start();
-  await new Promise((r) => setTimeout(r, 40));
+  await waitFor("the queue to drain", () =>
+    [...store.rows.values()].every((r) => r.status === "COMPLETED"),
+  );
   await worker.stop();
 
   assert.ok([...store.rows.values()].every((r) => r.status === "COMPLETED"));
@@ -230,12 +249,14 @@ test("start() drains the queue and stop() halts the loop", async () => {
 test("a job aborted by shutdown is requeued without spending an attempt", async () => {
   const store = new MemoryStore();
   store.add({ id: "j1", kind: "RENDER" });
+  let running = false;
 
   const worker = new JobWorker({
     store,
     deps,
     handlers: {
       RENDER: async (ctx) => {
+        running = true;
         await new Promise((resolve, reject) => {
           ctx.signal.addEventListener("abort", () => reject(new Error("aborted")));
         });
@@ -245,7 +266,7 @@ test("a job aborted by shutdown is requeued without spending an attempt", async 
   });
 
   worker.start();
-  await new Promise((r) => setTimeout(r, 10));
+  await waitFor("the handler to be running", () => running);
   await worker.stop();
 
   const row = store.rows.get("j1")!;
@@ -285,7 +306,7 @@ test("a running job heartbeats to keep its lease", async () => {
   });
 
   worker.start();
-  await new Promise((r) => setTimeout(r, 40)); // let a few heartbeats fire
+  await waitFor("a couple of heartbeats", () => store.heartbeats.length >= 2);
   release();
   await worker.stop();
 
@@ -298,6 +319,7 @@ test("a job cancelled mid-flight is aborted and stays CANCELLED (no retry, no co
   store.add({ id: "j1", kind: "FETCH", maxAttempts: 3 });
 
   let sawAbort = false;
+  let running = false;
   const worker = new JobWorker({
     store,
     deps,
@@ -305,6 +327,7 @@ test("a job cancelled mid-flight is aborted and stays CANCELLED (no retry, no co
     handlers: {
       FETCH: (ctx) =>
         new Promise<void>((_resolve, reject) => {
+          running = true;
           ctx.signal.addEventListener("abort", () => {
             sawAbort = true;
             reject(new Error("aborted"));
@@ -314,9 +337,9 @@ test("a job cancelled mid-flight is aborted and stays CANCELLED (no retry, no co
   });
 
   worker.start();
-  await new Promise((r) => setTimeout(r, 15)); // let it claim + start
+  await waitFor("the job to be claimed and running", () => running);
   store.rows.get("j1")!.status = "CANCELLED"; // user hits Cancel
-  await new Promise((r) => setTimeout(r, 20)); // next heartbeat tick aborts it
+  await waitFor("the heartbeat tick to abort it", () => sawAbort);
   await worker.stop();
 
   assert.equal(sawAbort, true, "handler received the abort");
