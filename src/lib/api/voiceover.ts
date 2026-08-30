@@ -2,18 +2,22 @@
  * Voiceover creation and status.
  *
  * A voiceover is generated once and then *re-anchored* on every render, so this
- * surface is small: create or update the settings, queue synthesis, read status.
- * Nothing here decides where the narration *will* sit — that is resolved at
- * render time from the clip's current timing. Reading it back does resolve the
- * placement, through the very same `placeLines` the renderer uses, so the
- * preview can play the narration where the export will put it.
+ * surface is small: create or update the settings, queue synthesis, read status,
+ * and hand back a playable URL per line.
+ *
+ * It deliberately does not place the lines. Placement depends on the clip's
+ * timeline and on which words are struck out, and the editor holds edits the
+ * server has not been told about yet — anchoring here would put the preview's
+ * narration where the *saved* clip would put it, which is a different clip from
+ * the one on screen. The editor places them against the same plan it previews,
+ * with the same `placeLines` the renderer uses.
  */
 
 import { z } from "zod";
 
 import type { JobKind } from "../jobs/types.ts";
 import { ApiError } from "./http.ts";
-import { parseLines, placeLines } from "../voiceover/sync.ts";
+import { parseLines } from "../voiceover/sync.ts";
 
 export const voiceoverSchema = z
   .object({
@@ -33,12 +37,6 @@ interface Db {
       where: { id: string };
       select: Record<string, unknown>;
     }): Promise<{ id: string; video: { projectId: string } } | null>;
-  };
-  transcriptSegment: {
-    findMany(args: {
-      where: Record<string, unknown>;
-      orderBy?: unknown;
-    }): Promise<Array<{ startMs: number; endMs: number }>>;
   };
   voiceover: {
     findFirst(args: { where: Record<string, unknown>; orderBy?: unknown }): Promise<VoiceoverRow | null>;
@@ -96,23 +94,18 @@ export interface VoiceoverView extends VoiceoverRow {
   /** How many lines have been synthesized so far. */
   lineCount: number;
   /**
-   * Where each line lands and how to play it, for the preview.
-   *
-   * Times are clip-relative, like every other preview coordinate. Empty until
-   * synthesis has produced audio.
+   * The synthesized lines with something to play them from. Unplaced: the
+   * caller anchors them. Empty until synthesis has produced audio.
    */
   lines: PreviewLine[];
 }
 
-/** One line of narration, placed and playable. */
+/** One synthesized line, playable. */
 export interface PreviewLine {
+  /** The anchor it was generated from, e.g. `seg:3`. */
   ref: string;
-  /** Milliseconds from the start of the clip. */
-  startMs: number;
-  /** How long it occupies once the tempo fit is applied. */
-  playedMs: number;
-  /** Playback rate that makes it fit its window. 1 = untouched. */
-  tempo: number;
+  /** Length of the audio as synthesized, before any tempo fit. */
+  durationMs: number;
   url: string;
 }
 
@@ -126,57 +119,26 @@ export async function getVoiceover(
   deps: VoiceoverServiceDeps,
   clipId: string,
 ): Promise<VoiceoverView | null> {
-  const clip = await ownedClip(deps, clipId);
+  await ownedClip(deps, clipId);
   const row = await deps.db.voiceover.findFirst({
     where: { clipId },
     orderBy: { updatedAt: "desc" },
   });
   if (!row) return null;
-  return view(row, await previewLines(deps, clip, row));
+  return view(row, await previewLines(deps, row));
 }
 
-/**
- * Resolve the stored lines onto the clip, ready to play.
- *
- * Deliberately the same anchoring the renderer does — segments that overlap the
- * clip, indexed in order, `script:` lines spread evenly — run through the same
- * `placeLines`. Anything else and the preview would put narration somewhere the
- * export will not.
- */
+/** The stored lines, each with a URL the browser can play. */
 async function previewLines(
   deps: VoiceoverServiceDeps,
-  clip: { videoId: string; startMs: number; endMs: number },
   row: VoiceoverRow,
 ): Promise<PreviewLine[]> {
   const stored = parseLines(row.linesJson);
-  if (stored.length === 0) return [];
-  const clipMs = Math.max(1, clip.endMs - clip.startMs);
-
-  const segments = await deps.db.transcriptSegment.findMany({
-    where: { transcript: { videoId: clip.videoId, translatedTo: "" } },
-    orderBy: { index: "asc" },
-  });
-  const inClip = segments.filter((sg) => sg.endMs > clip.startMs && sg.startMs < clip.endMs);
-  const anchors = inClip.map((sg, i) => ({
-    ref: `seg:${i}`,
-    startMs: Math.max(0, sg.startMs - clip.startMs),
-    endMs: Math.max(0, sg.endMs - clip.startMs),
-  }));
-  const scriptAnchors = stored
-    .filter((l) => l.ref.startsWith("script:"))
-    .map((l, i, all) => {
-      const step = clipMs / Math.max(1, all.length);
-      return { ref: l.ref, startMs: Math.round(i * step), endMs: Math.round((i + 1) * step) };
-    });
-
-  const placed = placeLines(stored, [...anchors, ...scriptAnchors], { durationMs: clipMs });
   return Promise.all(
-    placed.map(async (p) => ({
-      ref: p.ref,
-      startMs: p.startMs,
-      playedMs: p.playedMs,
-      tempo: p.tempo,
-      url: await deps.storage.createDownloadUrl(p.audioKey),
+    stored.map(async (l) => ({
+      ref: l.ref,
+      durationMs: l.durationMs,
+      url: await deps.storage.createDownloadUrl(l.audioKey),
     })),
   );
 }

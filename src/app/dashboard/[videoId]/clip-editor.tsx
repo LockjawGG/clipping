@@ -22,7 +22,8 @@ import {
   remapAcrossCuts,
 } from "@/lib/sequence/cuts.ts";
 import type { ClipPlan } from "@/lib/api/sequence.ts";
-import { remapWordsToTimeline } from "@/lib/sequence/compose.ts";
+import { mapSourceToTimeline, remapWordsToTimeline } from "@/lib/sequence/compose.ts";
+import { placeLines } from "@/lib/voiceover/sync.ts";
 import type { TranscriptView } from "../editor-pane";
 import { TRANSLATE_TARGETS } from "@/lib/translation/targets";
 import { OverlayPanel, type OverlayView } from "./overlay-panel";
@@ -559,6 +560,45 @@ export function ClipEditor({
     () => ({ [videoId]: sourceUrl, ...(plan?.sourceUrls ?? {}) }),
     [videoId, sourceUrl, plan],
   );
+
+  /**
+   * Narration placed on the preview's timeline.
+   *
+   * The server hands back the synthesized lines but not where they go: it can
+   * only see the saved clip, and the timeline being previewed may have edits it
+   * has never been told about. So the anchors are built here, from the same
+   * plan the preview plays and through the same `placeLines` the renderer uses
+   * — a segment goes wherever its footage went, and one whose footage was cut
+   * away yields no anchor at all, exactly as at render time.
+   */
+  const placedNarration = useMemo(() => {
+    if (narration.lines.length === 0) return [];
+    const planMs = Math.max(1, previewPlan.base.reduce((e, p) => Math.max(e, p.timelineStart + p.durationMs), 0));
+    const anchors = transcript.flatMap((sg, i) => {
+      const start = mapSourceToTimeline(previewPlan.base, videoId, sg.startMs);
+      if (start === null) return [];
+      const end = mapSourceToTimeline(previewPlan.base, videoId, sg.endMs) ?? start;
+      return [{ ref: `seg:${i}`, startMs: start, endMs: Math.max(start + 1, end) }];
+    });
+    const scripted = narration.lines
+      .filter((l) => l.ref.startsWith("script:"))
+      .map((l, i, all) => {
+        const step = planMs / Math.max(1, all.length);
+        return { ref: l.ref, startMs: Math.round(i * step), endMs: Math.round((i + 1) * step) };
+      });
+    const byRef = new Map(narration.lines.map((l) => [l.ref, l.url]));
+    return placeLines(
+      narration.lines.map((l) => ({ ...l, text: "", audioKey: l.ref })),
+      [...anchors, ...scripted],
+      { durationMs: planMs },
+    ).map((p) => ({
+      ref: p.ref,
+      startMs: p.startMs,
+      playedMs: p.playedMs,
+      tempo: p.tempo,
+      url: byRef.get(p.ref) ?? "",
+    }));
+  }, [narration, previewPlan, transcript, videoId]);
 
   /**
    * The words as the preview timeline sees them.
@@ -1489,7 +1529,11 @@ export function ClipEditor({
         plan={previewPlan.base}
         planLayers={previewPlan.layers}
         planSourceUrls={planSourceUrls}
-        voiceover={narration.lines.length > 0 ? narration : null}
+        voiceover={
+          placedNarration.length > 0
+            ? { duckDb: narration.duckDb, lines: placedNarration }
+            : null
+        }
         bleeps={bleepSpans}
         renderUrl={clip.render?.downloadUrl ?? null}
         seekToMs={seekReq}

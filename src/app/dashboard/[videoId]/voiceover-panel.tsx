@@ -16,12 +16,10 @@ interface Voice {
   language: string;
 }
 
-/** One line of narration, placed on the clip and playable in the preview. */
+/** One synthesized line of narration, ready for the editor to place. */
 export interface PreviewLine {
   ref: string;
-  startMs: number;
-  playedMs: number;
-  tempo: number;
+  durationMs: number;
   url: string;
 }
 

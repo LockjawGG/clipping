@@ -226,7 +226,7 @@ test("a value that looks like a path is checked as a path", () => {
   assert.equal(executableExists("./no-such-file-here.txt"), false);
 });
 
-// --- getVoiceover places the lines the preview will play -------------------
+// --- getVoiceover hands back playable lines, unplaced ----------------------
 
 function previewDeps(over: Partial<Record<string, unknown>> = {}) {
   const clip = { id: "c1", videoId: "v1", startMs: 10_000, endMs: 26_000, video: { projectId: "p1" } };
@@ -237,13 +237,6 @@ function previewDeps(over: Partial<Record<string, unknown>> = {}) {
   const deps = {
     db: {
       clip: { findUnique: async () => clip },
-      transcriptSegment: {
-        findMany: async () => [
-          { startMs: 2_000, endMs: 9_000 },   // before the clip - not an anchor
-          { startMs: 11_000, endMs: 14_000 }, // seg:0
-          { startMs: 18_000, endMs: 22_000 }, // seg:1
-        ],
-      },
       voiceover: {
         findFirst: async () => ({
           id: "vo1", clipId: "c1", sourceKind: "TRANSCRIPT", script: null, language: "en",
@@ -263,33 +256,29 @@ function previewDeps(over: Partial<Record<string, unknown>> = {}) {
   return deps;
 }
 
-test("the preview gets each line placed where the render will put it", async () => {
+test("every synthesized line comes back with something to play it from", async () => {
   const vo = await getVoiceover(previewDeps(), "c1");
   assert.ok(vo);
-
-  // Anchors are segments that overlap the clip, indexed in order and rebased
-  // onto it - the renderer's rule. The segment before the clip is not one, so
-  // seg:0 is the segment at 11s, i.e. 1s in.
   assert.deepEqual(
-    vo.lines.map((l) => [l.ref, l.startMs]),
-    [["seg:0", 1_000], ["seg:1", 8_000]],
+    vo.lines.map((l) => [l.ref, l.durationMs, l.url]),
+    [
+      ["seg:0", 2_000, "https://files/vo/a.wav"],
+      ["seg:1", 9_000, "https://files/vo/b.wav"],
+    ],
   );
-  assert.deepEqual(vo.lines.map((l) => l.url), ["https://files/vo/a.wav", "https://files/vo/b.wav"]);
   assert.equal(vo.lineCount, 2);
 });
 
-test("a line too long for its window is sped up, and says by how much", async () => {
+test("the server does not place the lines", async () => {
+  // Placement depends on the timeline and on which words are struck out, and
+  // the editor holds edits the server has not been told about. Anchoring here
+  // would describe a different clip from the one on screen, so the shape
+  // deliberately carries no position at all.
   const vo = await getVoiceover(previewDeps(), "c1");
-
-  // seg:0 fits its window untouched.
-  assert.equal(vo!.lines[0].tempo, 1);
-  assert.equal(vo!.lines[0].playedMs, 2_000);
-
-  // seg:1 is 9s of speech; the preview has to play it at the same rate the
-  // render will, or the narration drifts out of sync as it goes.
-  const second = vo!.lines[1];
-  assert.ok(second.tempo > 1, `expected a speed-up, got ${second.tempo}`);
-  assert.equal(second.playedMs, Math.round(9_000 / second.tempo));
+  for (const line of vo!.lines) {
+    assert.ok(!("startMs" in line), `line ${line.ref} came back pre-placed`);
+    assert.ok(!("tempo" in line), `line ${line.ref} came back with a tempo`);
+  }
 });
 
 test("no synthesized audio means nothing for the preview to play", async () => {

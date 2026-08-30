@@ -539,7 +539,9 @@ export function Timeline({
               label={
                 splitTarget
                   ? `Split ${splitTarget.name} at the playhead (S)`
-                  : "Split at playhead (S) — move the playhead over a piece"
+                  : selected
+                    ? "Split (S) — the playhead is not inside the selected piece"
+                    : "Split (S) — move the playhead over a piece"
               }
               disabled={!splitTarget}
               onClick={splitAtPlayhead}
