@@ -196,6 +196,7 @@ model Video {
   jobs          Job[]
   sequenceItems SequenceItem[]
   liveChunks    LiveChunk[]
+  workerRuns    WorkerRun[]
 
   @@index([projectId, createdAt])
   @@index([sourceUrlHash])
@@ -588,6 +589,62 @@ model Render {
   @@map("renders")
 }
 
+enum SuggestionStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  APPLIED
+}
+
+/// One invocation of the AI worker over a video (optionally narrowed to a
+/// clip). Suggestions are proposals only — nothing is applied until the user
+/// accepts, which is also what makes the accept/reject signal worth learning
+/// from later.
+model WorkerRun {
+  id      String    @id @default(cuid())
+  videoId String
+  /// Set when the run was scoped to a single clip rather than the whole video.
+  clipId  String?
+  status  JobStatus @default(QUEUED)
+  /// Which objectives the user ticked, as JSON.
+  objectivesJson Json?
+  errorMessage   String?
+  createdAt      DateTime @default(now())
+  finishedAt     DateTime?
+
+  video       Video              @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  suggestions WorkerSuggestion[]
+
+  @@index([videoId, createdAt])
+  @@map("worker_runs")
+}
+
+model WorkerSuggestion {
+  id    String @id @default(cuid())
+  runId String
+  /// HIGHLIGHT | REACTION | DEAD_AIR — see lib/worker-ai/suggest.ts.
+  kind  String
+  startMs Int
+  endMs   Int
+  /// 0..1 confidence.
+  score   Float
+  /// What was measured and why it suits this user. NOT NULL on purpose: a
+  /// suggestion the user cannot audit is a black box, which the product
+  /// explicitly is not.
+  reason  String
+  /// Kind-specific extras (title, hook, the signals that fired).
+  payloadJson Json?
+  status  SuggestionStatus @default(PENDING)
+  /// Set when accepting a HIGHLIGHT created a clip, so the UI can link to it.
+  createdClipId String?
+  updatedAt DateTime @updatedAt
+
+  run WorkerRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, status])
+  @@map("worker_suggestions")
+}
+
 enum JobKind {
   FETCH
   PROBE
@@ -606,6 +663,8 @@ enum JobKind {
   TRANSLATE
   // Loudness / spectral flatness / silence pass over the extracted audio.
   AUDIO_FEATURES
+  // Generate reviewable suggestions from the transcript + audio features.
+  WORKER_RUN
 }
 
 model Job {

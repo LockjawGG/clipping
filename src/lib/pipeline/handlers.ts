@@ -6,7 +6,8 @@ import { refineSuggestions } from "../analysis/pipeline.ts";
 import { buildCues, toSrt, toStyledSrt } from "../captions/layout.ts";
 import { DEFAULT_CAPTION_STYLE, remotionPreset } from "../captions/presets.ts";
 import { captionNeedsRemotion } from "../captions/text-style.ts";
-import { parseAudioFeatures, serializeFeatures } from "../audio/features.ts";
+import { parseAudioFeatures, parseStoredFeatures, serializeFeatures } from "../audio/features.ts";
+import { buildSuggestions } from "../worker-ai/suggest.ts";
 import { censoredIndices, detectSpans } from "../censor/detect.ts";
 import { maskWords } from "../censor/mask.ts";
 import { ASPECT_DIMENSIONS, type CaptionBurnStyle } from "../ffmpeg/args.ts";
@@ -178,6 +179,79 @@ export const audioFeaturesHandler: JobHandler<PipelineDeps> = async ({
     silences: features.silences.length,
     durationMs: features.durationMs,
   };
+};
+
+interface WorkerRunPayload {
+  runId?: string;
+  minClipMs?: number;
+  maxClipMs?: number;
+  maxClips?: number;
+}
+
+/**
+ * WORKER_RUN: produce reviewable suggestions for a video.
+ *
+ * Nothing here changes the project. It gathers the transcript candidates from
+ * whichever AnalysisProvider is configured, fuses them with the cached audio
+ * features, and writes proposals for a human to accept or reject — which is
+ * also what makes the accept/reject signal worth learning from later.
+ */
+export const workerRunHandler: JobHandler<PipelineDeps> = async ({
+  job,
+  deps,
+  signal,
+  setProgress,
+}) => {
+  const payload = (job.payload ?? {}) as WorkerRunPayload;
+  const { runId } = payload;
+  if (!runId) throw new Error("WORKER_RUN job payload is missing runId");
+
+  const run = await deps.workers.loadRun(runId);
+  if (!run) throw new Error(`worker run ${runId} not found`);
+
+  await deps.workers.begin(runId);
+  try {
+    const segments = await deps.transcripts.loadSegments(run.videoId);
+    await setProgress(0.3);
+
+    // Reuse the configured analysis provider rather than scoring transcripts a
+    // second way here — two rankings would drift apart.
+    const minClipMs = payload.minClipMs ?? 15_000;
+    const maxClipMs = payload.maxClipMs ?? 60_000;
+    const candidates =
+      segments.length > 0
+        ? await deps.analysis.suggestClips(segments, {
+            minClipMs,
+            maxClipMs,
+            maxClips: payload.maxClips ?? 8,
+            signal,
+          })
+        : [];
+    await setProgress(0.7);
+
+    const drafts = buildSuggestions({
+      candidates,
+      features: parseStoredFeatures(run.audioFeatureJson),
+      objectives: run.objectives ?? undefined,
+      maxHighlights: payload.maxClips ?? 8,
+    });
+
+    const written = await deps.workers.complete(
+      runId,
+      drafts.map((d) => ({
+        kind: d.kind,
+        startMs: d.startMs,
+        endMs: d.endMs,
+        score: d.score,
+        reason: d.reason,
+        payloadJson: { signals: d.signals, ...(d.payload ?? {}) },
+      })),
+    );
+    return { suggestions: written, candidates: candidates.length };
+  } catch (err) {
+    await deps.workers.fail(runId, err instanceof Error ? err.message : String(err));
+    throw err;
+  }
 };
 
 interface TranscribePayload {

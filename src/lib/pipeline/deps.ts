@@ -178,6 +178,34 @@ export interface RenderRepo {
   fail(renderId: string, message: string): Promise<void>;
 }
 
+/** What the WORKER_RUN handler needs, and where it puts the result. */
+export interface WorkerRunTarget {
+  runId: string;
+  videoId: string;
+  clipId: string | null;
+  objectives: { highlights?: boolean; reactions?: boolean; deadAir?: boolean } | null;
+  /** Cached audio-feature JSON from the AUDIO_FEATURES pass; null if not run. */
+  audioFeatureJson: string | null;
+  durationMs: number | null;
+}
+
+export interface WorkerSuggestionRow {
+  kind: string;
+  startMs: number;
+  endMs: number;
+  score: number;
+  reason: string;
+  payloadJson: unknown;
+}
+
+export interface WorkerRepo {
+  loadRun(runId: string): Promise<WorkerRunTarget | null>;
+  begin(runId: string): Promise<void>;
+  /** Replace the run's suggestions. Returns how many were written. */
+  complete(runId: string, suggestions: WorkerSuggestionRow[]): Promise<number>;
+  fail(runId: string, message: string): Promise<void>;
+}
+
 export interface ThumbnailTarget {
   clipId: string;
   sourceKey: string;
@@ -266,6 +294,7 @@ export interface PipelineDeps {
   clips: ClipRepo;
   renders: RenderRepo;
   thumbnails: ThumbnailRepo;
+  workers: WorkerRepo;
   liveChunks: LiveChunkRepo;
   captions: CaptionRenderer;
   faces: FaceDetector;

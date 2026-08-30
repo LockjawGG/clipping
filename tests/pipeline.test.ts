@@ -183,6 +183,12 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       complete: async () => {},
       fail: async () => {},
     },
+    workers: {
+      loadRun: async () => null,
+      begin: async () => {},
+      complete: async () => 0,
+      fail: async () => {},
+    },
     thumbnails: {
       target: async () => null,
       targetsForVideo: async () => [],

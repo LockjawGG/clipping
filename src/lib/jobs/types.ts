@@ -25,7 +25,8 @@ export type JobKind =
   | "LIVE_TRANSCRIBE"
   | "LIVE_FINALIZE"
   | "TRANSLATE"
-  | "AUDIO_FEATURES";
+  | "AUDIO_FEATURES"
+  | "WORKER_RUN";
 
 export interface JobRecord {
   id: string;

@@ -15,6 +15,7 @@ import type { CaptionStyleServiceDeps } from "./caption-styles.ts";
 import type { TextPresetServiceDeps } from "./text-presets.ts";
 import type { SequenceServiceDeps } from "./sequence.ts";
 import type { LiveServiceDeps } from "./live.ts";
+import type { WorkerServiceDeps } from "./worker.ts";
 
 /** Throws 404 unless `projectId` belongs to `userId`. Shared by every service. */
 function ownsProject(userId: string) {
@@ -45,6 +46,15 @@ export function clipService(userId: string): ClipServiceDeps {
   return {
     db: db as unknown as ClipServiceDeps["db"],
     storage: getStorage(),
+    assertProjectOwned: ownsProject(userId),
+    enqueue: (input) => enqueueJob(db, input),
+  };
+}
+
+/** AI worker runs + suggestions, scoped to the signed-in user. */
+export function workerService(userId: string): WorkerServiceDeps {
+  return {
+    db: db as unknown as WorkerServiceDeps["db"],
     assertProjectOwned: ownsProject(userId),
     enqueue: (input) => enqueueJob(db, input),
   };

@@ -28,6 +28,8 @@ import type {
   ThumbnailRepo,
   TranscriptRepo,
   VideoRepo,
+  WorkerRepo,
+  WorkerRunTarget,
 } from "./deps.ts";
 
 /** The scalar SubtitleConfig columns as a CaptionStyle. */
@@ -452,6 +454,66 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
   };
 }
 
+export function prismaWorkerRepo(client: PrismaClient): WorkerRepo {
+  return {
+    async loadRun(runId) {
+      const run = await client.workerRun.findUnique({
+        where: { id: runId },
+        select: {
+          id: true,
+          videoId: true,
+          clipId: true,
+          objectivesJson: true,
+          video: { select: { audioFeatureJson: true, durationMs: true } },
+        },
+      });
+      if (!run) return null;
+      return {
+        runId: run.id,
+        videoId: run.videoId,
+        clipId: run.clipId,
+        objectives: (run.objectivesJson as WorkerRunTarget["objectives"]) ?? null,
+        audioFeatureJson: run.video.audioFeatureJson,
+        durationMs: run.video.durationMs,
+      };
+    },
+    async begin(runId) {
+      await client.workerRun.update({ where: { id: runId }, data: { status: "PROCESSING" } });
+    },
+    async complete(runId, suggestions) {
+      // A re-run replaces its own suggestions rather than appending, so the
+      // panel never shows two generations of the same finding.
+      return client.$transaction(async (tx) => {
+        await tx.workerSuggestion.deleteMany({ where: { runId } });
+        if (suggestions.length > 0) {
+          await tx.workerSuggestion.createMany({
+            data: suggestions.map((s) => ({
+              runId,
+              kind: s.kind,
+              startMs: s.startMs,
+              endMs: s.endMs,
+              score: s.score,
+              reason: s.reason,
+              payloadJson: s.payloadJson as never,
+            })),
+          });
+        }
+        await tx.workerRun.update({
+          where: { id: runId },
+          data: { status: "COMPLETED", finishedAt: new Date() },
+        });
+        return suggestions.length;
+      });
+    },
+    async fail(runId, message) {
+      await client.workerRun.update({
+        where: { id: runId },
+        data: { status: "FAILED", errorMessage: message.slice(0, 2000), finishedAt: new Date() },
+      });
+    },
+  };
+}
+
 export function prismaThumbnailRepo(client: PrismaClient): ThumbnailRepo {
   const shape = {
     startMs: true,
@@ -545,6 +607,7 @@ export function buildPipelineDeps(): PipelineDeps {
     clips: prismaClipRepo(db),
     renders: prismaRenderRepo(db),
     thumbnails: prismaThumbnailRepo(db),
+    workers: prismaWorkerRepo(db),
     liveChunks: prismaLiveChunkRepo(db),
     captions: new RemotionCaptionRenderer(),
     faces: new NullFaceDetector(),
