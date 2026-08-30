@@ -1295,3 +1295,74 @@ test("combining clips from two videos captions and censors both", async () => {
   assert.ok(text.includes("well"), "the first video's clean words are captioned");
   assert.ok(text.includes("damn"), "and so are the second's");
 });
+
+test("narration follows its segment when the timeline is rearranged", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "render-vo-seq-"));
+  try {
+    // Two segments; the timeline keeps only the second, and puts it first.
+    // A line anchored to it must move with it, not sit where it used to be.
+    const segments = [
+      { startMs: 10_000, endMs: 12_000, text: "one", words: [] },
+      { startMs: 20_000, endMs: 22_000, text: "two", words: [] },
+    ];
+    const { deps, spy } = makeDeps(
+      target({
+        sequence: timeline([[20_000, 22_000], [10_000, 12_000]]),
+        voiceover: {
+          duckDb: -9,
+          linesJson: JSON.stringify({
+            version: 1,
+            lines: [{ ref: "seg:1", text: "narration", durationMs: 800, audioKey: "vo/a.wav" }],
+          }),
+        },
+      }),
+      {
+        tempDir: dir,
+        transcripts: { save: async () => ({ segmentCount: 0 }), loadSegments: async () => segments },
+      } as unknown as Partial<PipelineDeps>,
+    );
+    await renderHandler(ctx(deps, { renderId: "r-vo-seq" }));
+
+    // seg:1 is the 20s segment, which the timeline moved to the very front.
+    // Against the clip's own timeline it would have been 10s in — that is the
+    // drift this guards against.
+    assert.equal(spy.voMixes.length, 1);
+    assert.equal(spy.voMixes[0].lines[0].startMs, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("narration anchored to footage that was cut is not placed anyway", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "render-vo-gone-"));
+  try {
+    const segments = [
+      { startMs: 10_000, endMs: 12_000, text: "kept", words: [] },
+      { startMs: 30_000, endMs: 32_000, text: "dropped", words: [] },
+    ];
+    const { deps, spy } = makeDeps(
+      target({
+        // Only the first segment's footage survives.
+        sequence: timeline([[10_000, 12_000]]),
+        voiceover: {
+          duckDb: -9,
+          linesJson: JSON.stringify({
+            version: 1,
+            lines: [{ ref: "seg:1", text: "narration", durationMs: 800, audioKey: "vo/a.wav" }],
+          }),
+        },
+      }),
+      {
+        tempDir: dir,
+        transcripts: { save: async () => ({ segmentCount: 0 }), loadSegments: async () => segments },
+      } as unknown as Partial<PipelineDeps>,
+    );
+    await renderHandler(ctx(deps, { renderId: "r-vo-gone" }));
+
+    // There is no moment in the export that segment belongs to, so the line has
+    // nowhere to go — dropping it beats narrating over whatever replaced it.
+    assert.equal(spy.voMixes.length, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -21,6 +21,7 @@ import {
   buildComposePlan,
   buildLayerPlan,
   isPlainCut,
+  mapSourceToTimeline,
   planDurationMs,
   remapWordsToTimeline,
 } from "../sequence/compose.ts";
@@ -779,13 +780,30 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
         const segments = await deps.transcripts.loadSegments(target.videoId);
         // Anchors are resolved *now*, from the clip's current timing — that is
         // what lets an edit move the narration without re-synthesizing it.
-        const anchors = segments
-          .filter((sg) => sg.endMs > target.startMs && sg.startMs < target.endMs)
-          .map((sg, i) => ({
-            ref: `seg:${i}`,
-            startMs: Math.max(0, sg.startMs - target.startMs),
-            endMs: Math.max(0, sg.endMs - target.startMs),
-          }));
+        // The same set of segments as ever, so a stored `seg:N` reference still
+        // means the segment it always meant — only the times move. On a composed
+        // timeline a segment goes wherever its footage went, and one whose
+        // footage was trimmed away yields no anchor at all: there is no moment
+        // in the export for a line anchored to it to belong to, and placing it
+        // anyway would drop narration over whatever replaced it.
+        const inClip = segments.filter(
+          (sg) => sg.endMs > target.startMs && sg.startMs < target.endMs,
+        );
+        const anchors = inClip.flatMap((sg, i) => {
+          if (!composing) {
+            return [
+              {
+                ref: `seg:${i}`,
+                startMs: Math.max(0, sg.startMs - target.startMs),
+                endMs: Math.max(0, sg.endMs - target.startMs),
+              },
+            ];
+          }
+          const start = mapSourceToTimeline(plan, target.videoId, sg.startMs);
+          if (start === null) return [];
+          const end = mapSourceToTimeline(plan, target.videoId, sg.endMs) ?? start;
+          return [{ ref: `seg:${i}`, startMs: start, endMs: Math.max(start + 1, end) }];
+        });
         const scriptAnchors = stored
           .filter((l) => l.ref.startsWith("script:"))
           .map((l, i, all) => {
