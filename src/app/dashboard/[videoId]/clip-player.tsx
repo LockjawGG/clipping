@@ -150,16 +150,26 @@ export const ClipPlayer = memo(function ClipPlayer({
   );
   const activeCue = cues.find((c) => posMs >= c.startMs && posMs < c.endMs) ?? null;
 
-  const vttUrl = useMemo(() => {
-    if (mode !== "source" || cues.length === 0) return null;
-    return URL.createObjectURL(new Blob([toVtt(cues, 0)], { type: "text/vtt" }));
-  }, [cues, mode]);
-
+  /**
+   * The `<track>` fallback, built only in the browser.
+   *
+   * `URL.createObjectURL` runs on the server too if this is computed during
+   * render, and the `blob:nodedata:` URL that produces is both a hydration
+   * mismatch and something the browser refuses to load — so the fallback never
+   * arrived, and every clip logged two console errors on the way. Creating it
+   * after mount means the server renders no track at all and the client adds
+   * the one that works.
+   */
+  const [vttUrl, setVttUrl] = useState<string | null>(null);
   useEffect(() => {
-    return () => {
-      if (vttUrl) URL.revokeObjectURL(vttUrl);
-    };
-  }, [vttUrl]);
+    if (mode !== "source" || cues.length === 0) {
+      setVttUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([toVtt(cues, 0)], { type: "text/vtt" }));
+    setVttUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [cues, mode]);
 
   // The browser <track> is a plain-text fallback; the styled DOM overlay is the
   // real WYSIWYG, so keep the native cues hidden.
