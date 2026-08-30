@@ -12,6 +12,8 @@ import {
 import { parseWordRules, applyWordRules, wordEffectCss } from "@/lib/captions/word-rules.ts";
 import { captionWordAnim, captionCueAnim, NEUTRAL_CAPTION_CSS } from "@/lib/captions/anim-dom.ts";
 import { sampleElementAnim, parseElementAnim } from "@/lib/captions/element-anim.ts";
+import type { FocusKeyframe } from "@/lib/focus/keyframes.ts";
+import { FocusWindowOverlay } from "./focus-window";
 import { remotionPreset } from "@/lib/captions/presets.ts";
 import type { CaptionConfig } from "./caption-controls";
 import type { OverlayView } from "./overlay-panel";
@@ -50,9 +52,31 @@ interface Props {
    *  parent can refresh to mint a fresh one. Fires at most once per source. */
   onSourceError?: () => void;
   onCaptionLayout: (layout: { positionY: number; alignment: "left" | "center" | "right" }) => void;
+  /** The authored capture window; an empty array hides the editor. */
+  focusTrack?: FocusKeyframe[];
+  /** Target frame aspect as width/height, e.g. 1080/1920. */
+  targetAspect?: number;
+  /** Auto-key a window at the playhead. Absent = the editor is read-only. */
+  onFocusCommit?: (kf: FocusKeyframe) => void;
+  /** Show the capture-window editor. */
+  focusEditing?: boolean;
 }
 
 type Mode = "source" | "rendered";
+
+/** Where a letterboxed (object-fit: contain) video is actually drawn. */
+function videoRect(box: { w: number; h: number }, aspect: number) {
+  if (box.w === 0 || box.h === 0 || !Number.isFinite(aspect) || aspect <= 0) {
+    return { left: 0, top: 0, width: box.w, height: box.h };
+  }
+  const boxAspect = box.w / box.h;
+  if (aspect >= boxAspect) {
+    const height = box.w / aspect;
+    return { left: 0, top: (box.h - height) / 2, width: box.w, height };
+  }
+  const width = box.h * aspect;
+  return { left: (box.w - width) / 2, top: 0, width, height: box.h };
+}
 
 function fmt(ms: number): string {
   const clamped = Math.max(0, ms);
@@ -80,6 +104,10 @@ export const ClipPlayer = memo(function ClipPlayer({
   onPlayingChange,
   onSourceError,
   onCaptionLayout,
+  focusTrack,
+  targetAspect = 1080 / 1920,
+  onFocusCommit,
+  focusEditing = false,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -90,6 +118,9 @@ export const ClipPlayer = memo(function ClipPlayer({
   const [renderedDurMs, setRenderedDurMs] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [box, setBox] = useState({ w: 0, h: 0 });
+  // The source's intrinsic size, so the capture-window editor can map between
+  // the letterboxed preview and the cover-scaled frame the render crops from.
+  const [natural, setNatural] = useState({ w: 0, h: 0 });
 
   // Track the player box size so DOM overlays can be placed with the same
   // maths the ffmpeg compositor uses (fraction of frame width / free space).
@@ -335,6 +366,8 @@ export const ClipPlayer = memo(function ClipPlayer({
           onTimeUpdate={onTimeUpdate}
           onLoadedMetadata={(e) => {
             if (mode === "rendered") setRenderedDurMs(e.currentTarget.duration * 1000);
+            const v = e.currentTarget;
+            if (v.videoWidth > 0) setNatural({ w: v.videoWidth, h: v.videoHeight });
           }}
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
@@ -352,6 +385,19 @@ export const ClipPlayer = memo(function ClipPlayer({
 
         {dragging && (
           <div className="pointer-events-none absolute inset-x-0 border-t border-dashed border-white/70" />
+        )}
+
+        {focusEditing && onFocusCommit && natural.w > 0 && box.w > 0 && (
+          <FocusWindowOverlay
+            track={focusTrack ?? []}
+            posMs={posMs}
+            // The <video> is letterboxed inside the box, so derive its drawn
+            // rect rather than assuming it fills the container.
+            rect={videoRect(box, natural.w / natural.h)}
+            sourceAspect={natural.w / natural.h}
+            targetAspect={targetAspect}
+            onCommit={onFocusCommit}
+          />
         )}
 
         {activeOverlays.map((o) =>

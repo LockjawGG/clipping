@@ -3,9 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import type { FocusKeyframe } from "@/lib/focus/keyframes.ts";
+import { parseFocusTrack, sampleFocusAt, serializeFocusTrack } from "@/lib/focus/keyframes.ts";
 import { RailThumb } from "../rail-thumb";
 import { CaptionControls, CAPTION_DEFAULTS, type CaptionConfig } from "./caption-controls";
 import { ClipPlayer, type PreviewWord } from "./clip-player";
+import { KEYFRAME_SNAP_MS } from "./focus-window";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
 import type { TranscriptView } from "../editor-pane";
 import { TRANSLATE_TARGETS } from "@/lib/translation/targets";
@@ -21,6 +24,14 @@ const ASPECTS = [
   ["LANDSCAPE_16_9", "16:9"],
   ["PORTRAIT_4_5", "4:5"],
 ] as const;
+
+/** Target frame aspect (width / height) per stored enum value. */
+const ASPECT_RATIOS: Record<string, number> = {
+  VERTICAL_9_16: 1080 / 1920,
+  SQUARE_1_1: 1,
+  LANDSCAPE_16_9: 1920 / 1080,
+  PORTRAIT_4_5: 1080 / 1350,
+};
 
 /** Display names for transcript language codes. */
 const LANGUAGE_NAMES: Record<string, string> = {
@@ -44,6 +55,7 @@ export interface ClipData {
   aspectRatio: string;
   focalX: number | null;
   focalY: number | null;
+  focusTrackJson: string | null;
   accepted: boolean;
   savedToProjectId: string | null;
   captions: CaptionConfig | null;
@@ -243,6 +255,31 @@ export function ClipEditor({
 
   const [draft, setDraft] = useState(clip);
   const [busy, setBusy] = useState<"save" | "render" | "delete" | "thumb" | "save-to" | null>(null);
+  const [focusEditing, setFocusEditing] = useState(false);
+  const focusTrack = useMemo(
+    () => parseFocusTrack(draft.focusTrackJson),
+    [draft.focusTrackJson],
+  );
+  const setFocusTrack = useCallback(
+    (next: FocusKeyframe[]) =>
+      setDraft((d) => ({ ...d, focusTrackJson: serializeFocusTrack(next) })),
+    [],
+  );
+  /**
+   * Auto-key: a drag writes the window at the playhead, replacing a keyframe
+   * already sitting there rather than stacking a second one on the same frame.
+   */
+  const commitFocus = useCallback(
+    (kf: FocusKeyframe) => {
+      setDraft((d) => {
+        const track = parseFocusTrack(d.focusTrackJson);
+        const i = track.findIndex((k) => Math.abs(k.atMs - kf.atMs) <= KEYFRAME_SNAP_MS);
+        const next = i >= 0 ? track.map((k, j) => (j === i ? { ...k, ...kf, atMs: k.atMs } : k)) : [...track, kf];
+        return { ...d, focusTrackJson: serializeFocusTrack(next) };
+      });
+    },
+    [],
+  );
   const [error, setError] = useState<string | null>(null);
   const [playheadMs, setPlayheadMs] = useState(0);
   // A seek requested from the transcript (click a word). `n` forces the player's
@@ -518,6 +555,7 @@ export function ClipEditor({
     draft.aspectRatio !== clip.aspectRatio ||
     draft.focalX !== clip.focalX ||
     draft.focalY !== clip.focalY ||
+    draft.focusTrackJson !== clip.focusTrackJson ||
     draft.accepted !== clip.accepted;
 
   async function call(kind: NonNullable<typeof busy>, req: () => Promise<Response>) {
@@ -547,6 +585,7 @@ export function ClipEditor({
         aspectRatio: draft.aspectRatio,
         focalX: draft.focalX,
         focalY: draft.focalY,
+        focusTrack: focusTrack.length ? focusTrack : null,
         accepted: draft.accepted,
       }),
     });
@@ -973,6 +1012,10 @@ export function ClipEditor({
         onPlayingChange={setPreviewPlaying}
         onSourceError={softReset}
         onCaptionLayout={onCaptionLayout}
+        focusTrack={focusTrack}
+        targetAspect={ASPECT_RATIOS[draft.aspectRatio] ?? 1080 / 1920}
+        focusEditing={focusEditing}
+        onFocusCommit={commitFocus}
       />
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-surface-raised px-3 py-2 text-sm">
@@ -1065,6 +1108,16 @@ export function ClipEditor({
         ))}
         <button
           type="button"
+          onClick={() => setFocusEditing((v) => !v)}
+          aria-pressed={focusEditing}
+          className={`pill ${focusEditing ? "border-accent/50 text-accent" : ""}`}
+          title="Drag a crop window over the preview and keyframe it over time"
+        >
+          {focusEditing ? "✓ capture window" : "capture window"}
+          {focusTrack.length > 0 && !focusEditing ? ` · ${focusTrack.length}` : ""}
+        </button>
+        <button
+          type="button"
           onClick={() => setDraft({ ...draft, accepted: !draft.accepted })}
           aria-pressed={draft.accepted}
           className={`pill ${draft.accepted ? "border-accent/50 text-accent" : ""}`}
@@ -1072,6 +1125,90 @@ export function ClipEditor({
           {draft.accepted ? "✓ accepted" : "mark accepted"}
         </button>
       </div>
+
+      {focusEditing && (
+        <div className="flex flex-col gap-2 rounded-lg bg-surface-raised px-3 py-2 text-sm">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="text-xs text-muted">
+              Drag the box to move it, the corners to zoom. Each drag keyframes the window at the
+              playhead.
+            </span>
+            <button
+              type="button"
+              className="btn btn-sm ml-auto"
+              onClick={() =>
+                commitFocus({
+                  atMs: Math.round(playheadMs),
+                  ...sampleFocusAt(focusTrack, playheadMs),
+                })
+              }
+            >
+              + Keyframe here
+            </button>
+            {focusTrack.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={() => setFocusTrack([])}
+              >
+                Clear window
+              </button>
+            )}
+          </div>
+
+          {focusTrack.length === 0 ? (
+            <p className="text-xs text-muted">
+              No window yet — the clip reframes with its focal point, or a detected face. Drag the
+              box to start one.
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-1">
+              {focusTrack.map((k, i) => (
+                <li key={i} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm font-mono tabular-nums"
+                    onClick={() => setSeekReq({ ms: k.atMs, n: Date.now() })}
+                    title="Jump to this keyframe"
+                  >
+                    {(k.atMs / 1000).toFixed(2)}s
+                  </button>
+                  <span className="font-mono tabular-nums text-muted">
+                    {k.scale.toFixed(2)}× · {k.x.toFixed(2)},{k.y.toFixed(2)}
+                  </span>
+                  <label className="flex items-center gap-1">
+                    ease
+                    <select
+                      value={k.ease ?? "inOut"}
+                      onChange={(e) =>
+                        setFocusTrack(
+                          focusTrack.map((x, j) =>
+                            j === i ? { ...x, ease: e.target.value as FocusKeyframe["ease"] } : x,
+                          ),
+                        )
+                      }
+                      className="field py-0.5"
+                    >
+                      {(["inOut", "linear", "in", "out", "spring"] as const).map((id) => (
+                        <option key={id} value={id}>
+                          {id}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    onClick={() => setFocusTrack(focusTrack.filter((_, j) => j !== i))}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <CaptionControls
         clipId={clip.id}
