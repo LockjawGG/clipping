@@ -56,6 +56,7 @@ function makeDeps(
     { startMs: 45_000, endMs: 70_000 },
   ];
   const renders: Array<Record<string, unknown>> = [];
+  const renderUpdates: Array<Record<string, unknown>> = [];
   const enqueued: Array<{ videoId: string; kind: string; payload?: unknown }> = [];
   const updates: Array<{ id: string; data: Record<string, unknown> }> = [];
   const created: Array<Record<string, unknown>> = [];
@@ -158,6 +159,10 @@ function makeDeps(
         renders.push(data);
         return { id: `render-${renders.length}` };
       },
+      update: async ({ where, data }) => {
+        renderUpdates.push({ id: where.id, ...data });
+        return {};
+      },
     },
     subtitleConfig: {
       upsert: async ({ where, create, update }) => {
@@ -187,7 +192,7 @@ function makeDeps(
     },
     ...over,
   };
-  return { deps, renders, enqueued, updates, created, deleted, clips, captionConfigs, captionOps };
+  return { deps, renders, renderUpdates, enqueued, updates, created, deleted, clips, captionConfigs, captionOps };
 }
 
 // --- requestRender ------------------------------------------------
@@ -432,4 +437,35 @@ test("deleteCaptionConfig reports whether a config was removed", async () => {
   assert.deepEqual(await deleteCaptionConfig(deps, "clip1"), { clipId: "clip1", removed: false });
   await upsertCaptionConfig(deps, "clip1", { animation: "POP" });
   assert.deepEqual(await deleteCaptionConfig(deps, "clip1"), { clipId: "clip1", removed: true });
+});
+
+test("a render whose job has vanished does not block the clip forever", async () => {
+  // The queue's lease recovers a job whose worker died; nothing recovers the
+  // render row it was driving. Left alone, every later attempt would keep
+  // returning that same dead render and the clip could never be exported.
+  const { deps, renders, renderUpdates } = makeDeps(
+    { renderJobAlive: async () => false },
+    { id: "r-dead", status: "PROCESSING" },
+  );
+  const res = await requestRender(deps, "clip1", { quality: "P1080" });
+
+  assert.equal(renderUpdates.length, 1, "the stranded row is closed out");
+  assert.equal(renderUpdates[0].id, "r-dead");
+  assert.equal(renderUpdates[0].status, "FAILED");
+  assert.equal(renders.length, 1, "and a fresh render starts");
+  assert.equal(res.status, "QUEUED");
+  assert.ok(!("alreadyRunning" in res));
+});
+
+test("a render whose job is still alive is returned as in flight, not restarted", async () => {
+  const { deps, renders, renderUpdates } = makeDeps(
+    { renderJobAlive: async () => true },
+    { id: "r-live", status: "PROCESSING" },
+  );
+  const res = await requestRender(deps, "clip1", { quality: "P1080" });
+
+  assert.equal(res.renderId, "r-live");
+  assert.equal(res.alreadyRunning, true);
+  assert.equal(renders.length, 0, "nothing new is queued");
+  assert.equal(renderUpdates.length, 0, "and the live row is left alone");
 });

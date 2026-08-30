@@ -212,6 +212,7 @@ export interface ClipDb {
     findFirst(args: {
       where: { clipId: string; status: { in: string[] } };
     }): Promise<{ id: string; status: string } | null>;
+    update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<unknown>;
   };
   subtitleConfig: {
     upsert(args: {
@@ -239,6 +240,13 @@ export interface ClipServiceDeps {
     kind: "RENDER" | "THUMBNAIL";
     payload?: unknown;
   }) => Promise<string>;
+  /**
+   * Whether a render still has a job that could finish it.
+   *
+   * Absent means "assume it does", which is the old behaviour and what a test
+   * that does not care about orphans wants.
+   */
+  renderJobAlive?: (renderId: string) => Promise<boolean>;
 }
 
 async function assertOwnsProject(deps: ClipServiceDeps, projectId: string | undefined | null): Promise<void> {
@@ -264,7 +272,24 @@ export async function requestRender(deps: ClipServiceDeps, clipId: string, input
     where: { clipId, status: { in: ["QUEUED", "PROCESSING"] } },
   });
   if (inFlight) {
-    return { renderId: inFlight.id, jobId: null, status: inFlight.status, alreadyRunning: true };
+    // ...unless nothing is going to finish it. A render row is only ever
+    // advanced by its job, so if that job is gone or already terminal the row
+    // is stranded, and this clip could never be rendered again: every attempt
+    // would keep pointing at a render that is not running. The queue's own
+    // lease recovers a *job* whose worker died; nothing recovers the row it
+    // left behind.
+    const alive = (await deps.renderJobAlive?.(inFlight.id)) ?? true;
+    if (alive) {
+      return { renderId: inFlight.id, jobId: null, status: inFlight.status, alreadyRunning: true };
+    }
+    await deps.db.render.update({
+      where: { id: inFlight.id },
+      data: {
+        status: "FAILED",
+        errorMessage: "the worker stopped before this render finished",
+        finishedAt: new Date(),
+      },
+    });
   }
 
   if (aspectRatio) {

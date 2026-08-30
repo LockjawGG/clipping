@@ -52,6 +52,20 @@ export function clipService(userId: string): ClipServiceDeps {
     storage: getStorage(),
     assertProjectOwned: ownsProject(userId),
     enqueue: (input) => enqueueJob(db, input),
+    // A render is driven entirely by its job. If that job is gone, or has
+    // already finished in some terminal state, nothing will ever advance the
+    // render row again — so it must not be treated as in flight.
+    renderJobAlive: async (renderId) => {
+      const job = await db.job.findFirst({
+        where: {
+          kind: "RENDER",
+          status: { in: ["QUEUED", "PROCESSING"] },
+          payload: { path: ["renderId"], equals: renderId },
+        },
+        select: { id: true },
+      });
+      return job !== null;
+    },
     // New clips start with whatever style this user has settled into for this
     // kind of video. An unbuilt or low-confidence profile changes nothing.
     loadProfile: (contentType) => loadProfile(learningService(userId), contentType),
