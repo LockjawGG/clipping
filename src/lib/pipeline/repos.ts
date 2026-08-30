@@ -319,6 +319,8 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
               censorReplacement: true,
               censorAllowList: true,
               censorDenyList: true,
+              censorExemptWordIds: true,
+              censorForceWordIds: true,
               voiceovers: {
                 where: { status: "COMPLETED" },
                 orderBy: { updatedAt: "desc" },
@@ -397,6 +399,8 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
           replacement: render.clip.censorReplacement,
           allowList: render.clip.censorAllowList,
           denyList: render.clip.censorDenyList,
+          exemptWordIds: render.clip.censorExemptWordIds,
+          forceWordIds: render.clip.censorForceWordIds,
         },
         quality: render.quality as "P720" | "P1080" | "ORIGINAL",
         burnCaptions: sc !== null,

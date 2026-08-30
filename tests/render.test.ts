@@ -249,6 +249,8 @@ function target(over: Partial<RenderTarget> = {}): RenderTarget {
       replacement: null,
       allowList: [],
       denyList: [],
+      exemptWordIds: [],
+      forceWordIds: [],
     },
     quality: "P1080",
     burnCaptions: false,
@@ -376,6 +378,8 @@ const censorOn = {
   replacement: null,
   allowList: [],
   denyList: [],
+  exemptWordIds: [],
+  forceWordIds: [],
 };
 
 const withTranscript = (segments: Segment[]) =>
@@ -519,6 +523,65 @@ test("voiceover lines whose anchor is gone are dropped rather than misplaced", a
     await renderHandler(ctx(deps, { renderId: "r-vo3" }));
     // Nothing placed -> no mix at all, rather than narration at the wrong time.
     assert.equal(spy.voMixes.length, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a per-occurrence exemption reaches the bleep, not just the UI", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "render-cen2-"));
+  try {
+    // Two "shit"s in range; only the second should be bleeped.
+    const segs: Segment[] = [
+      {
+        startMs: 0,
+        endMs: 40_000,
+        text: "shit and shit",
+        words: [
+          { id: "s1", text: "shit", startMs: 12_000, endMs: 12_400 },
+          { id: "s2", text: "and", startMs: 13_000, endMs: 13_300 },
+          { id: "s3", text: "shit", startMs: 14_000, endMs: 14_400 },
+        ],
+      },
+    ];
+    const { deps, spy } = makeDeps(
+      target({ censor: { ...censorOn, exemptWordIds: ["s1"] } }),
+      { tempDir: dir, ...withTranscript(segs) } as unknown as Partial<PipelineDeps>,
+    );
+    await renderHandler(ctx(deps, { renderId: "r-cen2" }));
+
+    assert.equal(spy.censors.length, 1);
+    assert.equal(spy.censors[0].spans.length, 1, "only the un-exempted one is bleeped");
+    // Clip starts at 10s, so the second "shit" lands at 4.0s with 60ms padding.
+    assert.ok(Math.abs(spy.censors[0].spans[0].startSec - 3.94) < 1e-9);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a per-occurrence force-censor bleeps a word the lexicon ignores", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "render-cen3-"));
+  try {
+    const segs: Segment[] = [
+      {
+        startMs: 0,
+        endMs: 40_000,
+        text: "perfectly ordinary words",
+        words: [
+          { id: "p1", text: "perfectly", startMs: 12_000, endMs: 12_400 },
+          { id: "p2", text: "ordinary", startMs: 13_000, endMs: 13_400 },
+        ],
+      },
+    ];
+    const { deps, spy } = makeDeps(
+      target({ censor: { ...censorOn, forceWordIds: ["p2"] } }),
+      { tempDir: dir, ...withTranscript(segs) } as unknown as Partial<PipelineDeps>,
+    );
+    await renderHandler(ctx(deps, { renderId: "r-cen3" }));
+
+    assert.equal(spy.censors.length, 1);
+    assert.equal(spy.censors[0].spans.length, 1);
+    assert.ok(Math.abs(spy.censors[0].spans[0].startSec - 2.94) < 1e-9, "the second word");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

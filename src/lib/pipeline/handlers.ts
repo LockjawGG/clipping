@@ -580,7 +580,9 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
 
     // The clip's own words. Censoring needs them even when captions are off,
     // because the bleep is driven by the transcript either way.
-    let words: Array<{ text: string; startMs: number; endMs: number }> = [];
+    // `id` is carried so per-occurrence censor overrides can match; masking
+    // preserves it, and buildCues ignores it.
+    let words: Array<{ id?: string; text: string; startMs: number; endMs: number }> = [];
     if (target.burnCaptions || target.censor.enabled) {
       const segments = await deps.transcripts.loadSegments(target.videoId);
       words = segments
@@ -598,6 +600,8 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
         sensitivity: target.censor.sensitivity,
         allowList: target.censor.allowList,
         denyList: target.censor.denyList,
+        exemptWordIds: target.censor.exemptWordIds,
+        censorWordIds: target.censor.forceWordIds,
       });
       if (spans.length > 0) {
         await deps.ffmpeg.censorAudio(
@@ -671,6 +675,8 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
         sensitivity: target.censor.sensitivity,
         allowList: target.censor.allowList,
         denyList: target.censor.denyList,
+        exemptWordIds: target.censor.exemptWordIds,
+        censorWordIds: target.censor.forceWordIds,
       });
       words = maskWords(
         words,

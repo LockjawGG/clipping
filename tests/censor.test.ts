@@ -102,6 +102,70 @@ test("the lexicon ships profanity only — no slurs list", () => {
   assert.equal(spans[0].tier, "custom");
 });
 
+test("a single occurrence can be exempted without touching the others", () => {
+  // The whole point of per-instance control: same word, different decisions.
+  const words = line("damn it damn again");
+  const cfg = { enabled: true, sensitivity: "HIGH" as const };
+  assert.equal(detectSpans(words, cfg).length, 2, "both caught by default");
+
+  const oneOff = detectSpans(words, { ...cfg, exemptWordIds: ["w0"] });
+  assert.equal(oneOff.length, 1);
+  assert.equal(oneOff[0].wordId, "w2", "the second damn is still censored");
+});
+
+test("a single occurrence can be censored without censoring the word everywhere", () => {
+  const words = line("hello world hello");
+  const cfg = { enabled: true, sensitivity: "HIGH" as const };
+  assert.deepEqual(detectSpans(words, cfg), [], "nothing is profane here");
+
+  const hits = detectSpans(words, { ...cfg, censorWordIds: ["w2"] });
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].wordId, "w2");
+  assert.equal(hits[0].tier, "manual", "tagged as a hand-picked occurrence");
+});
+
+test("per-occurrence decisions beat the term lists, which beat the lexicon", () => {
+  const cfg = { enabled: true, sensitivity: "HIGH" as const };
+
+  // An exempt id survives the word also being on the deny list.
+  assert.deepEqual(
+    detectSpans(line("shit"), { ...cfg, denyList: ["shit"], exemptWordIds: ["w0"] }),
+    [],
+  );
+  // A censored id survives the word also being on the allow list.
+  const forced = detectSpans(line("shit"), {
+    ...cfg,
+    allowList: ["shit"],
+    censorWordIds: ["w0"],
+  });
+  assert.equal(forced.length, 1);
+  assert.equal(forced[0].tier, "manual");
+  // With neither override, the term lists still decide as before.
+  assert.deepEqual(detectSpans(line("shit"), { ...cfg, allowList: ["shit"] }), []);
+});
+
+test("censoredIndices honours per-occurrence decisions too", () => {
+  // The two entry points must agree, or the transcript would mark one thing and
+  // the render would mask another.
+  const words = line("damn it damn");
+  const cfg = { enabled: true, sensitivity: "HIGH" as const, exemptWordIds: ["w0"] };
+  assert.deepEqual([...censoredIndices(words, cfg)], [2]);
+  assert.deepEqual(
+    detectSpans(words, cfg).map((s) => s.index),
+    [2],
+  );
+});
+
+test("word ids only matter when the word has one", () => {
+  // Render-path words can arrive without ids; overrides must then be inert
+  // rather than throwing or matching everything.
+  const anon = [{ text: "damn", startMs: 0, endMs: 100 }];
+  assert.equal(
+    detectSpans(anon, { enabled: true, sensitivity: "HIGH", exemptWordIds: ["w0"] }).length,
+    1,
+  );
+});
+
 test("slurs are caught at every sensitivity, including the most permissive", () => {
   // Sensitivity is a dial for how much ordinary swearing to mask. It is not a
   // reason to let a slur through, so lowering it must not disable them.

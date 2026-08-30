@@ -13,7 +13,7 @@ import { CensorControls, type CensorSettings } from "./censor-controls";
 import { VoiceoverPanel } from "./voiceover-panel";
 import { censoredIndices } from "@/lib/censor/detect.ts";
 import { maskWords } from "@/lib/censor/mask.ts";
-import { censorKey, EditableTranscript, type TranscriptRow } from "./editable-transcript";
+import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
 import type { TranscriptView } from "../editor-pane";
 import { TRANSLATE_TARGETS } from "@/lib/translation/targets";
 import { OverlayPanel, type OverlayView } from "./overlay-panel";
@@ -67,6 +67,8 @@ export interface ClipData {
   censorReplacement: string | null;
   censorAllowList: string[];
   censorDenyList: string[];
+  censorExemptWordIds: string[];
+  censorForceWordIds: string[];
   accepted: boolean;
   savedToProjectId: string | null;
   captions: CaptionConfig | null;
@@ -308,8 +310,17 @@ export function ClipEditor({
       sensitivity: draft.censorSensitivity,
       allowList: draft.censorAllowList,
       denyList: draft.censorDenyList,
+      exemptWordIds: draft.censorExemptWordIds,
+      censorWordIds: draft.censorForceWordIds,
     }),
-    [draft.censorEnabled, draft.censorSensitivity, draft.censorAllowList, draft.censorDenyList],
+    [
+      draft.censorEnabled,
+      draft.censorSensitivity,
+      draft.censorAllowList,
+      draft.censorDenyList,
+      draft.censorExemptWordIds,
+      draft.censorForceWordIds,
+    ],
   );
 
   const censoredWordIds = useMemo(() => {
@@ -323,61 +334,51 @@ export function ClipEditor({
   }, [transcript, censorCfg]);
 
   /**
-   * Words the built-in lexicon alone would catch, ignoring this clip's
-   * overrides. Needed to make the per-word toggle reversible: un-ticking a
-   * lexicon word means *exempting* it, while un-ticking a word you added
-   * yourself means simply removing it again.
+   * Would this occurrence be censored by everything *except* the per-occurrence
+   * overrides? Needed to keep the toggle reversible: ticking a word the rules
+   * already catch means clearing an exemption, not adding a force-censor, so
+   * neither list accumulates entries that no longer do anything.
    */
-  const lexiconWordIds = useMemo(() => {
+  const censoredByRules = useMemo(() => {
     const flat = transcript.flatMap((r) => r.words);
     if (flat.length === 0) return new Set<string>();
     const idx = censoredIndices(flat, {
       enabled: true,
       sensitivity: draft.censorSensitivity,
+      allowList: draft.censorAllowList,
+      denyList: draft.censorDenyList,
     });
     return new Set([...idx].map((i) => flat[i].id));
-  }, [transcript, draft.censorSensitivity]);
+  }, [transcript, draft.censorSensitivity, draft.censorAllowList, draft.censorDenyList]);
 
   /**
-   * Turn censoring on or off for some words, on this clip only — the shared
-   * lexicon is never touched.
+   * Turn censoring on or off for specific occurrences, on this clip only.
    *
-   * Both directions are expressed through the same two per-clip lists, which
-   * is what makes the toggle reversible rather than one-way:
-   *   censor    -> drop it from the allow list; add to deny only if the
-   *                lexicon would not have caught it anyway
-   *   uncensor  -> drop it from the deny list; add to allow only if the
-   *                lexicon *would* have caught it
-   * So a word always returns to the state it came from, and neither list
-   * accumulates entries that no longer do anything.
+   * Both directions are expressed through the same two id lists, and each is
+   * only written to when it actually changes the outcome:
+   *   censor   -> drop from exempt; force only if the rules would not catch it
+   *   uncensor -> drop from force; exempt only if the rules *would* catch it
+   * So a word returns to exactly the state it came from.
    */
   const setWordsCensored = useCallback(
-    (texts: string[], censored: boolean) => {
-      const keys = texts.map((t) => t.trim().toLowerCase()).filter(Boolean);
-      if (keys.length === 0) return;
-      const fromLexicon = new Set(
-        transcript
-          .flatMap((r) => r.words)
-          .filter((w) => lexiconWordIds.has(w.id))
-          .map((w) => censorKey(w.text)),
-      );
-
+    (wordIds: string[], censored: boolean) => {
+      if (wordIds.length === 0) return;
       setDraft((d) => {
-        const allow = new Set(d.censorAllowList);
-        const deny = new Set(d.censorDenyList);
-        for (const k of keys) {
+        const exempt = new Set(d.censorExemptWordIds);
+        const force = new Set(d.censorForceWordIds);
+        for (const id of wordIds) {
           if (censored) {
-            allow.delete(k);
-            if (!fromLexicon.has(k)) deny.add(k);
+            exempt.delete(id);
+            if (!censoredByRules.has(id)) force.add(id);
           } else {
-            deny.delete(k);
-            if (fromLexicon.has(k)) allow.add(k);
+            force.delete(id);
+            if (censoredByRules.has(id)) exempt.add(id);
           }
         }
-        return { ...d, censorAllowList: [...allow], censorDenyList: [...deny] };
+        return { ...d, censorExemptWordIds: [...exempt], censorForceWordIds: [...force] };
       });
     },
-    [transcript, lexiconWordIds],
+    [censoredByRules],
   );
 
   const previewWords = useMemo(() => {
@@ -710,6 +711,8 @@ export function ClipEditor({
     draft.censorReplacement !== clip.censorReplacement ||
     !sameList(draft.censorAllowList, clip.censorAllowList) ||
     !sameList(draft.censorDenyList, clip.censorDenyList) ||
+    !sameList(draft.censorExemptWordIds, clip.censorExemptWordIds) ||
+    !sameList(draft.censorForceWordIds, clip.censorForceWordIds) ||
     draft.accepted !== clip.accepted;
 
   async function call(kind: NonNullable<typeof busy>, req: () => Promise<Response>) {
@@ -747,6 +750,8 @@ export function ClipEditor({
         censorReplacement: draft.censorReplacement,
         censorAllowList: draft.censorAllowList,
         censorDenyList: draft.censorDenyList,
+        censorExemptWordIds: draft.censorExemptWordIds,
+        censorForceWordIds: draft.censorForceWordIds,
         accepted: draft.accepted,
       }),
     });

@@ -170,10 +170,11 @@ interface Props {
   /** Word ids the clip's censor settings would currently mask. */
   censoredIds?: ReadonlySet<string>;
   /**
-   * Turn censoring on or off for these words on this clip only. Takes the
-   * words' text — the override is per-clip and never edits the shared lexicon.
+   * Turn censoring on or off for these specific occurrences on this clip only.
+   * Takes transcript word ids, so "censor this damn but not that one" works;
+   * the override is per-clip and never edits the shared lexicon.
    */
-  onSetCensored?: (texts: string[], censored: boolean) => void;
+  onSetCensored?: (wordIds: string[], censored: boolean) => void;
   /** Show a per-word censor checkbox. Only meaningful while censoring is on. */
   showCensorChecks?: boolean;
 }
@@ -218,20 +219,20 @@ export const EditableTranscript = memo(function EditableTranscript({
   }, [rows, q]);
 
   /**
-   * The selected words, split by whether they are currently censored, so the
-   * toolbar can offer both directions rather than only the one.
+   * The selected occurrences, split by whether each is currently censored, so
+   * the toolbar can offer both directions rather than only the one. Keyed by
+   * word id, not by term — the whole point is that two identical words can
+   * carry different decisions.
    */
   const selectedByCensored = useMemo(() => {
-    const on = new Set<string>();
-    const off = new Set<string>();
+    const on: string[] = [];
+    const off: string[] = [];
     for (const row of rows)
       for (const w of row.words) {
-        if (!selectedIds.has(w.id)) continue;
-        const key = censorKey(w.text);
-        if (!key) continue;
-        (censoredIds?.has(w.id) ? on : off).add(key);
+        if (!selectedIds.has(w.id) || !censorKey(w.text)) continue;
+        (censoredIds?.has(w.id) ? on : off).push(w.id);
       }
-    return { censored: [...on], clean: [...off] };
+    return { censored: on, clean: off };
   }, [rows, selectedIds, censoredIds]);
 
   const selectedSpan = useMemo(() => {
@@ -375,7 +376,7 @@ export const EditableTranscript = memo(function EditableTranscript({
             >
               Don&apos;t censor{" "}
               {selectedByCensored.censored.length === 1
-                ? `"${selectedByCensored.censored[0]}"`
+                ? "this one"
                 : `these ${selectedByCensored.censored.length}`}
             </button>
           )}
@@ -388,7 +389,7 @@ export const EditableTranscript = memo(function EditableTranscript({
             >
               Censor{" "}
               {selectedByCensored.clean.length === 1
-                ? `"${selectedByCensored.clean[0]}"`
+                ? "this one"
                 : `these ${selectedByCensored.clean.length}`}
             </button>
           )}
@@ -425,9 +426,9 @@ export const EditableTranscript = memo(function EditableTranscript({
                       <input
                         type="checkbox"
                         checked={censoredIds?.has(w.id) ?? false}
-                        onChange={(e) => onSetCensored([censorKey(w.text)], e.target.checked)}
+                        onChange={(e) => onSetCensored([w.id], e.target.checked)}
                         aria-label={`Censor "${w.text}"`}
-                        title={`Censor every "${censorKey(w.text)}" in this clip`}
+                        title={`Censor this "${w.text}" only`}
                         className="mr-0.5 h-2.5 w-2.5 translate-y-px cursor-pointer accent-[rgb(var(--c-danger))] align-middle"
                       />
                     )}

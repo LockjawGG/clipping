@@ -344,6 +344,10 @@ model Clip {
   /// Extra terms to censor. Anything beyond plain profanity belongs here,
   /// authored and reviewed by the user rather than shipped in the lexicon.
   censorDenyList    String[] @default([])
+  /// Per-occurrence overrides, as TranscriptWord ids. These beat the term
+  /// lists above, so "censor this damn but not that one" is expressible.
+  censorExemptWordIds String[] @default([])
+  censorForceWordIds  String[] @default([])
 
   /// An authored capture window: JSON `FocusKeyframe[]` of { atMs, x, y, scale,
   /// ease } that pans and zooms the crop over the clip. Takes precedence over

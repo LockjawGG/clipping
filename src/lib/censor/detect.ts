@@ -28,6 +28,10 @@ export interface CensorConfigInput {
   /** Extra terms to censor. This is where anything beyond plain profanity
    *  belongs — authored by the user, reviewed before it is applied. */
   denyList?: readonly string[];
+  /** Transcript word ids never censored, whatever the term lists say. */
+  exemptWordIds?: readonly string[];
+  /** Transcript word ids always censored, whatever the term lists say. */
+  censorWordIds?: readonly string[];
 }
 
 export interface CensorSpan {
@@ -38,8 +42,65 @@ export interface CensorSpan {
   text: string;
   startMs: number;
   endMs: number;
-  /** `custom` marks a hit from the user's own denyList. */
-  tier: CensorTier | "custom";
+  /** `custom` is a term the user added; `manual` is a single occurrence they
+   *  ticked by hand. */
+  tier: CensorTier | "custom" | "manual";
+}
+
+/**
+ * Whether one word is censored, and on whose authority.
+ *
+ * Precedence runs most specific to least, so a decision the user made about
+ * *this occurrence* is never overridden by a rule about the word in general:
+ *
+ *   1. this word id was ticked / unticked by hand
+ *   2. this term is on the clip's allow / deny list
+ *   3. the built-in lexicon
+ *
+ * Returning the tier rather than a boolean is what lets the review panel say
+ * which of those three decided it.
+ */
+function classify(
+  word: CensorWord,
+  index: number,
+  ctx: {
+    lex: Map<string, CensorTier>;
+    allow: Set<string>;
+    deny: Set<string>;
+    exemptIds: Set<string>;
+    censorIds: Set<string>;
+  },
+): CensorTier | "custom" | "manual" | null {
+  const id = word.id;
+  if (id) {
+    if (ctx.exemptIds.has(id)) return null;
+    if (ctx.censorIds.has(id)) return "manual";
+  }
+
+  const token = normalizeToken(word.text);
+  if (!token) return null;
+
+  const candidates = stems(token);
+  // The allow-list wins over everything below it — it is how a user rescues a
+  // false positive without editing the shared lexicon.
+  if (candidates.some((c) => ctx.allow.has(c))) return null;
+  for (const c of candidates) {
+    if (ctx.deny.has(c)) return "custom";
+    const hit = ctx.lex.get(c);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** The sets `classify` needs, built once per call rather than per word. */
+function context(config: CensorConfigInput) {
+  return {
+    lex: lexiconFor(config.sensitivity),
+    allow: new Set((config.allowList ?? []).map(normalizeToken).filter(Boolean)),
+    deny: new Set((config.denyList ?? []).map(normalizeToken).filter(Boolean)),
+    exemptIds: new Set(config.exemptWordIds ?? []),
+    censorIds: new Set(config.censorWordIds ?? []),
+  };
 }
 
 /**
@@ -109,31 +170,10 @@ export function detectSpans(
 ): CensorSpan[] {
   if (!config.enabled) return [];
 
-  const lex = lexiconFor(config.sensitivity);
-  const allow = new Set((config.allowList ?? []).map(normalizeToken).filter(Boolean));
-  const deny = new Set((config.denyList ?? []).map(normalizeToken).filter(Boolean));
-
+  const ctx = context(config);
   const out: CensorSpan[] = [];
   words.forEach((w, index) => {
-    const token = normalizeToken(w.text);
-    if (!token) return;
-
-    const candidates = stems(token);
-    // The allow-list wins outright — it is how a user rescues a false positive.
-    if (candidates.some((c) => allow.has(c))) return;
-
-    let tier: CensorTier | "custom" | null = null;
-    for (const c of candidates) {
-      if (deny.has(c)) {
-        tier = "custom";
-        break;
-      }
-      const hit = lex.get(c);
-      if (hit) {
-        tier = hit;
-        break;
-      }
-    }
+    const tier = classify(w, index, ctx);
     if (!tier) return;
 
     out.push({
@@ -178,20 +218,14 @@ export function censoredIndices(
   words: readonly CensorWord[],
   config: CensorConfigInput,
 ): Set<number> {
-  // Re-run without padding and without merging so indices stay exact — the
-  // padding exists for audio, and merging would lose per-word identity.
+  // Same classification as `detectSpans`, but without padding or merging so
+  // indices stay exact — padding exists for audio, and merging would lose the
+  // per-word identity this function is for.
   if (!config.enabled) return new Set();
-  const lex = lexiconFor(config.sensitivity);
-  const allow = new Set((config.allowList ?? []).map(normalizeToken).filter(Boolean));
-  const deny = new Set((config.denyList ?? []).map(normalizeToken).filter(Boolean));
-
+  const ctx = context(config);
   const out = new Set<number>();
   words.forEach((w, index) => {
-    const token = normalizeToken(w.text);
-    if (!token) return;
-    const candidates = stems(token);
-    if (candidates.some((c) => allow.has(c))) return;
-    if (candidates.some((c) => deny.has(c) || lex.has(c))) out.add(index);
+    if (classify(w, index, ctx)) out.add(index);
   });
   return out;
 }

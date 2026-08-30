@@ -51,6 +51,9 @@ export const updateClipSchema = z
     censorReplacement: z.string().max(40).nullable(),
     censorAllowList: z.array(z.string().min(1).max(60)).max(500),
     censorDenyList: z.array(z.string().min(1).max(60)).max(500),
+    /** Per-occurrence overrides, as transcript word ids. */
+    censorExemptWordIds: z.array(z.string().min(1).max(64)).max(5000),
+    censorForceWordIds: z.array(z.string().min(1).max(64)).max(5000),
     muted: z.boolean(),
     volume: z.number().min(0).max(2),
     playbackRate: z.number().min(0.25).max(4),
@@ -119,6 +122,8 @@ interface ClipListRow {
   censorReplacement: string | null;
   censorAllowList: string[];
   censorDenyList: string[];
+  censorExemptWordIds: string[];
+  censorForceWordIds: string[];
   accepted: boolean;
   savedToProjectId: string | null;
   caption: string | null;
@@ -484,6 +489,8 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
         censorReplacement: c.censorReplacement,
         censorAllowList: c.censorAllowList,
         censorDenyList: c.censorDenyList,
+        censorExemptWordIds: c.censorExemptWordIds,
+        censorForceWordIds: c.censorForceWordIds,
         accepted: c.accepted,
         savedToProjectId: c.savedToProjectId,
         caption: c.caption,

@@ -101,6 +101,8 @@ function makeDeps(
             censorReplacement: null,
             censorAllowList: [],
             censorDenyList: [],
+            censorExemptWordIds: [],
+            censorForceWordIds: [],
             accepted: false,
             savedToProjectId: null,
             caption: "A punchy one-liner for socials",

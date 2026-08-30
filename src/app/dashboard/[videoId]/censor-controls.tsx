@@ -23,6 +23,9 @@ export interface CensorSettings {
   censorReplacement: string | null;
   censorAllowList: string[];
   censorDenyList: string[];
+  /** Per-occurrence overrides, as transcript word ids. */
+  censorExemptWordIds: string[];
+  censorForceWordIds: string[];
 }
 
 const SENSITIVITIES: { id: CensorSettings["censorSensitivity"]; label: string; hint: string }[] = [
@@ -61,16 +64,36 @@ export const CensorControls = memo(function CensorControls({ value, words, onCha
           sensitivity: value.censorSensitivity,
           allowList: value.censorAllowList,
           denyList: value.censorDenyList,
+          // Included so this list agrees with what the render will actually do
+          // — a word ticked in the transcript must appear here too.
+          exemptWordIds: value.censorExemptWordIds,
+          censorWordIds: value.censorForceWordIds,
         },
         0, // no audio padding in the review list — show the word's own timing
       ),
-    [words, value.censorSensitivity, value.censorAllowList, value.censorDenyList],
+    [
+      words,
+      value.censorSensitivity,
+      value.censorAllowList,
+      value.censorDenyList,
+      value.censorExemptWordIds,
+      value.censorForceWordIds,
+    ],
   );
 
-  const keep = (text: string) => {
-    const w = text.toLowerCase().replace(/[^\p{L}']/gu, "");
-    if (!w || value.censorAllowList.includes(w)) return;
-    onChange({ censorAllowList: [...value.censorAllowList, w] });
+  const keep = (span: { text: string; wordId?: string; tier: string }) => {
+    // A hand-picked occurrence is undone by dropping it, not by exempting the
+    // whole term — otherwise "keep it" would silently un-censor every other
+    // instance the user had ticked.
+    if (span.tier === "manual" && span.wordId) {
+      onChange({
+        censorForceWordIds: value.censorForceWordIds.filter((id) => id !== span.wordId),
+      });
+      return;
+    }
+    if (span.wordId && !value.censorExemptWordIds.includes(span.wordId)) {
+      onChange({ censorExemptWordIds: [...value.censorExemptWordIds, span.wordId] });
+    }
   };
 
   const addDeny = () => {
@@ -182,8 +205,8 @@ export const CensorControls = memo(function CensorControls({ value, words, onCha
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm ml-auto"
-                    onClick={() => keep(s.text)}
-                    title="Never censor this word in this clip"
+                    onClick={() => keep(s)}
+                    title="Stop censoring this occurrence"
                   >
                     Keep it
                   </button>

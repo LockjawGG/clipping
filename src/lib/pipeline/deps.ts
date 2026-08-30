@@ -123,6 +123,9 @@ export interface RenderCensorConfig {
   replacement: string | null;
   allowList: string[];
   denyList: string[];
+  /** Per-occurrence overrides, as transcript word ids. */
+  exemptWordIds: string[];
+  forceWordIds: string[];
 }
 
 /** One image/GIF overlay on a clip. Times are clip-relative ms; null = clip edge. */
