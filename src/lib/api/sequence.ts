@@ -68,7 +68,12 @@ export const createItemSchema = z
 
 export const updateItemSchema = z
   .object({
-    timelineStart: z.number().int().min(0),
+    // Now that lanes are packed this is only a drop hint — the real position is
+    // recomputed from the durations — so a value left of zero means "the very
+    // start". Refusing it failed the whole edit: dragging the left edge of the
+    // first piece outward sends a negative start, and the trim was lost while
+    // the timeline optimistically showed it.
+    timelineStart: z.number().int(),
     sourceIn: z.number().int().min(0),
     sourceOut: z.number().int().min(1),
     trackId: z.string().min(1),

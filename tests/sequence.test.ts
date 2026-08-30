@@ -385,3 +385,14 @@ test("updateSequence 404s for an unowned sequence", async () => {
     (e: unknown) => e instanceof ApiError && e.status === 404,
   );
 });
+
+test("a drop hint left of zero is taken as the start, not refused", async () => {
+  // Dragging the left edge of the first piece outward produced a negative
+  // timelineStart, which the schema rejected — so the edit failed to save while
+  // the timeline optimistically showed it. Positions are derived now, so the
+  // hint only says "put it at the front".
+  const { deps } = makeDeps();
+  const s = await getOrCreateClipSequence(deps, "c1");
+  const moved = await updateSequenceItem(deps, s.items[0].id, { timelineStart: -2000 });
+  assert.equal(moved.timelineStart, 0);
+});

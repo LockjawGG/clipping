@@ -306,7 +306,10 @@ export function Timeline({
         });
       } else if (d.mode === "trim-l") {
         const maxLeft = clip.duration - MIN_CLIP_MS; // can't cross the right edge
-        const minLeft = -clip.sourceIn; // can't expose media before sourceIn
+        const minLeft = Math.max(
+          -clip.sourceIn, // can't expose media before sourceIn
+          -clip.start, // ...and a piece cannot begin before the timeline does
+        );
         const shift = clamp(deltaMs, minLeft, maxLeft);
         patchClip(clip.id, {
           start: Math.round(clip.start + shift),
