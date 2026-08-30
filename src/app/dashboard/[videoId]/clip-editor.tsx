@@ -538,7 +538,7 @@ export function ClipEditor({
             },
           ];
     const upper = plan?.layers ?? [];
-    if (draft.removedWordIds.length === 0) return { base, layers: upper };
+    if (draft.removedWordIds.length === 0) return { base, layers: upper, uncut: base };
     // Word times arrive rebased onto the clip; cuts are expressed against the
     // source, which is the coordinate the pieces use.
     const inSource = words.map((w) => ({
@@ -552,8 +552,11 @@ export function ClipEditor({
       // A layer sits at a position in the output, so a cut earlier in the clip
       // moves it — the same correction the renderer makes.
       layers: upper.map((l) => ({ ...l, timelineStart: remapAcrossCuts(base, cut, l.timelineStart) })),
+      // Kept so anything else positioned against the output can be moved too.
+      uncut: base,
     };
   }, [plan, videoId, clip.startMs, clip.endMs, draft.startMs, draft.endMs, draft.removedWordIds, words]);
+
 
   /** A playable URL for every source the plan touches. */
   const planSourceUrls = useMemo(
@@ -767,6 +770,28 @@ export function ClipEditor({
   // drags are coalesced). We only re-seed from the server when the set of
   // overlay ids changes (navigation, or an add/delete we didn't do locally).
   const [overlays, setOverlays] = useState<OverlayView[]>(serverOverlays);
+
+  /**
+   * The overlays as the preview should show them.
+   *
+   * An overlay window is a position in the output, so a cut earlier in the clip
+   * moves it — the renderer does exactly this before compositing. Without it a
+   * badge sat 760ms late in the preview and on time in the export, which is the
+   * kind of disagreement you only find after rendering.
+   *
+   * Display only: the player sends back position and scale, never timing, so no
+   * shifted number can find its way into a save. Timing is still authored
+   * against the uncut clip in the Layers panel and the timeline.
+   */
+  const previewOverlays = useMemo(() => {
+    if (draft.removedWordIds.length === 0) return overlays;
+    const at = (ms: number) => remapAcrossCuts(previewPlan.uncut, previewPlan.base, ms);
+    return overlays.map((o) => ({
+      ...o,
+      startMs: o.startMs === null ? null : at(o.startMs),
+      endMs: o.endMs === null ? null : at(o.endMs),
+    }));
+  }, [overlays, previewPlan, draft.removedWordIds]);
   const serverIds = serverOverlays.map((o) => o.id).join(",");
   const lastSeeded = useRef(serverIds);
   if (serverIds !== lastSeeded.current) {
@@ -1538,7 +1563,7 @@ export function ClipEditor({
         renderUrl={clip.render?.downloadUrl ?? null}
         seekToMs={seekReq}
         togglePlayReq={playToggleReq}
-        overlays={overlays}
+        overlays={previewOverlays}
         selectedOverlayId={selectedOverlayId}
         onSelectOverlay={setSelectedOverlayId}
         onOverlayChange={editOverlay}
