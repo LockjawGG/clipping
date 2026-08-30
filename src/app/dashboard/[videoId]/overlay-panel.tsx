@@ -1,7 +1,10 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useMemo } from "react";
 
+import type { ElementAnimSpec } from "@/lib/captions/element-anim.ts";
+import { parseElementAnim, serializeElementAnim } from "@/lib/captions/element-anim.ts";
+import { MotionControls } from "./motion-controls";
 import { TextOverlayInspector } from "./text-overlay-inspector";
 
 export interface OverlayView {
@@ -26,6 +29,30 @@ export interface OverlayView {
   animationJson: string | null;
   role: string;
 }
+
+/**
+ * Motion for an image / GIF layer. Deliberately the same `MotionControls` the
+ * text inspector mounts — a sticker and a caption animate through one engine,
+ * so a preset added to the catalogue shows up for both without further work.
+ */
+const ImageMotion = memo(function ImageMotion({
+  overlay,
+  onEdit,
+}: {
+  overlay: OverlayView;
+  onEdit: (id: string, patch: Record<string, unknown>, opts?: { coalesceMs?: number }) => void;
+}) {
+  const anim = useMemo(() => parseElementAnim(overlay.animationJson), [overlay.animationJson]);
+  return (
+    <MotionControls
+      anim={anim}
+      canOutro={overlay.endMs !== null}
+      onAnim={(patch: Partial<ElementAnimSpec>, opts) =>
+        onEdit(overlay.id, { animationJson: serializeElementAnim({ ...anim, ...patch }) }, opts)
+      }
+    />
+  );
+});
 
 const secStr = (ms: number | null) => (ms == null ? "" : (ms / 1000).toFixed(1));
 const toMs = (v: string): number | null => {
@@ -180,6 +207,16 @@ export const OverlayPanel = memo(function OverlayPanel({
                         )
                       }
                     />
+                  </div>
+                )}
+
+                {/* image / GIF layers get the same motion panel as text */}
+                {selected && o.kind !== "TEXT" && (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className="border-t border-border px-2 py-2 text-xs"
+                  >
+                    <ImageMotion overlay={o} onEdit={onEdit} />
                   </div>
                 )}
 

@@ -112,9 +112,23 @@ export interface RenderOverlay {
   x: number;
   y: number;
   scale: number;
+  rotation: number;
   opacity: number;
   startMs: number | null;
   endMs: number | null;
+  /**
+   * JSON `ElementAnimSpec`; null = static. A layer with motion cannot be
+   * composited by the ffmpeg `overlay` filter — it has no per-frame scale or
+   * rotation — so it is promoted to the Remotion path instead, the same tier
+   * decision `captionNeedsRemotion` makes for captions.
+   */
+  animationJson: string | null;
+}
+
+/** An image/GIF overlay that Remotion composites, with its bytes on disk. */
+export interface RenderImageLayer extends Omit<RenderOverlay, "storageKey"> {
+  /** Absolute local path to the downloaded image / GIF. */
+  path: string;
 }
 
 /** One freestanding text element. Position is a normalised 0..1 centre point. */
@@ -129,7 +143,7 @@ export interface RenderTextOverlay {
   endMs: number | null;
   /** JSON partial TextStyle; null = default style. */
   styleJson: string | null;
-  /** JSON `{ intro?, outro? }` element-animation preset ids; null = static. */
+  /** JSON `ElementAnimSpec` of preset ids + overrides; null = static. */
   animationJson: string | null;
 }
 

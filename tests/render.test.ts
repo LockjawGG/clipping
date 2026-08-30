@@ -51,7 +51,13 @@ interface Spy {
   trackedReframes: number;
   probed: string[];
   puts: string[];
-  captioned: Array<{ preset: string; videoPath: string; cueCount: number; textOverlayCount: number }>;
+  captioned: Array<{
+    preset: string;
+    videoPath: string;
+    cueCount: number;
+    textOverlayCount: number;
+    imageOverlays: Array<{ path: string; animationJson: string | null }>;
+  }>;
   composed: OverlayCompositeOptions[];
   evicted: string[];
 }
@@ -138,12 +144,14 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
         videoPath: string;
         cues: unknown[];
         textOverlays?: unknown[];
+        imageOverlays?: Array<{ path: string; animationJson: string | null }>;
       }) => {
         spy.captioned.push({
           preset: input.preset,
           videoPath: input.videoPath,
           cueCount: input.cues.length,
           textOverlayCount: input.textOverlays?.length ?? 0,
+          imageOverlays: input.imageOverlays ?? [],
         });
       },
     },
@@ -238,8 +246,8 @@ test("clip overlays trigger a composite pass with clip-relative seconds", async 
     const { deps, spy } = makeDeps(
       target({
         overlays: [
-          { storageKey: "assets/image/a.png", animated: false, x: 0.5, y: 0.2, scale: 1, opacity: 0.8, startMs: 2000, endMs: 6000 },
-          { storageKey: "assets/gif/b.gif", animated: true, x: 0.1, y: 0.9, scale: 0.5, opacity: 1, startMs: null, endMs: null },
+          { storageKey: "assets/image/a.png", animated: false, x: 0.5, y: 0.2, scale: 1, rotation: 0, opacity: 0.8, startMs: 2000, endMs: 6000, animationJson: null },
+          { storageKey: "assets/gif/b.gif", animated: true, x: 0.1, y: 0.9, scale: 0.5, rotation: 0, opacity: 1, startMs: null, endMs: null, animationJson: null },
         ],
       }),
       { tempDir: dir } as Partial<PipelineDeps>,
@@ -258,6 +266,37 @@ test("clip overlays trigger a composite pass with clip-relative seconds", async 
       ],
     );
     assert.equal(spy.puts[0], "renders/r-ov/output.mp4");
+    assert.equal(spy.captioned.length, 0, "static layers never wake Remotion");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a layer with motion is composited by Remotion, static ones stay on ffmpeg", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "render-ovmix-"));
+  try {
+    const { deps, spy } = makeDeps(
+      target({
+        overlays: [
+          // static -> the cheap ffmpeg overlay filter
+          { storageKey: "assets/image/a.png", animated: false, x: 0.5, y: 0.2, scale: 1, rotation: 0, opacity: 1, startMs: null, endMs: null, animationJson: null },
+          // animated -> promoted, because `overlay` has no per-frame scale
+          { storageKey: "assets/image/b.png", animated: false, x: 0.3, y: 0.7, scale: 1, rotation: 15, opacity: 1, startMs: 0, endMs: 4000, animationJson: '{"loop":"orbit"}' },
+        ],
+      }),
+      { tempDir: dir } as Partial<PipelineDeps>,
+    );
+    await renderHandler(ctx(deps, { renderId: "r-ovmix" }));
+
+    // One of each — the split is by animation, not by asset kind.
+    assert.equal(spy.composed.length, 1, "ffmpeg still runs for the static layer");
+    assert.equal(spy.composed[0].items.length, 1);
+    assert.equal(spy.captioned.length, 1, "Remotion runs for the moving layer");
+    assert.equal(spy.captioned[0].imageOverlays.length, 1);
+    assert.equal(spy.captioned[0].imageOverlays[0].animationJson, '{"loop":"orbit"}');
+    // Its bytes must be on disk before Remotion starts.
+    assert.match(spy.captioned[0].imageOverlays[0].path, /moving-0\.png$/);
+    assert.equal(spy.captioned[0].cueCount, 0, "no captions on this clip");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

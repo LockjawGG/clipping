@@ -46,6 +46,10 @@ export const textStyleSchema = z.any().nullable().default(null);
 export const wordRulesSchema = z.array(z.any()).default([]);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const textOverlaysSchema = z.array(z.any()).default([]);
+/** Image / GIF layers that carry motion, so ffmpeg's `overlay` filter cannot
+ *  composite them. `src` is a `file://` URL to the already-downloaded bytes. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const imageOverlaysSchema = z.array(z.any()).default([]);
 
 export const captionedClipSchema = z.object({
   /** `file://…` path to the (already reframed) source video. */
@@ -56,6 +60,7 @@ export const captionedClipSchema = z.object({
   textStyle: textStyleSchema,
   wordRules: wordRulesSchema,
   textOverlays: textOverlaysSchema,
+  imageOverlays: imageOverlaysSchema,
   fps: z.number(),
   durationInFrames: z.number(),
   width: z.number(),
@@ -88,6 +93,7 @@ export const DEFAULT_CAPTIONED_CLIP_PROPS: CaptionedClipProps = {
   textStyle: null,
   wordRules: [],
   textOverlays: [],
+  imageOverlays: [],
   fps: 30,
   durationInFrames: 900,
   width: 1080,

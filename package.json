@@ -27,6 +27,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1119.0",
     "@prisma/client": "^6.2.1",
     "@remotion/bundler": "^4.0.518",
+    "@remotion/gif": "^4.0.518",
     "@remotion/renderer": "^4.0.518",
     "bcryptjs": "^2.4.3",
     "next": "^15.1.4",

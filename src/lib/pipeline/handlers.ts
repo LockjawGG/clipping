@@ -9,7 +9,13 @@ import { captionNeedsRemotion } from "../captions/text-style.ts";
 import { ASPECT_DIMENSIONS, type CaptionBurnStyle } from "../ffmpeg/args.ts";
 import { type FocalPoint, resampleTrack } from "../faces/track.ts";
 import type { JobHandler } from "../jobs/types.ts";
-import { jobWorkDir, type PipelineDeps, scratchPath, toAspectPreset } from "./deps.ts";
+import {
+  jobWorkDir,
+  type PipelineDeps,
+  type RenderOverlay,
+  scratchPath,
+  toAspectPreset,
+} from "./deps.ts";
 
 /**
  * The processing chain. Each handler does one step and enqueues the next, so a
@@ -349,6 +355,14 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     const staticBurn = words.length > 0 && !animated;
     const hasTextOverlays = target.textOverlays.length > 0;
 
+    // The same tier decision for image layers. The ffmpeg `overlay` filter can
+    // place and fade a still, but it has no rotation and no per-frame scale, so
+    // anything it cannot express is composited by Remotion and the rest stay on
+    // the cheap path.
+    const overlayNeedsRemotion = (o: RenderOverlay) => o.animationJson !== null || o.rotation !== 0;
+    const movingOverlays = target.overlays.filter(overlayNeedsRemotion);
+    const staticOverlays = target.overlays.filter((o) => !overlayNeedsRemotion(o));
+
     // Static captions burn during the reframe; animated ones are composited by
     // Remotion afterwards, so the reframe gets no subtitle path.
     let subtitlePath: string | undefined;
@@ -417,7 +431,17 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
 
     let output = needsReframe ? reframed : cut;
 
-    if (animated || hasTextOverlays) {
+    // Fetch the bytes for layers Remotion composites before it runs.
+    const movingLayers = await Promise.all(
+      movingOverlays.map(async (o, i) => {
+        const local = scratchPath(work, `moving-${i}.${o.animated ? "gif" : "png"}`);
+        await mkdir(dirname(local), { recursive: true });
+        await deps.storage.getToFile(o.storageKey, local);
+        return { ...o, path: local };
+      }),
+    );
+
+    if (animated || hasTextOverlays || movingLayers.length > 0) {
       const { width, height } = ASPECT_DIMENSIONS[aspect];
       const pre = await deps.ffmpeg.probe(output, signal);
       await deps.captions.renderCaptioned({
@@ -429,6 +453,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
         textStyle: target.textStyle,
         wordRules: target.wordRules,
         textOverlays: target.textOverlays,
+        imageOverlays: movingLayers,
         width: pre.width ?? width,
         height: pre.height ?? height,
         fps: pre.fps ?? 30,
@@ -437,11 +462,11 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
       });
       output = captioned;
     }
-    if (target.overlays.length > 0) {
+    if (staticOverlays.length > 0) {
       const pre = await deps.ffmpeg.probe(output, signal);
       const overlaid = scratchPath(work, "overlaid.mp4");
       const items = await Promise.all(
-        target.overlays.map(async (o, i) => {
+        staticOverlays.map(async (o, i) => {
           const ext = o.animated ? "gif" : "png";
           const local = scratchPath(work, `overlay-${i}.${ext}`);
           await mkdir(dirname(local), { recursive: true });

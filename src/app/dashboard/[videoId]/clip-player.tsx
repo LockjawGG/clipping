@@ -370,6 +370,7 @@ export const ClipPlayer = memo(function ClipPlayer({
             <OverlayImg
               key={o.id}
               overlay={o}
+              posMs={posMs}
               boxW={box.w}
               boxH={box.h}
               selected={selectedOverlayId === o.id}
@@ -663,6 +664,7 @@ function TextOverlayEl({
  */
 function OverlayImg({
   overlay,
+  posMs,
   boxW,
   boxH,
   selected,
@@ -670,6 +672,7 @@ function OverlayImg({
   onChange,
 }: {
   overlay: OverlayView;
+  posMs: number;
   boxW: number;
   boxH: number;
   selected: boolean;
@@ -688,12 +691,26 @@ function OverlayImg({
     k: number;
   } | null>(null);
 
+  const animCss = useMemo(
+    () =>
+      sampleElementAnim(parseElementAnim(overlay.animationJson), {
+        elapsedMs: posMs - (overlay.startMs ?? 0),
+        remainingMs: overlay.endMs == null ? null : overlay.endMs - posMs,
+      }),
+    [overlay.animationJson, overlay.startMs, overlay.endMs, posMs],
+  );
+
   if (!overlay.url || boxW === 0) return null;
 
   const w = boxW * 0.3 * clampScale(overlay.scale);
   const h = w * ratio;
   const left = (boxW - w) * clamp01(overlay.x);
   const top = (boxH - h) * clamp01(overlay.y);
+  const baseTransform = `rotate(${overlay.rotation}deg)`;
+  const restingTransform =
+    animCss.transform && animCss.transform !== "none"
+      ? `${baseTransform} ${animCss.transform}`
+      : baseTransform;
 
   const paint = () => {
     const d = drag.current;
@@ -701,8 +718,8 @@ function OverlayImg({
     if (!d || !el) return;
     el.style.transform =
       d.mode === "move"
-        ? `translate(${d.dx}px, ${d.dy}px)`
-        : `scale(${d.k})`;
+        ? `${restingTransform} translate(${d.dx}px, ${d.dy}px)`
+        : `${restingTransform} scale(${d.k})`;
     d.raf = 0;
   };
 
@@ -767,7 +784,9 @@ function OverlayImg({
         top,
         width: w,
         height: h || "auto",
-        opacity: overlay.opacity,
+        transform: restingTransform,
+        opacity: overlay.opacity * animCss.opacity,
+        ...(animCss.filter ? { filter: animCss.filter } : {}),
         cursor: selected ? "move" : "pointer",
         touchAction: "none",
         outline: selected ? "2px solid rgb(var(--c-accent))" : "1px dashed rgba(255,255,255,0.35)",

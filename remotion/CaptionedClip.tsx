@@ -1,12 +1,15 @@
 import React from "react";
 import {
   AbsoluteFill,
+  Img,
   OffthreadVideo,
   interpolate,
   spring,
+  staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
+import { Gif } from "@remotion/gif";
 
 import type { CaptionStyleProps, CaptionedClipProps, RemotionCue, RemotionWord } from "./schema";
 import {
@@ -182,6 +185,76 @@ interface RenderTextOverlay {
   animationJson: string | null;
 }
 
+interface RenderImageOverlay {
+  /** Bare filename staged in the bundle's `public/` dir; resolved by
+   *  `staticFile()`. Chrome refuses `file://` loads from the bundle origin. */
+  src: string;
+  animated: boolean;
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+  opacity: number;
+  startMs: number | null;
+  endMs: number | null;
+  animationJson: string | null;
+}
+
+/**
+ * Image / GIF layers that carry motion. Static ones stay on the much cheaper
+ * ffmpeg `overlay` path — only layers the filter cannot express (per-frame
+ * scale, rotation or opacity) are promoted here.
+ *
+ * Width is a fraction of the frame, matching `buildOverlayCompositeArgs`'s 30%
+ * baseline exactly, so promoting a layer never changes its size.
+ */
+const ImageOverlayLayer: React.FC<{ items: RenderImageOverlay[]; tMs: number }> = ({
+  items,
+  tMs,
+}) => (
+  <>
+    {items.map((o, i) => {
+      const from = o.startMs ?? Number.NEGATIVE_INFINITY;
+      const to = o.endMs ?? Number.POSITIVE_INFINITY;
+      if (tMs < from || tMs > to) return null;
+      const anim = sampleElementAnim(parseElementAnim(o.animationJson), {
+        elapsedMs: tMs - (o.startMs ?? 0),
+        remainingMs: o.endMs == null ? null : o.endMs - tMs,
+      });
+      // Width and anchoring mirror `buildOverlayCompositeArgs` exactly — 30% of
+      // the frame at scale 1, positioned at ffmpeg's `(W-w)*x` / `(H-h)*y` — so
+      // promoting a layer from the ffmpeg path never nudges or resizes it.
+      // The translate is a percentage of the element's *own* box, which yields
+      // `y*H - y*h` without needing to know the image's aspect ratio up front.
+      const width = `${30 * Math.min(4, Math.max(0.02, o.scale))}%`;
+      const base = `translate(${-o.x * 100}%, ${-o.y * 100}%) rotate(${o.rotation}deg)`;
+      return (
+        <div
+          key={i}
+          style={{
+            position: "absolute",
+            left: `${o.x * 100}%`,
+            top: `${o.y * 100}%`,
+            width,
+            transform:
+              anim.transform && anim.transform !== "none" ? `${base} ${anim.transform}` : base,
+            opacity: o.opacity * anim.opacity,
+            ...(anim.filter ? { filter: anim.filter } : {}),
+          }}
+        >
+          {o.animated ? (
+            // A plain <img> animates off wall-clock time, which makes the burn
+            // non-deterministic; <Gif> decodes frames against the timeline.
+            <Gif src={staticFile(o.src)} fit="contain" style={{ width: "100%", height: "auto" }} />
+          ) : (
+            <Img src={staticFile(o.src)} style={{ width: "100%", height: "auto" }} />
+          )}
+        </div>
+      );
+    })}
+  </>
+);
+
 const TextOverlayLayer: React.FC<{ items: RenderTextOverlay[]; tMs: number }> = ({ items, tMs }) => (
   <>
     {items.map((o, i) => {
@@ -237,6 +310,7 @@ export const CaptionedClip: React.FC<CaptionedClipProps> = ({
   textStyle,
   wordRules,
   textOverlays,
+  imageOverlays,
 }) => {
   const frame = useCurrentFrame();
   const { fps, height, width } = useVideoConfig();
@@ -337,6 +411,15 @@ export const CaptionedClip: React.FC<CaptionedClipProps> = ({
       {Array.isArray(textOverlays) && textOverlays.length > 0 ? (
         <AbsoluteFill>
           <TextOverlayLayer items={textOverlays as RenderTextOverlay[]} tMs={tMs} />
+        </AbsoluteFill>
+      ) : null}
+
+      {/* Image layers render last, matching the ffmpeg path where the overlay
+          composite runs after the caption burn. A clip can mix static images
+          (ffmpeg) and animated ones (here), so the two must agree on z-order. */}
+      {Array.isArray(imageOverlays) && imageOverlays.length > 0 ? (
+        <AbsoluteFill>
+          <ImageOverlayLayer items={imageOverlays as RenderImageOverlay[]} tMs={tMs} />
         </AbsoluteFill>
       ) : null}
     </AbsoluteFill>

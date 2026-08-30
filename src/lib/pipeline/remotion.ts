@@ -1,11 +1,13 @@
-import { resolve } from "node:path";
+import { copyFile, mkdir, rm } from "node:fs/promises";
+import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { randomUUID } from "node:crypto";
 
 import type { Cue } from "../captions/layout.ts";
 import type { CaptionStyle } from "../captions/presets.ts";
 import type { TextStyle } from "../captions/text-style.ts";
 import type { WordRule } from "../captions/word-rules.ts";
-import type { RenderTextOverlay } from "./deps.ts";
+import type { RenderImageLayer, RenderTextOverlay } from "./deps.ts";
 
 /**
  * Renders animated (word-timed) captions over an already-reframed clip via the
@@ -25,6 +27,9 @@ export interface CaptionRenderInput {
   wordRules?: WordRule[];
   /** Freestanding text elements composited over the clip. */
   textOverlays?: RenderTextOverlay[];
+  /** Animated image / GIF layers, promoted here because the ffmpeg `overlay`
+   *  filter cannot express per-frame scale, rotation or opacity. */
+  imageOverlays?: RenderImageLayer[];
   width: number;
   height: number;
   fps: number;
@@ -55,9 +60,17 @@ export class RemotionCaptionRenderer implements CaptionRenderer {
   /** Bundle the Remotion project once and reuse the served URL. */
   private bundleOnce(): Promise<string> {
     if (!this.serveUrl) {
-      this.serveUrl = import("@remotion/bundler").then(({ bundle }) =>
-        bundle({ entryPoint: this.entryPoint }),
-      );
+      this.serveUrl = import("@remotion/bundler")
+        .then(({ bundle }) => bundle({ entryPoint: this.entryPoint }))
+        // The bundle directory is served as-is, and `staticFile()` resolves to
+        // its `public/` subfolder. Overlay images are staged there per render:
+        // Chrome refuses to load `file://` from the bundle's http origin, and
+        // re-bundling per job just to set `publicDir` would cost seconds each
+        // time. Created up front so the first render never races it.
+        .then(async (dir) => {
+          await mkdir(join(dir, "public"), { recursive: true });
+          return dir;
+        });
     }
     return this.serveUrl;
   }
@@ -65,6 +78,17 @@ export class RemotionCaptionRenderer implements CaptionRenderer {
   async renderCaptioned(input: CaptionRenderInput): Promise<void> {
     const { renderMedia, selectComposition } = await import("@remotion/renderer");
     const serveUrl = await this.bundleOnce();
+
+    // Stage overlay images inside the served bundle. Names are unique so
+    // concurrent renders cannot collide, and they are removed in `finally`.
+    const publicDir = join(serveUrl, "public");
+    const staged = await Promise.all(
+      (input.imageOverlays ?? []).map(async (overlay) => {
+        const name = `ov-${randomUUID()}${extname(overlay.path) || ".png"}`;
+        await copyFile(overlay.path, join(publicDir, name));
+        return { overlay, name };
+      }),
+    );
 
     const fps = input.fps > 0 ? input.fps : 30;
     const durationInFrames = Math.max(1, Math.round((input.durationMs / 1000) * fps));
@@ -80,20 +104,41 @@ export class RemotionCaptionRenderer implements CaptionRenderer {
       textStyle: input.textStyle ?? null,
       wordRules: input.wordRules ?? [],
       textOverlays: input.textOverlays ?? [],
+      imageOverlays: staged.map(({ overlay: o, name }) => ({
+        // A bare name; the composition resolves it with `staticFile()`.
+        src: name,
+        animated: o.animated,
+        x: o.x,
+        y: o.y,
+        scale: o.scale,
+        rotation: o.rotation,
+        opacity: o.opacity,
+        startMs: o.startMs,
+        endMs: o.endMs,
+        animationJson: o.animationJson,
+      })),
       fps,
       durationInFrames,
       width: input.width,
       height: input.height,
     };
 
-    const composition = await selectComposition({ serveUrl, id: "CaptionedClip", inputProps });
-    await renderMedia({
-      serveUrl,
-      composition,
-      codec: "h264",
-      outputLocation: input.outputPath,
-      inputProps,
-      ...(this.concurrency ? { concurrency: this.concurrency } : {}),
-    });
+    try {
+      const composition = await selectComposition({ serveUrl, id: "CaptionedClip", inputProps });
+      await renderMedia({
+        serveUrl,
+        composition,
+        codec: "h264",
+        outputLocation: input.outputPath,
+        inputProps,
+        ...(this.concurrency ? { concurrency: this.concurrency } : {}),
+      });
+    } finally {
+      // The bundle is long-lived and shared, so staged assets must not leak
+      // into it — a failed render cleans up the same as a successful one.
+      await Promise.all(
+        staged.map(({ name }) => rm(join(publicDir, name), { force: true }).catch(() => {})),
+      );
+    }
   }
 }

@@ -371,9 +371,11 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
             x: o.x,
             y: o.y,
             scale: o.scale,
+            rotation: o.rotation,
             opacity: o.opacity,
             startMs: o.startMs,
             endMs: o.endMs,
+            animationJson: o.animationJson,
           })),
         textOverlays: render.clip.overlays
           .filter((o) => !o.hidden && o.kind === "TEXT")
