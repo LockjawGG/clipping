@@ -627,6 +627,7 @@ test("a voiceover is mixed onto the cut, after censoring and before the reframe"
     const { deps, spy } = makeDeps(
       target({
         voiceover: {
+          enabled: true,
           duckDb: -9,
           linesJson: JSON.stringify({
             version: 1,
@@ -680,6 +681,7 @@ test("voiceover lines whose anchor is gone are dropped rather than misplaced", a
     const { deps, spy } = makeDeps(
       target({
         voiceover: {
+          enabled: true,
           duckDb: -12,
           linesJson: JSON.stringify({
             version: 1,
@@ -1297,6 +1299,28 @@ test("combining clips from two videos captions and censors both", async () => {
   assert.ok(text.includes("damn"), "and so are the second's");
 });
 
+test("a voiceover switched off is kept but never mixed", async () => {
+  const { deps, spy } = makeDeps(
+    target({
+      voiceover: {
+        enabled: false,
+        duckDb: -9,
+        linesJson: JSON.stringify({
+          version: 1,
+          lines: [{ ref: "seg:0", text: "hello", durationMs: 1_000, audioKey: "vo/a.wav" }],
+        }),
+      },
+    }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-vo-off" }));
+
+  // The lines are still on disk — the switch is not a delete — but nothing
+  // reaches the mixer, so the export sounds exactly as it would with no
+  // narration at all.
+  assert.deepEqual(spy.voMixes, []);
+});
+
 test("narration follows its segment when the timeline is rearranged", async () => {
   const dir = await mkdtemp(join(tmpdir(), "render-vo-seq-"));
   try {
@@ -1310,6 +1334,7 @@ test("narration follows its segment when the timeline is rearranged", async () =
       target({
         sequence: timeline([[20_000, 22_000], [10_000, 12_000]]),
         voiceover: {
+          enabled: true,
           duckDb: -9,
           linesJson: JSON.stringify({
             version: 1,
@@ -1346,6 +1371,7 @@ test("narration anchored to footage that was cut is not placed anyway", async ()
         // Only the first segment's footage survives.
         sequence: timeline([[10_000, 12_000]]),
         voiceover: {
+          enabled: true,
           duckDb: -9,
           linesJson: JSON.stringify({
             version: 1,

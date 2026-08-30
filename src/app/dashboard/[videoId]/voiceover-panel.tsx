@@ -31,6 +31,7 @@ interface Voiceover {
   voiceId: string;
   speed: number;
   duckDb: number;
+  enabled: boolean;
   status: string;
   errorMessage: string | null;
   lineCount: number;
@@ -65,7 +66,7 @@ export const VoiceoverPanel = memo(function VoiceoverPanel({
       if (!res.ok) return;
       const body = (await res.json()) as Voiceover | null;
       setVo(body);
-      onLines?.(body?.lines ?? [], body?.duckDb ?? 0);
+      onLines?.(body?.enabled === false ? [] : (body?.lines ?? []), body?.duckDb ?? 0);
       if (body?.script != null) setScript((s) => (s === "" ? body.script! : s));
     } catch {
       /* the next poll retries */
@@ -122,18 +123,51 @@ export const VoiceoverPanel = memo(function VoiceoverPanel({
   };
 
   const sourceKind = vo?.sourceKind ?? "TRANSCRIPT";
+  const on = vo?.enabled !== false;
+  /** Flip the narration without re-synthesizing it. */
+  const toggle = async () => {
+    if (!vo) return;
+    const next = !on;
+    setVo((v) => (v ? { ...v, enabled: next } : v));
+    onLines?.(next ? (vo.lines ?? []) : [], vo.duckDb);
+    await save({ enabled: next });
+  };
 
   return (
     <details className="rounded border border-border bg-surface-raised px-2 py-1 text-xs">
       <summary className="cursor-pointer text-muted">
         🎙 Voiceover
         {vo && !running && vo.lineCount > 0 && (
-          <span className="ml-2 text-[11px]">{vo.lineCount} lines</span>
+          <span className={`ml-2 text-[11px] ${on ? "" : "line-through"}`}>
+            {vo.lineCount} lines
+          </span>
+        )}
+        {vo && !running && vo.lineCount > 0 && !on && (
+          <span className="ml-2 text-[11px] text-muted">· muted</span>
         )}
         {running && <span className="ml-2 text-accent">generating…</span>}
       </summary>
 
       <div className="flex flex-col gap-2 pt-2">
+        {vo && vo.lineCount > 0 && (
+          <div className="flex items-center gap-2 rounded-md bg-surface px-2 py-1.5">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={on}
+              aria-label="Play the narration"
+              disabled={busy}
+              onClick={toggle}
+              className="switch"
+            />
+            <span className="font-medium">{on ? "Narration on" : "Narration off"}</span>
+            <span className="text-[11px] text-muted">
+              {on
+                ? "Mixed into the preview and the export."
+                : "Kept, but silent — switch back on any time."}
+            </span>
+          </div>
+        )}
         {!available && (
           <p className="text-[11px] leading-relaxed text-danger">
             Text-to-speech isn&apos;t set up: {hint}. Voiceovers run locally, so nothing is sent

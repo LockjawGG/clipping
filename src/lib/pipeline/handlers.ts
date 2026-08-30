@@ -893,7 +893,8 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     // timing — the narration carries its own, applied when it was synthesised.
     // Before the reframe, so `-c:a copy` carries it through everything
     // downstream.
-    if (target.voiceover) {
+    // Switched off leaves the lines on disk and simply does not mix them.
+    if (target.voiceover?.enabled) {
       // `clipMs` is declared further down with the reframe logic; the voiceover
       // pass runs before it, so derive the length here.
       const voClipMs = outMs;

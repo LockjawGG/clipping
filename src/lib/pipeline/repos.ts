@@ -342,7 +342,7 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
                 where: { status: "COMPLETED" },
                 orderBy: { updatedAt: "desc" },
                 take: 1,
-                select: { linesJson: true, duckDb: true },
+                select: { linesJson: true, duckDb: true, enabled: true },
               },
               focalY: true,
               videoId: true,
@@ -407,6 +407,7 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
           ? {
               linesJson: render.clip.voiceovers[0].linesJson,
               duckDb: render.clip.voiceovers[0].duckDb,
+              enabled: render.clip.voiceovers[0].enabled,
             }
           : null,
         censor: {

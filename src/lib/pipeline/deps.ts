@@ -105,8 +105,11 @@ export interface RenderTarget {
    * different edit from censoring: this shortens the clip, censoring does not.
    */
   removedWordIds: string[];
-  /** Completed voiceover lines to mix in, with the clip's own ducking level. */
-  voiceover: { linesJson: string | null; duckDb: number } | null;
+  /**
+   * Completed voiceover lines to mix in, with the clip's own ducking level.
+   * `enabled` false keeps the synthesized audio but leaves it out of the mix.
+   */
+  voiceover: { linesJson: string | null; duckDb: number; enabled: boolean } | null;
   quality: "P720" | "P1080" | "ORIGINAL";
   burnCaptions: boolean;
   /** Prisma CaptionAnimation enum value; "NONE" means a static ffmpeg burn. */

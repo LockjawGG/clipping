@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { executableExists } from "../src/lib/providers/executable.ts";
-import { getVoiceover, type VoiceoverServiceDeps } from "../src/lib/api/voiceover.ts";
+import {
+  getVoiceover,
+  upsertVoiceover,
+  type VoiceoverServiceDeps,
+} from "../src/lib/api/voiceover.ts";
 
 import {
   missingLines,
@@ -296,4 +300,66 @@ test("no synthesized audio means nothing for the preview to play", async () => {
   const vo = await getVoiceover(deps, "c1");
   assert.deepEqual(vo!.lines, []);
   assert.equal(vo!.lineCount, 0);
+});
+
+// --- the on/off switch ------------------------------------------------------
+
+function toggleDeps() {
+  const row = {
+    id: "vo1", clipId: "c1", sourceKind: "TRANSCRIPT", script: null, language: "en",
+    voiceId: "", speed: 1, duckDb: -12, enabled: true, status: "COMPLETED",
+    errorMessage: null,
+    linesJson: JSON.stringify({
+      version: 1,
+      lines: [{ ref: "seg:0", text: "one", durationMs: 2_000, audioKey: "vo/a.wav" }],
+    }),
+  };
+  const queued: unknown[] = [];
+  const updates: Array<Record<string, unknown>> = [];
+  const deps = {
+    db: {
+      clip: { findUnique: async () => ({ id: "c1", videoId: "v1", startMs: 0, endMs: 9_000, video: { projectId: "p1" } }) },
+      voiceover: {
+        findFirst: async () => row,
+        update: async ({ data }: { data: Record<string, unknown> }) => {
+          updates.push(data);
+          return { ...row, ...data };
+        },
+        create: async () => { throw new Error("unused"); },
+        delete: async () => { throw new Error("unused"); },
+      },
+    },
+    storage: { createDownloadUrl: async (k: string) => `https://files/${k}` },
+    assertProjectOwned: async () => {},
+    enqueue: async (j: unknown) => { queued.push(j); return "j1"; },
+  } as unknown as VoiceoverServiceDeps;
+  return { deps, queued, updates };
+}
+
+test("switching the narration off does not re-synthesize it", async () => {
+  const { deps, queued, updates } = toggleDeps();
+  const vo = await upsertVoiceover(deps, "c1", { enabled: false });
+
+  // The audio is untouched, so sending the clip back through Piper would be a
+  // minute of waiting for nothing — and would leave the panel saying QUEUED.
+  assert.deepEqual(queued, [], "no synthesis job");
+  assert.deepEqual(updates, [{ enabled: false }], "status left alone");
+  assert.equal(vo.enabled, false);
+  assert.equal(vo.status, "COMPLETED");
+  // The lines survive, so switching back on costs nothing.
+  assert.equal(vo.lineCount, 1);
+  assert.equal(vo.lines.length, 1);
+});
+
+test("changing what is spoken still re-synthesizes", async () => {
+  const { deps, queued, updates } = toggleDeps();
+  await upsertVoiceover(deps, "c1", { speed: 1.2 });
+  assert.equal(queued.length, 1, "speed changes the audio, so it must be redone");
+  assert.equal(updates[0].status, "QUEUED");
+});
+
+test("a toggle bundled with a real change is still a real change", async () => {
+  const { deps, queued } = toggleDeps();
+  await upsertVoiceover(deps, "c1", { enabled: true, voiceId: "other" });
+  assert.equal(queued.length, 1);
 });

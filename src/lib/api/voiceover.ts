@@ -27,6 +27,8 @@ export const voiceoverSchema = z
     voiceId: z.string().max(120),
     speed: z.number().min(0.5).max(2),
     duckDb: z.number().min(-40).max(0),
+    /** Mix the narration in, or leave it silent without discarding it. */
+    enabled: z.boolean(),
   })
   .partial()
   .strict();
@@ -55,6 +57,7 @@ export interface VoiceoverRow {
   voiceId: string;
   speed: number;
   duckDb: number;
+  enabled: boolean;
   linesJson: string | null;
   status: string;
   errorMessage: string | null;
@@ -162,19 +165,32 @@ export async function upsertVoiceover(
     orderBy: { updatedAt: "desc" },
   });
 
+  /**
+   * Switching the narration on or off changes nothing about the audio, so it
+   * must not cost a re-synthesis: flipping a switch would otherwise send the
+   * whole clip back through Piper and leave the panel saying QUEUED for a
+   * minute. Any other field is a real change to what gets spoken.
+   */
+  const onlyToggled =
+    existing !== null &&
+    Object.keys(patch).length > 0 &&
+    Object.keys(patch).every((k) => k === "enabled");
+
   const row = existing
     ? await deps.db.voiceover.update({
         where: { id: existing.id },
-        data: { ...patch, status: "QUEUED", errorMessage: null },
+        data: onlyToggled ? patch : { ...patch, status: "QUEUED", errorMessage: null },
       })
     : await deps.db.voiceover.create({ data: { clipId, ...patch, status: "QUEUED" } });
 
-  await deps.enqueue({
-    videoId: clip.videoId,
-    kind: "VOICEOVER",
-    payload: { voiceoverId: row.id },
-  });
-  return view(row);
+  if (!onlyToggled) {
+    await deps.enqueue({
+      videoId: clip.videoId,
+      kind: "VOICEOVER",
+      payload: { voiceoverId: row.id },
+    });
+  }
+  return view(row, await previewLines(deps, row));
 }
 
 export async function deleteVoiceover(
