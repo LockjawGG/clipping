@@ -1239,3 +1239,59 @@ test("no upper lane means no compositing pass at all", async () => {
   assert.equal(spy.layered.length, 0);
   assert.equal(spy.concats.length, 0, "and it is still just the one cut");
 });
+
+test("combining clips from two videos captions and censors both", async () => {
+  // The second recording's speech used to be invisible to the render: no
+  // captions, and — the part that matters — no bleep. Profanity in an inserted
+  // clip went out uncensored with nothing on screen saying so.
+  const perVideo: Record<string, Segment[]> = {
+    vid1: [
+      {
+        startMs: 0,
+        endMs: 40_000,
+        text: "well shit",
+        words: [
+          { id: "a1", text: "well", startMs: 10_500, endMs: 10_900 },
+          { id: "a2", text: "shit", startMs: 11_500, endMs: 11_900 },
+        ],
+      },
+    ],
+    vid2: [
+      {
+        startMs: 0,
+        endMs: 40_000,
+        text: "damn fuck",
+        words: [
+          { id: "b1", text: "damn", startMs: 500, endMs: 900 },
+          { id: "b2", text: "fuck", startMs: 1_500, endMs: 1_900 },
+        ],
+      },
+    ],
+  };
+  const seq = timeline([[10_000, 12_000]]);
+  seq.items.push({
+    id: "i1", trackId: "t1", order: 1, sourceIn: 0, sourceOut: 2_000,
+    sourceVideoId: "vid2", sourceAssetId: null, sourceStorageKey: "videos/vid2/source.mp4",
+  });
+
+  const { deps, spy } = makeDeps(
+    target({ sequence: seq, censor: censorOn, burnCaptions: true, captionAnimation: "POP" }),
+    {
+      transcripts: {
+        save: async () => ({ segmentCount: 0 }),
+        loadSegments: async (videoId: string) => perVideo[videoId] ?? [],
+      },
+    } as unknown as Partial<PipelineDeps>,
+  );
+  await renderHandler(ctx(deps, { renderId: "r-twosrc" }));
+
+  // "fuck" lives in the second video, 0.5s into a piece that starts at 2s.
+  const spans = spy.censors[0].spans.map((s) => Math.round(s.startSec * 100) / 100);
+  assert.ok(spans.some((s) => Math.abs(s - 1.44) < 0.02), `first video's word: ${spans}`);
+  assert.ok(spans.some((s) => Math.abs(s - 3.44) < 0.02), `second video's word: ${spans}`);
+
+  const text = spy.captioned[0].cueText;
+  assert.ok(!text.includes("shit") && !text.includes("fuck"), `nothing raw survives: ${text}`);
+  assert.ok(text.includes("well"), "the first video's clean words are captioned");
+  assert.ok(text.includes("damn"), "and so are the second's");
+});

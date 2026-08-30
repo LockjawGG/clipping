@@ -704,17 +704,38 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     const censoring = censorHasWork(censorCfg);
 
     if (target.burnCaptions || censoring) {
-      const segments = await deps.transcripts.loadSegments(target.videoId);
-      const all = segments.flatMap((s) => s.words);
-      words = composing
-        ? // Composed: a word belongs to whichever piece it was cut into, and
-          // moves to wherever that piece landed. Words in trimmed-out stretches
-          // are dropped — they are not in the video any more, so a caption or a
-          // bleep for them would fire over whatever was spliced in instead.
-          // Times come back source-absolute so the rebasing further down, which
-          // every consumer relies on, keeps working untouched.
-          remapWordsToTimeline(all, plan, target.videoId, target.startMs)
-        : all.filter((w) => w.startMs >= target.startMs && w.endMs <= target.endMs);
+      if (composing) {
+        // Every source on the timeline, not just the clip's own. Combining two
+        // clips from different recordings used to caption only the first and,
+        // worse, bleep only the first: the second one's profanity went out
+        // uncensored with nothing on screen saying so.
+        //
+        // A word belongs to whichever piece it was cut into and moves to
+        // wherever that piece landed. Words in trimmed-out stretches are
+        // dropped — they are not in the video any more, so a caption or a bleep
+        // for them would fire over whatever was spliced in instead. Times come
+        // back source-absolute, so the rebasing further down that every
+        // consumer relies on keeps working untouched.
+        const bySource = new Map<string, Awaited<ReturnType<typeof deps.transcripts.loadSegments>>>();
+        for (const sourceVideoId of new Set(plan.map((p) => p.sourceVideoId))) {
+          bySource.set(sourceVideoId, await deps.transcripts.loadSegments(sourceVideoId));
+        }
+        words = [...bySource.entries()]
+          .flatMap(([sourceVideoId, segments]) =>
+            remapWordsToTimeline(
+              segments.flatMap((sg) => sg.words),
+              plan,
+              sourceVideoId,
+              target.startMs,
+            ),
+          )
+          .sort((a, b) => a.startMs - b.startMs);
+      } else {
+        const segments = await deps.transcripts.loadSegments(target.videoId);
+        words = segments
+          .flatMap((sg) => sg.words)
+          .filter((w) => w.startMs >= target.startMs && w.endMs <= target.endMs);
+      }
     }
 
     // Censor the audio on the cut clip, before anything else touches it: every
