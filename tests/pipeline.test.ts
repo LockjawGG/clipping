@@ -350,20 +350,25 @@ test("ANALYZE refines suggestions and writes them as clips", async () => {
   assert.deepEqual(spy.enqueued, [{ videoId: "vid1", kind: "THUMBNAIL" }]);
 });
 
-test("ANALYZE does not queue thumbnails when it produced no clips", async () => {
-  const { deps, spy } = makeDeps({ analysis: { name: "fake", suggestClips: async () => [] } });
-  spy.savedTranscript = TRANSCRIPT;
-  await analyzeHandler(ctx(deps, "ANALYZE"));
-  assert.equal(spy.enqueued.length, 0);
-});
-
-test("ANALYZE no-ops (0 clips) when the recording has no speech", async () => {
+test("ANALYZE suggests nothing for a recording with no speech, but still posters it", async () => {
   const { deps, spy } = makeDeps({
     transcripts: { save: async () => ({ segmentCount: 0 }), loadSegments: async () => [], primaryLanguage: async () => "en", appendSegments: async () => ({ appended: 0, fromIndex: 0 }) },
   });
   const out = (await analyzeHandler(ctx(deps, "ANALYZE"))) as { clipCount: number };
   assert.equal(out.clipCount, 0);
-  assert.deepEqual(spy.enqueued, []); // no THUMBNAIL queued
+  // The poster is the video's picture in the library and has nothing to do
+  // with clips. Silence used to cost the video its thumbnail as well.
+  assert.deepEqual(spy.enqueued, [{ videoId: "vid1", kind: "THUMBNAIL" }]);
+});
+
+test("a video the analyser finds nothing in is still postered", async () => {
+  const { deps, spy } = makeDeps({
+    analysis: { name: "fake", suggestClips: async () => [] },
+  });
+  spy.savedTranscript = TRANSCRIPT;
+  const out = (await analyzeHandler(ctx(deps, "ANALYZE"))) as { clipCount: number };
+  assert.equal(out.clipCount, 0);
+  assert.deepEqual(spy.enqueued, [{ videoId: "vid1", kind: "THUMBNAIL" }]);
 });
 
 test("PROBE throws for an unknown video", async () => {

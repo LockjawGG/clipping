@@ -524,7 +524,10 @@ export const analyzeHandler: JobHandler<PipelineDeps> = async ({ job, deps, sign
   if (segments.length === 0) {
     // A recording with no discernible speech (silence, music, ambient PC audio)
     // transcribes to nothing — that's a valid outcome, not a failure. The video
-    // is already READY; there's just nothing to suggest clips from.
+    // is already READY; there's just nothing to suggest clips from. It still
+    // needs its poster: having nothing to say is not a reason to have no
+    // picture in the library.
+    await deps.queue.enqueue({ videoId: job.videoId, kind: "THUMBNAIL" });
     return { clipCount: 0, consideredSegments: 0, note: "no speech detected" };
   }
 
@@ -547,9 +550,13 @@ export const analyzeHandler: JobHandler<PipelineDeps> = async ({ job, deps, sign
   });
 
   const clipCount = await deps.clips.replaceSuggested(job.videoId, refined);
-  if (clipCount > 0) {
-    await deps.queue.enqueue({ videoId: job.videoId, kind: "THUMBNAIL" });
-  }
+  // Unconditional: this step also grabs the video's own poster, which the
+  // library and the content rail show, and that has nothing to do with whether
+  // the analyser found anything worth clipping. Gating it on clipCount left
+  // every video the analyser passed over with no picture at all. The handler
+  // only writes a poster the video does not already have, so re-running is
+  // cheap and a video with no clips is a single frame grab.
+  await deps.queue.enqueue({ videoId: job.videoId, kind: "THUMBNAIL" });
   return { clipCount, consideredSegments: segments.length };
 };
 
