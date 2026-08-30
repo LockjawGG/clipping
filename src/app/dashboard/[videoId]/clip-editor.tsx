@@ -15,7 +15,12 @@ import { audioSpans, bleepedIndices, censoredIndices } from "@/lib/censor/detect
 import type { CensorWordOverride, CensorWordOverrides } from "@/lib/censor/overrides.ts";
 import { type CaptionCensorMode, maskWords } from "@/lib/censor/mask.ts";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
-import { applyInteriorCuts, cutDurationMs, cutSpansForWords } from "@/lib/sequence/cuts.ts";
+import {
+  applyInteriorCuts,
+  cutDurationMs,
+  cutSpansForWords,
+  remapAcrossCuts,
+} from "@/lib/sequence/cuts.ts";
 import type { ClipPlan } from "@/lib/api/sequence.ts";
 import type { TranscriptView } from "../editor-pane";
 import { TRANSLATE_TARGETS } from "@/lib/translation/targets";
@@ -546,7 +551,8 @@ export function ClipEditor({
               durationMs: Math.max(1, Math.round(draft.endMs - draft.startMs)),
             },
           ];
-    if (draft.removedWordIds.length === 0) return base;
+    const upper = plan?.layers ?? [];
+    if (draft.removedWordIds.length === 0) return { base, layers: upper };
     // Word times arrive rebased onto the clip; cuts are expressed against the
     // source, which is the coordinate the pieces use.
     const inSource = words.map((w) => ({
@@ -554,7 +560,13 @@ export function ClipEditor({
       startMs: w.startMs + clip.startMs,
       endMs: w.endMs + clip.startMs,
     }));
-    return applyInteriorCuts(base, cutSpansForWords(inSource, draft.removedWordIds, videoId));
+    const cut = applyInteriorCuts(base, cutSpansForWords(inSource, draft.removedWordIds, videoId));
+    return {
+      base: cut,
+      // A layer sits at a position in the output, so a cut earlier in the clip
+      // moves it — the same correction the renderer makes.
+      layers: upper.map((l) => ({ ...l, timelineStart: remapAcrossCuts(base, cut, l.timelineStart) })),
+    };
   }, [plan, videoId, clip.startMs, clip.endMs, draft.startMs, draft.endMs, draft.removedWordIds, words]);
 
   /** A playable URL for every source the plan touches. */
@@ -1456,7 +1468,8 @@ export function ClipEditor({
         captionsOn={captionsOn}
         caption={captionDraft}
         wordStyles={wordStyles}
-        plan={previewPlan}
+        plan={previewPlan.base}
+        planLayers={previewPlan.layers}
         planSourceUrls={planSourceUrls}
         voiceover={narration.lines.length > 0 ? narration : null}
         bleeps={bleepSpans}

@@ -182,4 +182,8 @@ the static presets; it's an order of magnitude faster.
   *reorder* of timeline pieces the way captions and censoring do. That is the
   usual convention for a graphics layer, but the two behaviours differ and
   nothing in the UI says so.
+- The preview plays the timeline by seeking one `<video>` element, so a join
+  between two non-contiguous pieces costs a seek — a visible hitch on a slow
+  disk. Consecutive pieces that are contiguous in one source need no seek, which
+  is the untouched case.
 - Transcription confidence is stored but not yet enforced as a render gate.

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { StorageProvider } from "../providers/types.ts";
 import { insertionIndex, laneItems, packLanes } from "../sequence/lane.ts";
-import { buildComposePlan, type ComposePiece } from "../sequence/compose.ts";
+import { buildComposePlan, buildLayerPlan, type ComposePiece } from "../sequence/compose.ts";
 import { ApiError } from "./http.ts";
 
 /**
@@ -863,6 +863,11 @@ export async function splitSequenceItem(
  */
 export interface ClipPlan {
   pieces: ComposePiece[];
+  /**
+   * Pieces on the lanes above the base, bottom lane first — the order they are
+   * laid down in. Each covers the base for as long as it lasts.
+   */
+  layers: ComposePiece[];
   /** Playable URL per source video id referenced by the pieces. */
   sourceUrls: Record<string, string>;
 }
@@ -902,16 +907,21 @@ export async function listClipPlansBulk(
     }));
     const pieces = buildComposePlan(items, base.id);
     if (pieces.length === 0) continue;
+    const trackOrder = [...seq.tracks]
+      .filter((t) => t.kind === "VIDEO")
+      .sort((a, b) => a.index - b.index)
+      .map((t) => t.id);
+    const layers = buildLayerPlan(items, base.id, trackOrder);
 
     const sourceUrls: Record<string, string> = {};
-    for (const piece of pieces) {
+    for (const piece of [...pieces, ...layers]) {
       if (!piece.sourceStorageKey || sourceUrls[piece.sourceVideoId]) continue;
       if (!urls.has(piece.sourceStorageKey)) {
         urls.set(piece.sourceStorageKey, deps.storage.createDownloadUrl(piece.sourceStorageKey));
       }
       sourceUrls[piece.sourceVideoId] = await urls.get(piece.sourceStorageKey)!;
     }
-    out[seq.clipId] = { pieces, sourceUrls };
+    out[seq.clipId] = { pieces, layers, sourceUrls };
   }
   return out;
 }

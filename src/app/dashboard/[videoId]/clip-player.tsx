@@ -46,6 +46,18 @@ interface Props {
     timelineStart: number;
     durationMs: number;
   }>;
+  /**
+   * Pieces on the lanes above the base. Each covers the base for as long as it
+   * lasts, letterboxed into the frame — the render's `overlay` chain, which
+   * takes only the base's audio, so these play silent.
+   */
+  planLayers?: ReadonlyArray<{
+    sourceVideoId: string;
+    sourceIn: number;
+    sourceOut: number;
+    timelineStart: number;
+    durationMs: number;
+  }>;
   /** A playable URL per source video id the plan references. */
   planSourceUrls?: Record<string, string>;
   /**
@@ -124,6 +136,7 @@ export const ClipPlayer = memo(function ClipPlayer({
   startMs,
   endMs,
   plan,
+  planLayers,
   planSourceUrls,
   voiceover,
   bleeps,
@@ -270,6 +283,35 @@ export const ClipPlayer = memo(function ClipPlayer({
     else v.addEventListener("loadedmetadata", seek, { once: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceUrl, renderUrl, mode, startMs, endMs, planMs]);
+
+  /**
+   * Show, hide and seek the lanes above the base.
+   *
+   * A layer is its own element stacked over the base video. It is silent
+   * because the render is: the composite maps only the base's audio. And the
+   * base plays on underneath — a layer covers part of the clip, not all of it.
+   */
+  const layerRefs = useRef(new Map<number, HTMLVideoElement>());
+  const syncLayers = useCallback(
+    (posMs: number, running: boolean) => {
+      const list = mode === "source" ? (planLayers ?? []) : [];
+      list.forEach((layer, i) => {
+        const el = layerRefs.current.get(i);
+        if (!el) return;
+        const on = posMs >= layer.timelineStart && posMs < layer.timelineStart + layer.durationMs;
+        el.style.visibility = on ? "visible" : "hidden";
+        if (!on) {
+          if (!el.paused) el.pause();
+          return;
+        }
+        const want = (layer.sourceIn + (posMs - layer.timelineStart)) / 1000;
+        if (Math.abs(el.currentTime - want) > 0.25) el.currentTime = want;
+        if (running && el.paused) void el.play().catch(() => {});
+        if (!running && !el.paused) el.pause();
+      });
+    },
+    [planLayers, mode],
+  );
 
   /**
    * Where the playhead is on the timeline, read from the element's own clock
@@ -427,6 +469,7 @@ export const ClipPlayer = memo(function ClipPlayer({
     (posMs: number, running: boolean) => {
       const v = videoRef.current;
       if (!v) return;
+      syncLayers(posMs, running);
       const narrating = syncVoiceover(posMs, running);
       const bleep =
         mode === "source"
@@ -442,13 +485,14 @@ export const ClipPlayer = memo(function ClipPlayer({
       stopTone();
       v.volume = narrating ? Math.pow(10, (voiceover?.duckDb ?? 0) / 20) : 1;
     },
-    [bleeps, mode, playTone, stopTone, syncVoiceover, voiceover],
+    [bleeps, mode, playTone, stopTone, syncLayers, syncVoiceover, voiceover],
   );
 
   // Nothing should keep talking once the video stops.
   useEffect(() => {
     if (playing) return;
     for (const el of voRefs.current.values()) el.pause();
+    for (const el of layerRefs.current.values()) el.pause();
     stopTone();
   }, [playing, stopTone]);
 
@@ -667,6 +711,32 @@ export const ClipPlayer = memo(function ClipPlayer({
         >
           {vttUrl && <track kind="subtitles" src={vttUrl} label="Captions" />}
         </video>
+        {/* Lanes above the base, stacked over it. `object-contain` is the
+            preview's version of the render's scale-to-fit-and-pad: the layer
+            keeps its shape and the base shows through the letterboxing.
+            Muted, because the composite maps only the base's audio. */}
+        {mode === "source" &&
+          (planLayers ?? []).map((layer, i) => {
+            const url = planSourceUrls?.[layer.sourceVideoId];
+            if (!url) return null;
+            return (
+              <video
+                key={`${layer.sourceVideoId}-${layer.timelineStart}-${i}`}
+                ref={(el) => {
+                  if (el) layerRefs.current.set(i, el);
+                  else layerRefs.current.delete(i);
+                }}
+                src={url}
+                muted
+                playsInline
+                preload="auto"
+                style={{ visibility: "hidden" }}
+                onClick={togglePlay}
+                className="pointer-events-auto absolute inset-0 m-auto h-full w-full cursor-pointer object-contain"
+              />
+            );
+          })}
+
         {/* Narration, one element per line. Hidden: the video element
             stays the only thing on screen, these only make sound. */}
         {mode === "source" &&
