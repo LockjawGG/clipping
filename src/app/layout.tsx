@@ -20,7 +20,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
+    // The script below stamps data-theme before React hydrates, so the server's
+    // markup and the client's genuinely differ on this one element. Suppressing
+    // it here is the documented pattern; it covers this element's own
+    // attributes only, not anything inside it.
+    <html
+      lang="en"
+      className={`${sans.variable} ${mono.variable}`}
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
