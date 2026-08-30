@@ -61,6 +61,7 @@ export function wordSpanCss(s: WordStyle | undefined): React.CSSProperties {
  */
 const Word = memo(function Word({
   censored,
+  bleeped,
   outsideClip,
   word,
   style,
@@ -70,8 +71,10 @@ const Word = memo(function Word({
   onToggleSelect,
   onSeek,
 }: {
-  /** This word will be masked in the render. */
+  /** This word will be masked in the captions. */
   censored?: boolean;
+  /** This word will be bleeped in the audio. Independent of the mask. */
+  bleeped?: boolean;
   /** Falls outside the clip's range, so it never reaches the output. */
   outsideClip?: boolean;
   word: TranscriptWord;
@@ -146,16 +149,23 @@ const Word = memo(function Word({
               ? "bg-amber-400/25"
               : "hover:bg-accent/15"
       } ${
-        // One meaning: this word will be bleeped. A hand-picked word is struck
-        // even with detection off; an auto-detected one is not.
+        // The strike means masked in the captions; the underline means bleeped
+        // in the audio. They are separate decisions, so a word can carry
+        // either, both, or neither.
         censored ? "line-through decoration-2 decoration-danger" : ""
+      } ${
+        bleeped && !censored ? "underline decoration-dotted decoration-2 decoration-accent" : ""
       }`}
       title={
         outsideClip
           ? "Outside this clip - it will not appear in the render"
-          : censored
-            ? "Censored in this clip - select it and untick Censor to keep it"
-            : "Click to jump the preview here · double-click to fix a typo"
+          : censored && bleeped
+            ? "Masked in the captions and bleeped in the audio"
+            : censored
+              ? "Masked in the captions, but left audible"
+              : bleeped
+                ? "Bleeped in the audio, but not masked in the captions"
+                : "Click to jump the preview here · double-click to fix a typo"
       }
     >
       {value}
@@ -281,22 +291,22 @@ export const EditableTranscript = memo(function EditableTranscript({
     selectedByCensored.censored.length + selectedByCensored.clean.length;
 
   /**
-   * The selected occurrences that are censored, split by whether each is
-   * bleeped. Only censored words appear: the audio is a subset of the mask, so
-   * offering a bleep for an uncensored word would promise something the render
-   * would not do.
+   * The selected occurrences, split by whether each is bleeped. Every
+   * censorable word appears, not just the masked ones: silencing a word and
+   * masking its caption are separate choices, so the bleep has to be offered
+   * on its own.
    */
   const selectedByBleeped = useMemo(() => {
     const on: string[] = [];
     const off: string[] = [];
     for (const row of rows) {
       for (const w of row.words) {
-        if (!selectedIds.has(w.id) || !inClip(w) || !censoredIds?.has(w.id)) continue;
+        if (!selectedIds.has(w.id) || !censorKey(w.text) || !inClip(w)) continue;
         (bleepedIds?.has(w.id) ? on : off).push(w.id);
       }
     }
     return { bleeped: on, silent: off };
-  }, [rows, selectedIds, censoredIds, bleepedIds, inClip]);
+  }, [rows, selectedIds, bleepedIds, inClip]);
 
   const bleepableCount = selectedByBleeped.bleeped.length + selectedByBleeped.silent.length;
 
@@ -382,15 +392,16 @@ export const EditableTranscript = memo(function EditableTranscript({
           placeholder="Search the transcript…"
           className="field h-7 min-w-0 flex-1 py-0 text-xs"
         />
-        {onSetAudioCensored && censoredCount > 0 && (
+        {onSetAudioCensored && (censoredCount > 0 || bleepedCount > 0) && (
           <button
             type="button"
             onClick={() => onSetAudioCensored(!audioCensored)}
             aria-pressed={audioCensored ?? false}
             title={
-              `${bleepedCount} of ${censoredCount} censored word${censoredCount === 1 ? " is" : "s are"} bleeped. ` +
-              `Click to ${audioCensored ? "stop bleeping by default" : "bleep by default"} — ` +
-              "individual words can still be overridden, and the caption text stays masked either way."
+              `${bleepedCount} word${bleepedCount === 1 ? " is" : "s are"} bleeped in the audio; ` +
+              `${censoredCount} masked in the captions. ` +
+              `Click to ${audioCensored ? "stop bleeping censored words by default" : "bleep censored words by default"} — ` +
+              "individual words can still be ticked either way."
             }
             className={`pill shrink-0 ${bleepedCount > 0 ? "border-danger/50 text-danger" : "text-muted"}`}
           >
@@ -398,9 +409,7 @@ export const EditableTranscript = memo(function EditableTranscript({
                 a plain on/off label would misstate what the render does. */}
             {bleepedCount === 0
               ? "🔊 audio uncensored"
-              : bleepedCount === censoredCount
-                ? "🔇 audio bleeped"
-                : `🔇 ${bleepedCount}/${censoredCount} bleeped`}
+              : `🔇 ${bleepedCount} bleeped`}
           </button>
         )}
         {q.length > 0 && (
@@ -576,10 +585,9 @@ export const EditableTranscript = memo(function EditableTranscript({
                         className="mr-0.5 h-2.5 w-2.5 translate-y-px cursor-pointer accent-[rgb(var(--c-danger))] align-middle"
                       />
                     )}
-                    {/* The audio half, offered only once the word is censored
-                        — a bleep for an unmasked word is not a thing the
-                        render can do. */}
-                    {selectedIds.has(w.id) && onSetBleeped && inClip(w) && censoredIds?.has(w.id) && (
+                    {/* The audio, on its own axis: bleeping a word and masking
+                        its caption are separate decisions. */}
+                    {selectedIds.has(w.id) && onSetBleeped && inClip(w) && (
                       <input
                         type="checkbox"
                         checked={bleepedIds?.has(w.id) ?? false}
@@ -594,6 +602,7 @@ export const EditableTranscript = memo(function EditableTranscript({
                       style={styles[w.id]}
                       selected={selectedIds.has(w.id)}
                       censored={censoredIds?.has(w.id) && inClip(w)}
+                      bleeped={bleepedIds?.has(w.id) && inClip(w)}
                       outsideClip={!inClip(w)}
                       matched={matches.set.has(w.id)}
                       active={w.id === activeId}

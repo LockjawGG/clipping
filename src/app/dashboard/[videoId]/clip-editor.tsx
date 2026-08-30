@@ -11,7 +11,7 @@ import { ClipPlayer, type PreviewWord } from "./clip-player";
 import { KEYFRAME_SNAP_MS } from "./focus-window";
 import { CensorControls, type CensorSettings } from "./censor-controls";
 import { VoiceoverPanel } from "./voiceover-panel";
-import { censoredIndices, isBleeped } from "@/lib/censor/detect.ts";
+import { bleepedIndices, censoredIndices } from "@/lib/censor/detect.ts";
 import { maskWords } from "@/lib/censor/mask.ts";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
 import type { TranscriptView } from "../editor-pane";
@@ -407,15 +407,15 @@ export function ClipEditor({
   );
 
   /**
-   * Of the censored words, the ones the render will actually bleep. Same
-   * relationship to `censoredWordIds` as the audio has to the mask: a subset,
-   * never a superset — a word that is not censored is never bleeped.
+   * The words the render will bleep. Computed independently of the mask, not
+   * filtered from it: the two are separate decisions, so this set can name a
+   * word the captions never touch.
    */
   const bleepedWordIds = useMemo(() => {
-    const out = new Set<string>();
-    for (const id of censoredWordIds) if (isBleeped(censorCfg, id)) out.add(id);
-    return out;
-  }, [censoredWordIds, censorCfg]);
+    const flat = transcript.flatMap((r) => r.words);
+    if (flat.length === 0) return new Set<string>();
+    return new Set([...bleepedIndices(flat, censorCfg)].map((i) => flat[i].id));
+  }, [transcript, censorCfg]);
 
   /**
    * Turn the bleep on or off for specific occurrences.
@@ -432,12 +432,15 @@ export function ClipEditor({
         const exempt = new Set(d.censorAudioExemptWordIds);
         const force = new Set(d.censorAudioForceWordIds);
         for (const id of wordIds) {
+          // What the audio would do with no override at all: follow the mask,
+          // unless the clip-wide bleep is switched off.
+          const byDefault = d.censorAudioEnabled && censoredWordIds.has(id);
           if (bleeped) {
             exempt.delete(id);
-            if (!d.censorAudioEnabled) force.add(id);
+            if (!byDefault) force.add(id);
           } else {
             force.delete(id);
-            if (d.censorAudioEnabled) exempt.add(id);
+            if (byDefault) exempt.add(id);
           }
         }
         return {
@@ -447,7 +450,7 @@ export function ClipEditor({
         };
       });
     },
-    [],
+    [censoredWordIds],
   );
 
   const previewWords = useMemo(() => {

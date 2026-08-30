@@ -7,7 +7,6 @@ import {
   censorHasAudioWork,
   censorHasWork,
   detectSpans,
-  isBleeped,
   normalizeToken,
 } from "../src/lib/censor/detect.ts";
 import { maskWord, maskWords } from "../src/lib/censor/mask.ts";
@@ -403,22 +402,49 @@ test("censorHasAudioWork separates 'nothing to bleep' from 'bleep is off'", () =
   );
   assert.equal(
     censorHasAudioWork({ enabled: false, sensitivity: "MEDIUM", audioForceWordIds: ["w1"] }),
-    false,
-    "nothing is censored, so nothing can be bleeped",
+    true,
+    "an audio-only mark is work in its own right, masking nothing",
   );
 });
 
-test("isBleeped follows the same precedence as the spans", () => {
-  const cfg = {
-    enabled: true,
-    sensitivity: "MEDIUM" as const,
-    audioEnabled: true,
-    audioExemptWordIds: ["a"],
-    audioForceWordIds: ["b"],
-  };
-  assert.equal(isBleeped(cfg, "a"), false, "exempt wins over the default");
-  assert.equal(isBleeped(cfg, "b"), true);
-  assert.equal(isBleeped(cfg, "c"), true, "falls back to the clip default");
-  assert.equal(isBleeped({ ...cfg, audioEnabled: false }, "c"), false);
-  assert.equal(isBleeped({ ...cfg, audioEnabled: false }, "b"), true, "force beats the default");
+test("mask and bleep are independent axes, all four combinations reachable", () => {
+  const words = [
+    { id: "w1", text: "shit", startMs: 0, endMs: 400 },
+    // Well clear of w1: spans within 60ms of padding of each other merge, and
+    // this test is about membership, not merging.
+    { id: "w2", text: "hello", startMs: 2_000, endMs: 2_300 },
+  ];
+  const on = { enabled: true, sensitivity: "MEDIUM" as const };
+
+  // masked + bleeped: the ordinary case, no overrides at all.
+  assert.deepEqual(detectSpans(words, on).map((s) => s.wordId), ["w1"]);
+  assert.deepEqual(audioSpans(words, on).map((s) => s.wordId), ["w1"]);
+
+  // masked, audible.
+  const quiet = { ...on, audioExemptWordIds: ["w1"] };
+  assert.deepEqual(detectSpans(words, quiet).map((s) => s.wordId), ["w1"]);
+  assert.deepEqual(audioSpans(words, quiet), []);
+
+  // bleeped, unmasked — an ordinary word silenced without touching the captions.
+  const loud = { ...on, audioForceWordIds: ["w2"] };
+  assert.deepEqual(detectSpans(words, loud).map((s) => s.wordId), ["w1"], "w2 is not masked");
+  assert.deepEqual(audioSpans(words, loud).map((s) => s.wordId), ["w1", "w2"]);
+
+  // an audio-only mark is work even with detection entirely off.
+  const only = { enabled: false, sensitivity: "MEDIUM" as const, audioForceWordIds: ["w2"] };
+  assert.equal(censorHasWork(only), true);
+  assert.deepEqual(detectSpans(words, only), [], "nothing is masked");
+  assert.deepEqual(audioSpans(words, only).map((s) => s.wordId), ["w2"]);
+});
+
+test("the clip-wide bleep switch is a default the per-word ticks override", () => {
+  const words = [{ id: "w1", text: "shit", startMs: 0, endMs: 400 }];
+  const off = { enabled: true, sensitivity: "MEDIUM" as const, audioEnabled: false };
+  assert.deepEqual(detectSpans(words, off).map((s) => s.wordId), ["w1"], "still masked");
+  assert.deepEqual(audioSpans(words, off), [], "not bleeped");
+  assert.deepEqual(
+    audioSpans(words, { ...off, audioForceWordIds: ["w1"] }).map((s) => s.wordId),
+    ["w1"],
+    "a ticked word beats the switch",
+  );
 });

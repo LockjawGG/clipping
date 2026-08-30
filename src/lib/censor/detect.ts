@@ -75,7 +75,7 @@ export interface CensorSpan {
  * Returning the tier rather than a boolean is what lets the review panel say
  * which of those three decided it.
  */
-function classify(
+function maskTier(
   word: CensorWord,
   index: number,
   ctx: {
@@ -113,7 +113,39 @@ function classify(
   return null;
 }
 
-/** The sets `classify` needs, built once per call rather than per word. */
+/**
+ * Is this occurrence bleeped in the audio?
+ *
+ * The audio is a *parallel* decision, not a refinement of the mask. By default
+ * it follows the mask — marking a word censors it everywhere, which is what
+ * people expect — but either of its own overrides can break that in either
+ * direction, so all four combinations are reachable:
+ *
+ *   masked + bleeped    the ordinary case
+ *   masked, audible     "show s*** but let them hear it"
+ *   bleeped, unmasked   silence a name or a detail the captions never showed
+ *   neither             untouched
+ *
+ * That is why the force check comes before the mask lookup: an audio-forced
+ * word is bleeped whether or not anything masks it.
+ */
+function audioTier(
+  word: CensorWord,
+  index: number,
+  ctx: AudioCtx,
+): CensorTier | "custom" | "manual" | null {
+  const id = word.id;
+  if (id) {
+    if (ctx.audioForceIds.has(id)) return "manual";
+    if (ctx.audioExemptIds.has(id)) return null;
+  }
+  if (!ctx.audio) return null;
+  return maskTier(word, index, ctx);
+}
+
+type AudioCtx = ReturnType<typeof context>;
+
+/** The sets the classifiers need, built once per call rather than per word. */
 function context(config: CensorConfigInput) {
   return {
     lex: lexiconFor(config.sensitivity),
@@ -129,40 +161,18 @@ function context(config: CensorConfigInput) {
 }
 
 /**
- * Is a *already-censored* word bleeped in the audio?
- *
- * Same precedence shape as `classify`: the decision made about this occurrence
- * beats the clip-wide default. Deliberately not folded into `classify` — being
- * censored and being bleeped are separate questions, and a word can be the
- * first without the second (masked caption over audible speech).
- */
-function bleeped(
-  word: CensorWord,
-  ctx: { audio: boolean; audioExemptIds: Set<string>; audioForceIds: Set<string> },
-): boolean {
-  const id = word.id;
-  if (id) {
-    if (ctx.audioForceIds.has(id)) return true;
-    if (ctx.audioExemptIds.has(id)) return false;
-  }
-  return ctx.audio;
-}
-
-/** Whether this word is bleeped, for a caller that has only the id and config. */
-export function isBleeped(config: CensorConfigInput, wordId: string): boolean {
-  if (config.audioForceWordIds?.includes(wordId)) return true;
-  if (config.audioExemptWordIds?.includes(wordId)) return false;
-  return config.audioEnabled ?? true;
-}
-
-/**
  * Is there anything for the censor pass to do?
  *
  * Not the same as `enabled`: a clip with automatic detection off but words
  * ticked by hand still has to run, or those marks would be silently dropped.
  */
 export function censorHasWork(config: CensorConfigInput): boolean {
-  return config.enabled || (config.censorWordIds?.length ?? 0) > 0;
+  return (
+    config.enabled ||
+    (config.censorWordIds?.length ?? 0) > 0 ||
+    // An audio-only mark is work too, even though it masks nothing.
+    (config.audioForceWordIds?.length ?? 0) > 0
+  );
 }
 
 /**
@@ -270,9 +280,8 @@ function collect(
   const ctx = context(config);
   const out: CensorSpan[] = [];
   words.forEach((w, index) => {
-    const tier = classify(w, index, ctx);
+    const tier = audioOnly ? audioTier(w, index, ctx) : maskTier(w, index, ctx);
     if (!tier) return;
-    if (audioOnly && !bleeped(w, ctx)) return;
 
     out.push({
       ...(w.id ? { wordId: w.id } : {}),
@@ -323,7 +332,22 @@ export function censoredIndices(
   const ctx = context(config);
   const out = new Set<number>();
   words.forEach((w, index) => {
-    if (classify(w, index, ctx)) out.add(index);
+    if (maskTier(w, index, ctx)) out.add(index);
+  });
+  return out;
+}
+
+/** The same, for the words the audio will bleep. Not a subset of the above:
+ *  the two axes are independent, so this can name a word that is never masked. */
+export function bleepedIndices(
+  words: readonly CensorWord[],
+  config: CensorConfigInput,
+): Set<number> {
+  if (!censorHasAudioWork(config)) return new Set();
+  const ctx = context(config);
+  const out = new Set<number>();
+  words.forEach((w, index) => {
+    if (audioTier(w, index, ctx)) out.add(index);
   });
   return out;
 }
