@@ -19,6 +19,15 @@ export interface TranscriptRow {
   words: TranscriptWord[];
 }
 
+/**
+ * The lookup key a word contributes to the clip's allow / deny lists.
+ *
+ * Those lists are keyed by term, not by occurrence, because that is what the
+ * renderer matches on -- so ticking one "damn" ticks every "damn" in the clip,
+ * and the transcript visibly updates all of them at once.
+ */
+export const censorKey = (text: string) => text.toLowerCase().replace(/[^\p{L}']/gu, "");
+
 /** Per-word caption style override. `null` = attribute not set. */
 export interface WordStyle {
   color: string | null;
@@ -161,10 +170,12 @@ interface Props {
   /** Word ids the clip's censor settings would currently mask. */
   censoredIds?: ReadonlySet<string>;
   /**
-   * Exempt these words from censoring on this clip only. Takes the words'
-   * text — the exemption is per-clip and never edits the shared lexicon.
+   * Turn censoring on or off for these words on this clip only. Takes the
+   * words' text — the override is per-clip and never edits the shared lexicon.
    */
-  onUncensor?: (texts: string[]) => void;
+  onSetCensored?: (texts: string[], censored: boolean) => void;
+  /** Show a per-word censor checkbox. Only meaningful while censoring is on. */
+  showCensorChecks?: boolean;
 }
 
 /**
@@ -184,7 +195,8 @@ export const EditableTranscript = memo(function EditableTranscript({
   onSeek,
   onClipFromSelection,
   censoredIds,
-  onUncensor,
+  onSetCensored,
+  showCensorChecks,
 }: Props) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
@@ -205,17 +217,21 @@ export const EditableTranscript = memo(function EditableTranscript({
     return { ids, set: new Set(ids) };
   }, [rows, q]);
 
-  /** Selected words that censoring would currently mask, de-duplicated. */
-  const selectedCensored = useMemo(() => {
-    if (!censoredIds || censoredIds.size === 0) return [] as string[];
-    const seen = new Set<string>();
+  /**
+   * The selected words, split by whether they are currently censored, so the
+   * toolbar can offer both directions rather than only the one.
+   */
+  const selectedByCensored = useMemo(() => {
+    const on = new Set<string>();
+    const off = new Set<string>();
     for (const row of rows)
-      for (const w of row.words)
-        if (selectedIds.has(w.id) && censoredIds.has(w.id)) {
-          const key = w.text.toLowerCase().replace(/[^\p{L}']/gu, "");
-          if (key) seen.add(key);
-        }
-    return [...seen];
+      for (const w of row.words) {
+        if (!selectedIds.has(w.id)) continue;
+        const key = censorKey(w.text);
+        if (!key) continue;
+        (censoredIds?.has(w.id) ? on : off).add(key);
+      }
+    return { censored: [...on], clean: [...off] };
   }, [rows, selectedIds, censoredIds]);
 
   const selectedSpan = useMemo(() => {
@@ -350,14 +366,30 @@ export const EditableTranscript = memo(function EditableTranscript({
               Clip from selection
             </button>
           )}
-          {onUncensor && selectedCensored.length > 0 && (
+          {onSetCensored && selectedByCensored.censored.length > 0 && (
             <button
               type="button"
               className="btn btn-ghost btn-sm text-accent"
               title="Stop censoring these words on this clip. The shared word list is unchanged."
-              onClick={() => onUncensor(selectedCensored)}
+              onClick={() => onSetCensored(selectedByCensored.censored, false)}
             >
-              Don&apos;t censor {selectedCensored.length === 1 ? `"${selectedCensored[0]}"` : `these ${selectedCensored.length}`}
+              Don&apos;t censor{" "}
+              {selectedByCensored.censored.length === 1
+                ? `"${selectedByCensored.censored[0]}"`
+                : `these ${selectedByCensored.censored.length}`}
+            </button>
+          )}
+          {onSetCensored && selectedByCensored.clean.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm text-danger"
+              title="Censor these words on this clip. The shared word list is unchanged."
+              onClick={() => onSetCensored(selectedByCensored.clean, true)}
+            >
+              Censor{" "}
+              {selectedByCensored.clean.length === 1
+                ? `"${selectedByCensored.clean[0]}"`
+                : `these ${selectedByCensored.clean.length}`}
             </button>
           )}
           <button type="button" onClick={onClearSelection} className="btn btn-ghost btn-sm ml-auto">
@@ -384,17 +416,32 @@ export const EditableTranscript = memo(function EditableTranscript({
                 </span>
               ) : (
                 row.words.map((w) => (
-                <Word
-                  key={w.id}
-                  word={w}
-                  style={styles[w.id]}
-                  selected={selectedIds.has(w.id)}
-                  censored={censoredIds?.has(w.id)}
-                  matched={matches.set.has(w.id)}
-                  active={w.id === activeId}
-                  onToggleSelect={onToggleSelect}
-                  onSeek={onSeek}
-                />
+                  // The checkbox is a *sibling* of the word, never a child:
+                  // the word itself is a button, and nesting one interactive
+                  // control inside another breaks both keyboard and screen
+                  // reader behaviour.
+                  <span key={w.id} className="whitespace-nowrap">
+                    {showCensorChecks && onSetCensored && (
+                      <input
+                        type="checkbox"
+                        checked={censoredIds?.has(w.id) ?? false}
+                        onChange={(e) => onSetCensored([censorKey(w.text)], e.target.checked)}
+                        aria-label={`Censor "${w.text}"`}
+                        title={`Censor every "${censorKey(w.text)}" in this clip`}
+                        className="mr-0.5 h-2.5 w-2.5 translate-y-px cursor-pointer accent-[rgb(var(--c-danger))] align-middle"
+                      />
+                    )}
+                    <Word
+                      word={w}
+                      style={styles[w.id]}
+                      selected={selectedIds.has(w.id)}
+                      censored={censoredIds?.has(w.id)}
+                      matched={matches.set.has(w.id)}
+                      active={w.id === activeId}
+                      onToggleSelect={onToggleSelect}
+                      onSeek={onSeek}
+                    />
+                  </span>
                 ))
               )}
             </span>

@@ -13,7 +13,7 @@ import { CensorControls, type CensorSettings } from "./censor-controls";
 import { VoiceoverPanel } from "./voiceover-panel";
 import { censoredIndices } from "@/lib/censor/detect.ts";
 import { maskWords } from "@/lib/censor/mask.ts";
-import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
+import { censorKey, EditableTranscript, type TranscriptRow } from "./editable-transcript";
 import type { TranscriptView } from "../editor-pane";
 import { TRANSLATE_TARGETS } from "@/lib/translation/targets";
 import { OverlayPanel, type OverlayView } from "./overlay-panel";
@@ -313,22 +313,72 @@ export function ClipEditor({
   );
 
   const censoredWordIds = useMemo(() => {
+    // Nothing is marked while censoring is off: the strike-through means "this
+    // will be masked in the render", so showing it on a clip that will render
+    // untouched would be claiming something false.
+    if (!censorCfg.enabled) return new Set<string>();
     const flat = transcript.flatMap((r) => r.words);
     if (flat.length === 0) return new Set<string>();
-    const idx = censoredIndices(flat, { ...censorCfg, enabled: true });
-    // Marked even while censoring is off, so you can see what turning it on
-    // would do before committing to it.
-    return new Set([...idx].map((i) => flat[i].id));
+    return new Set([...censoredIndices(flat, censorCfg)].map((i) => flat[i].id));
   }, [transcript, censorCfg]);
 
-  /** Exempt words on this clip only — the shared lexicon is never touched. */
-  const uncensorWords = useCallback((texts: string[]) => {
-    setDraft((d) => {
-      const next = [...d.censorAllowList];
-      for (const t of texts) if (t && !next.includes(t)) next.push(t);
-      return next.length === d.censorAllowList.length ? d : { ...d, censorAllowList: next };
+  /**
+   * Words the built-in lexicon alone would catch, ignoring this clip's
+   * overrides. Needed to make the per-word toggle reversible: un-ticking a
+   * lexicon word means *exempting* it, while un-ticking a word you added
+   * yourself means simply removing it again.
+   */
+  const lexiconWordIds = useMemo(() => {
+    const flat = transcript.flatMap((r) => r.words);
+    if (flat.length === 0) return new Set<string>();
+    const idx = censoredIndices(flat, {
+      enabled: true,
+      sensitivity: draft.censorSensitivity,
     });
-  }, []);
+    return new Set([...idx].map((i) => flat[i].id));
+  }, [transcript, draft.censorSensitivity]);
+
+  /**
+   * Turn censoring on or off for some words, on this clip only — the shared
+   * lexicon is never touched.
+   *
+   * Both directions are expressed through the same two per-clip lists, which
+   * is what makes the toggle reversible rather than one-way:
+   *   censor    -> drop it from the allow list; add to deny only if the
+   *                lexicon would not have caught it anyway
+   *   uncensor  -> drop it from the deny list; add to allow only if the
+   *                lexicon *would* have caught it
+   * So a word always returns to the state it came from, and neither list
+   * accumulates entries that no longer do anything.
+   */
+  const setWordsCensored = useCallback(
+    (texts: string[], censored: boolean) => {
+      const keys = texts.map((t) => t.trim().toLowerCase()).filter(Boolean);
+      if (keys.length === 0) return;
+      const fromLexicon = new Set(
+        transcript
+          .flatMap((r) => r.words)
+          .filter((w) => lexiconWordIds.has(w.id))
+          .map((w) => censorKey(w.text)),
+      );
+
+      setDraft((d) => {
+        const allow = new Set(d.censorAllowList);
+        const deny = new Set(d.censorDenyList);
+        for (const k of keys) {
+          if (censored) {
+            allow.delete(k);
+            if (!fromLexicon.has(k)) deny.add(k);
+          } else {
+            deny.delete(k);
+            if (fromLexicon.has(k)) allow.add(k);
+          }
+        }
+        return { ...d, censorAllowList: [...allow], censorDenyList: [...deny] };
+      });
+    },
+    [transcript, lexiconWordIds],
+  );
 
   const previewWords = useMemo(() => {
     if (!draft.censorEnabled) return words;
@@ -1473,7 +1523,8 @@ export function ClipEditor({
           onClearSelection={clearWordSelection}
           onSeek={seekToWord}
           censoredIds={censoredWordIds}
-          onUncensor={uncensorWords}
+          onSetCensored={setWordsCensored}
+          showCensorChecks={draft.censorEnabled}
         />
       </div>
 
