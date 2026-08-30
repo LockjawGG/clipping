@@ -304,6 +304,7 @@ const TextOverlayLayer: React.FC<{ items: RenderTextOverlay[]; tMs: number }> = 
 
 export const CaptionedClip: React.FC<CaptionedClipProps> = ({
   videoSrc,
+  videoIsStatic,
   cues,
   preset,
   style,
@@ -342,7 +343,9 @@ export const CaptionedClip: React.FC<CaptionedClipProps> = ({
 
   return (
     <AbsoluteFill style={{ backgroundColor: "black" }}>
-      {videoSrc ? <OffthreadVideo src={videoSrc} /> : null}
+      {videoSrc ? (
+        <OffthreadVideo src={videoIsStatic ? staticFile(videoSrc) : videoSrc} />
+      ) : null}
 
       {cue ? (
         <AbsoluteFill

@@ -1013,3 +1013,22 @@ test("auto focal point but no detections falls back to the static centre reframe
   assert.equal(spy.reframes.length, 1);
   assert.equal(spy.reframes[0].focalX, undefined); // -> defaults to centre in the builder
 });
+
+test("cues reach Remotion on the clip's own timeline, not the source video's", async () => {
+  // A clip that starts at 10s: fed absolute times the composition's clock never
+  // reaches them, and the render comes out with no captions and no error.
+  const { deps, spy } = makeDeps(
+    target({ burnCaptions: true, captionAnimation: "POP" }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-rebase" }));
+
+  const cues = JSON.parse(spy.captioned[0].cueText) as Array<{ startMs: number }>;
+  assert.ok(cues.length > 0, "cues are passed at all");
+  assert.ok(
+    cues.every((c) => c.startMs < 30_000),
+    `cues must be clip-relative, got ${JSON.stringify(cues.map((c) => c.startMs))}`,
+  );
+  // The first word of the clip sits ~1s in, not ~11s.
+  assert.ok(Math.abs(cues[0].startMs - 1_000) < 50, `got ${cues[0].startMs}`);
+});

@@ -54,6 +54,8 @@ export const imageOverlaysSchema = z.array(z.any()).default([]);
 export const captionedClipSchema = z.object({
   /** `file://…` path to the (already reframed) source video. */
   videoSrc: z.string(),
+  /** Whether `videoSrc` is a name inside the bundle rather than a URL. */
+  videoIsStatic: z.boolean().default(false),
   cues: z.array(remotionCueSchema),
   preset: captionPresetSchema,
   style: captionStyleSchema,
@@ -75,6 +77,7 @@ export type CaptionedClipProps = z.infer<typeof captionedClipSchema>;
 
 export const DEFAULT_CAPTIONED_CLIP_PROPS: CaptionedClipProps = {
   videoSrc: "",
+  videoIsStatic: false,
   cues: [],
   preset: "word-by-word",
   style: {

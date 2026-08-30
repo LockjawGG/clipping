@@ -199,6 +199,34 @@ function srtTime(ms: number): string {
   return `${pad(h)}:${pad(m)}:${pad(s)},${pad(milli, 3)}`;
 }
 
+/**
+ * Shift absolute cue times onto the clip's own timeline.
+ *
+ * `toSrt` does this inline for the burned path. The Remotion composition needs
+ * the same thing done to the objects themselves, because its clock starts at
+ * the clip: fed absolute times, no cue is ever active and the render comes out
+ * with no captions at all — silently, since nothing errors.
+ *
+ * Word timings shift too, as they drive the karaoke highlight, and they are
+ * deliberately not clamped: a word that began before the clip should read as
+ * already under way rather than restarting at zero.
+ */
+export function rebaseCues(cues: Cue[], offsetMs: number): Cue[] {
+  if (!offsetMs) return cues;
+  const shift = (w: Word): Word => ({
+    ...w,
+    startMs: w.startMs - offsetMs,
+    endMs: w.endMs - offsetMs,
+  });
+  return cues.map((cue) => ({
+    ...cue,
+    startMs: Math.max(0, cue.startMs - offsetMs),
+    endMs: Math.max(0, cue.endMs - offsetMs),
+    words: cue.words.map(shift),
+    lineGroups: cue.lineGroups.map((group) => group.map(shift)),
+  }));
+}
+
 /** Cue times are absolute; `offsetMs` rebases them onto the clip's timeline. */
 export function toSrt(cues: Cue[], offsetMs = 0): string {
   return cues

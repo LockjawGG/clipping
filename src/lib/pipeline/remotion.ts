@@ -1,6 +1,5 @@
 import { copyFile, mkdir, rm } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 
 import type { Cue } from "../captions/layout.ts";
@@ -90,14 +89,22 @@ export class RemotionCaptionRenderer implements CaptionRenderer {
       }),
     );
 
+    // The clip itself is staged for exactly the same reason as the overlays:
+    // the bundle is served over http, and Chrome refuses a `file://` load from
+    // an http origin — which failed every animated render, since only the
+    // static ffmpeg burn avoids Remotion. An http(s) source is already
+    // loadable and is passed straight through.
+    const remote = /^https?:\/\//i.test(input.videoPath);
+    const videoName = remote ? null : `src-${randomUUID()}${extname(input.videoPath) || ".mp4"}`;
+    if (videoName) await copyFile(input.videoPath, join(publicDir, videoName));
+
     const fps = input.fps > 0 ? input.fps : 30;
     const durationInFrames = Math.max(1, Math.round((input.durationMs / 1000) * fps));
     const inputProps = {
-      // `file://${path}` is malformed on Windows (`file://C:/…` — Remotion wants
-      // `file:///C:/…`). pathToFileURL builds a valid URL on every platform.
-      videoSrc: input.videoPath.startsWith("file:")
-        ? input.videoPath
-        : pathToFileURL(input.videoPath).href,
+      // A bare name the composition resolves with `staticFile()`, or an http
+      // URL used as-is.
+      videoSrc: videoName ?? input.videoPath,
+      videoIsStatic: videoName !== null,
       cues: input.cues,
       preset: input.preset,
       style: input.style,
@@ -136,9 +143,10 @@ export class RemotionCaptionRenderer implements CaptionRenderer {
     } finally {
       // The bundle is long-lived and shared, so staged assets must not leak
       // into it — a failed render cleans up the same as a successful one.
-      await Promise.all(
-        staged.map(({ name }) => rm(join(publicDir, name), { force: true }).catch(() => {})),
-      );
+      await Promise.all([
+        ...staged.map(({ name }) => rm(join(publicDir, name), { force: true }).catch(() => {})),
+        ...(videoName ? [rm(join(publicDir, videoName), { force: true }).catch(() => {})] : []),
+      ]);
     }
   }
 }

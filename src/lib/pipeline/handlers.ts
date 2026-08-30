@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 
 import { DEFAULT_SNAP_CONFIG } from "../clips/boundaries.ts";
 import { refineSuggestions } from "../analysis/pipeline.ts";
-import { buildCues, toSrt, toStyledSrt } from "../captions/layout.ts";
+import { buildCues, rebaseCues, toSrt, toStyledSrt } from "../captions/layout.ts";
 import { DEFAULT_CAPTION_STYLE, remotionPreset } from "../captions/presets.ts";
 import { captionNeedsRemotion } from "../captions/text-style.ts";
 import { parseAudioFeatures, parseStoredFeatures, serializeFeatures } from "../audio/features.ts";
@@ -847,7 +847,9 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
       await deps.captions.renderCaptioned({
         videoPath: output,
         outputPath: captioned,
-        cues: animated ? buildCues(words) : [],
+        // Rebased, like the SRT path: the composition's clock starts at the
+        // clip, not at the source video.
+        cues: animated ? rebaseCues(buildCues(words), target.startMs) : [],
         preset: remotionPreset(target.captionAnimation),
         style: target.captionStyle ?? DEFAULT_CAPTION_STYLE,
         textStyle: target.textStyle,
