@@ -47,6 +47,7 @@ interface Spy {
   completed: Array<{ id: string; outputKey: string }>;
   failed: Array<{ id: string; message: string }>;
   cuts: CutOptions[];
+  concats: Array<{ pieces: string[]; reencode?: boolean }>;
   reframes: ReframeOptions[];
   trackedReframes: number;
   trackedTracks: Array<Array<{ atMs: number; x: number; y: number }>>;
@@ -58,6 +59,7 @@ interface Spy {
     videoPath: string;
     cueCount: number;
     cueText: string;
+    durationMs: number;
     textOverlayCount: number;
     imageOverlays: Array<{ path: string; animationJson: string | null }>;
   }>;
@@ -74,6 +76,7 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
     completed: [],
     failed: [],
     cuts: [],
+    concats: [],
     reframes: [],
     trackedReframes: 0,
     trackedTracks: [],
@@ -96,6 +99,9 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
       extractAudio: async () => {},
       cut: async (_i: string, _o: string, opts: CutOptions) => {
         spy.cuts.push(opts);
+      },
+      concat: async (pieces: readonly string[], _o: string, opts: { reencode?: boolean }) => {
+        spy.concats.push({ pieces: [...pieces], reencode: opts?.reencode });
       },
       reframe: async (_i: string, _o: string, opts: ReframeOptions) => {
         spy.reframes.push(opts);
@@ -183,6 +189,7 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
         preset: string;
         videoPath: string;
         cues: unknown[];
+        durationMs: number;
         textOverlays?: unknown[];
         imageOverlays?: Array<{ path: string; animationJson: string | null }>;
       }) => {
@@ -191,6 +198,7 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
           videoPath: input.videoPath,
           cueCount: input.cues.length,
           cueText: JSON.stringify(input.cues),
+          durationMs: input.durationMs,
           textOverlayCount: input.textOverlays?.length ?? 0,
           imageOverlays: input.imageOverlays ?? [],
         });
@@ -241,6 +249,7 @@ function target(over: Partial<RenderTarget> = {}): RenderTarget {
     focalY: 0.4,
     focusTrackJson: null,
     voiceover: null,
+    sequence: null,
     censor: {
       enabled: false,
       sensitivity: "MEDIUM",
@@ -1031,4 +1040,111 @@ test("cues reach Remotion on the clip's own timeline, not the source video's", a
   );
   // The first word of the clip sits ~1s in, not ~11s.
   assert.ok(Math.abs(cues[0].startMs - 1_000) < 50, `got ${cues[0].startMs}`);
+});
+
+/** A timeline on the clip's own video: `[in,out]` pairs, in lane order. */
+const timeline = (ranges: Array<[number, number]>, videoId = "vid1") => ({
+  trackId: "t1",
+  items: ranges.map(([sourceIn, sourceOut], order) => ({
+    id: `i${order}`,
+    trackId: "t1",
+    order,
+    sourceIn,
+    sourceOut,
+    sourceVideoId: videoId,
+    sourceAssetId: null,
+    sourceStorageKey: "videos/vid1/source.mp4",
+  })),
+});
+
+test("an untouched timeline still renders as the single cut it always was", async () => {
+  // One item covering the clip's window: opening the panel must not change the
+  // bytes a render produces.
+  const { deps, spy } = makeDeps(target({ sequence: timeline([[10_000, 38_000]]) }));
+  await renderHandler(ctx(deps, { renderId: "r-plain" }));
+
+  assert.equal(spy.concats.length, 0, "nothing to join");
+  assert.equal(spy.cuts.length, 1);
+  assert.deepEqual(spy.cuts[0], { startMs: 10_000, endMs: 38_000, crf: 20 });
+});
+
+test("a split timeline is cut piece by piece and joined in order", async () => {
+  const { deps, spy } = makeDeps(
+    target({ sequence: timeline([[10_000, 14_000], [30_000, 38_000]]) }),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-compose" }));
+
+  assert.deepEqual(
+    spy.cuts.map((c) => [c.startMs, c.endMs]),
+    [[10_000, 14_000], [30_000, 38_000]],
+    "each piece is cut from its own range",
+  );
+  assert.equal(spy.concats.length, 1);
+  assert.equal(spy.concats[0].pieces.length, 2);
+  assert.equal(
+    spy.concats[0].reencode,
+    false,
+    "one source means identical encoder settings, so the join can stream-copy",
+  );
+});
+
+test("dropping the middle of a clip shortens what is rendered", async () => {
+  // 4s + 8s of a 28s window: the output is 12s, and the Remotion path must be
+  // told so or it would render 28 seconds of black past the end.
+  const { deps, spy } = makeDeps(
+    target({
+      sequence: timeline([[10_000, 14_000], [30_000, 38_000]]),
+      burnCaptions: true,
+      captionAnimation: "POP",
+    }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-shorter" }));
+
+  assert.equal(spy.captioned[0].durationMs, 12_000, "the timeline's length, not the clip's");
+});
+
+test("captions follow their footage when the timeline is rearranged", async () => {
+  // CENSOR_WORDS: well 11.0, shit 12.0, that 13.0, worked 14.0. Keeping only
+  // 13.0-13.6 and then 11.0-11.6 means "that" must now come before "well",
+  // and the two words in the dropped stretches must not appear at all.
+  const { deps, spy } = makeDeps(
+    target({
+      sequence: timeline([[13_000, 13_600], [11_000, 11_600]]),
+      burnCaptions: true,
+      captionAnimation: "POP",
+    }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-reorder" }));
+
+  const cues = JSON.parse(spy.captioned[0].cueText) as Array<{ startMs: number; lines: string[] }>;
+  const said = cues.flatMap((c) => c.lines.join(" ").split(/\s+/)).filter(Boolean);
+  // "that" (13.0s) is now first; "well" (11.0s) follows it.
+  assert.ok(said.indexOf("that") < said.indexOf("well"), `got ${said.join(" ")}`);
+  assert.ok(!said.includes("worked"), "14.0s was trimmed out, so its word is gone");
+  assert.ok(cues.every((c) => c.startMs < 3_000), "and everything sits inside the 3s output");
+});
+
+test("a piece from another video is fetched and forces a re-encode on the join", async () => {
+  const seq = timeline([[10_000, 12_000]]);
+  seq.items.push({
+    id: "i1",
+    trackId: "t1",
+    order: 1,
+    sourceIn: 0,
+    sourceOut: 3_000,
+    sourceVideoId: "vid2",
+    sourceAssetId: null,
+    sourceStorageKey: "videos/vid2/source.mp4",
+  });
+  const { deps, spy } = makeDeps(target({ sequence: seq }));
+  await renderHandler(ctx(deps, { renderId: "r-mixed" }));
+
+  assert.equal(spy.cuts.length, 2);
+  assert.equal(
+    spy.concats[0].reencode,
+    true,
+    "two sources can disagree on resolution, which a stream copy cannot reconcile",
+  );
 });

@@ -1564,16 +1564,13 @@ export function ClipEditor({
         </button>
         {timelineOpen && (
           <div className="border-t border-border p-3">
-            {/* The renderer composes a clip from its own [startMs,endMs], not
-                from the sequence, so item edits here are saved but do not reach
-                the export yet. Saying so is the honest minimum: the alternative
-                is a trim that looks applied, persists, and silently changes
-                nothing about the file you get. */}
-            <p className="mb-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-muted">
-              Edits here are saved to the timeline, but the export still renders
-              this clip&rsquo;s full range — timeline composition isn&rsquo;t wired into
-              the renderer yet. Use the clip&rsquo;s own start/end to change what is
-              exported.
+            {/* Pieces on a lane play end to end, so the export is their sum:
+                trimming one shortens the video, and dropping media in makes it
+                longer. Worth saying once, because a timeline that only reorders
+                within a fixed length is the more common convention. */}
+            <p className="mb-2 text-xs text-muted">
+              Pieces on a layer play one after another — trimming one shortens the
+              export, and dropping media in makes it longer.
             </p>
             <SequenceEditor
               clipId={clip.id}

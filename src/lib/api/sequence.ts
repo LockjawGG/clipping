@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { StorageProvider } from "../providers/types.ts";
+import { insertionIndex, laneItems, packLanes } from "../sequence/lane.ts";
 import { ApiError } from "./http.ts";
 
 /**
@@ -10,10 +11,14 @@ import { ApiError } from "./http.ts";
  * references a slice `[sourceIn,sourceOut]` of a source `Video` or library
  * `Asset`; source bytes are never touched.
  *
- * NOTE: the renderer does not read sequences yet. Every clip renders from its
- * own [startMs,endMs], so edits made here persist but do not change the export.
- * This comment used to claim the render composed the items, which made a
- * silent no-op look like intended behaviour to anyone reading the code.
+ * Pieces on one track are laid end to end: the lane's length is the sum of its
+ * pieces, so dropping media in lengthens the export and trimming shortens it.
+ * `timelineStart` is therefore derived from the durations after every change,
+ * never authored — a stored position the layout disagreed with is how a
+ * timeline and its export drift apart.
+ *
+ * A clip whose sequence is a single item covering its own window renders by the
+ * original single-cut path, so opening this panel cannot change an export.
  */
 
 export type SequenceTrackKind = "VIDEO" | "AUDIO" | "OVERLAY" | "TEXT";
@@ -171,6 +176,7 @@ export interface SequenceDb {
     create(a: { data: Record<string, unknown> }): Promise<ItemRow>;
     update(a: { where: { id: string }; data: Record<string, unknown> }): Promise<ItemRow>;
     delete(a: { where: { id: string } }): Promise<unknown>;
+    findMany(a: { where: { sequenceId: string } }): Promise<ItemRow[]>;
   };
 }
 
@@ -399,6 +405,61 @@ async function withOverlays(
   };
 }
 
+/**
+ * Re-lay every lane after a change.
+ *
+ * Positions are derived, never authored: a lane is its pieces end to end, so
+ * `timelineStart` and `order` are recomputed from the durations and written
+ * back. Doing it here, once, after every mutation is what keeps the stored
+ * layout and the rendered one the same thing — the render reads `order`, the
+ * user sees `timelineStart`, and a disagreement between them would show up as
+ * an export that does not match the timeline.
+ */
+async function repackLanes(deps: SequenceServiceDeps, sequenceId: string): Promise<void> {
+  const items = await deps.db.sequenceItem.findMany({ where: { sequenceId } });
+  const packed = packLanes(items);
+  for (const trackId of new Set(items.map((i) => i.trackId))) {
+    const lane = laneItems(items, trackId);
+    for (const [index, item] of lane.entries()) {
+      const timelineStart = packed.get(item.id) ?? 0;
+      if (item.timelineStart === timelineStart && item.order === index) continue;
+      await deps.db.sequenceItem.update({
+        where: { id: item.id },
+        data: { timelineStart, order: index },
+      });
+    }
+  }
+}
+
+/**
+ * Renumber a lane so `item` sits where it was dropped.
+ *
+ * A drag reports pixels; packed lanes only have positions. The drop is resolved
+ * to an index against the *other* pieces and the lane is renumbered around it,
+ * leaving `repackLanes` to turn that order back into times.
+ */
+async function placeInLane(
+  deps: SequenceServiceDeps,
+  sequenceId: string,
+  itemId: string,
+  trackId: string,
+  dropMs: number,
+): Promise<void> {
+  const items = await deps.db.sequenceItem.findMany({ where: { sequenceId } });
+  const moving = items.find((i) => i.id === itemId);
+  if (!moving) return;
+  const at = insertionIndex(items, trackId, dropMs, itemId);
+  const rest = laneItems(items, trackId).filter((i) => i.id !== itemId);
+  const ordered = [...rest.slice(0, at), moving, ...rest.slice(at)];
+  for (const [index, item] of ordered.entries()) {
+    if (item.order === index && item.trackId === trackId) continue;
+    await deps.db.sequenceItem.update({
+      where: { id: item.id },
+      data: { order: index, trackId },
+    });
+  }
+}
+
 /* --------------------------------------------------------------- service */
 
 /**
@@ -499,7 +560,12 @@ export async function createSequenceItem(
       name: parsed.name ?? null,
     },
   });
-  const view = await toView(deps, { ...seq, items: [row] });
+  // Dropping media into a lane makes the lane that much longer: the new piece
+  // takes the position it was dropped at and everything shifts along.
+  await placeInLane(deps, sequenceId, row.id, parsed.trackId, parsed.timelineStart);
+  await repackLanes(deps, sequenceId);
+  const fresh = await deps.db.sequenceItem.findUnique({ where: { id: row.id } });
+  const view = await toView(deps, { ...seq, items: [fresh ?? row] });
   return view.items[0];
 }
 
@@ -522,21 +588,36 @@ export async function updateSequenceItem(
   if (sourceOut <= sourceIn) throw new ApiError(422, "empty source range");
 
   const data: Record<string, unknown> = {};
-  if (patch.timelineStart !== undefined) data.timelineStart = Math.max(0, patch.timelineStart);
   if (patch.sourceIn !== undefined) data.sourceIn = sourceIn;
   if (patch.sourceOut !== undefined) data.sourceOut = sourceOut;
   if (patch.trackId !== undefined) data.trackId = patch.trackId;
   if (patch.order !== undefined) data.order = patch.order;
   if (patch.name !== undefined) data.name = patch.name;
 
-  const row = await deps.db.sequenceItem.update({ where: { id: itemId }, data });
-  const view = await toView(deps, { ...sequence, items: [row] });
+  await deps.db.sequenceItem.update({ where: { id: itemId }, data });
+  // A dragged piece reports where it was dropped; lanes are packed, so that is
+  // read as an order and the times are recomputed. Trimming needs no drop at
+  // all — the pieces after it simply move up.
+  if (patch.timelineStart !== undefined || patch.trackId !== undefined) {
+    await placeInLane(
+      deps,
+      sequence.id,
+      itemId,
+      patch.trackId ?? item.trackId,
+      Math.max(0, patch.timelineStart ?? item.timelineStart),
+    );
+  }
+  await repackLanes(deps, sequence.id);
+  const row = await deps.db.sequenceItem.findUnique({ where: { id: itemId } });
+  const view = await toView(deps, { ...sequence, items: row ? [row] : [] });
   return view.items[0];
 }
 
 export async function deleteSequenceItem(deps: SequenceServiceDeps, itemId: string) {
-  await ownedItem(deps, itemId);
+  const { sequence } = await ownedItem(deps, itemId);
   await deps.db.sequenceItem.delete({ where: { id: itemId } });
+  // Removing a piece closes the hole rather than leaving one.
+  await repackLanes(deps, sequence.id);
   return { id: itemId, deleted: true };
 }
 
@@ -576,10 +657,23 @@ export async function splitSequenceItem(
       timelineStart: atMs,
       sourceIn: splitSource,
       sourceOut,
+      // Everything already after the cut has to move along to make room.
       order: order + 1,
       name,
     },
   });
-  const view = await toView(deps, { ...sequence, items: [left, right] });
+  for (const other of await deps.db.sequenceItem.findMany({ where: { sequenceId } })) {
+    if (other.trackId !== trackId || other.id === left.id || other.id === right.id) continue;
+    if (other.order > order) {
+      await deps.db.sequenceItem.update({ where: { id: other.id }, data: { order: other.order + 1 } });
+    }
+  }
+  await repackLanes(deps, sequenceId);
+  const rows = await deps.db.sequenceItem.findMany({ where: { sequenceId } });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const view = await toView(deps, {
+    ...sequence,
+    items: [byId.get(left.id) ?? left, byId.get(right.id) ?? right],
+  });
   return { left: view.items[0], right: view.items[1] };
 }

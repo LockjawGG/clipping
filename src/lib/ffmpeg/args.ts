@@ -937,3 +937,68 @@ export function buildThumbnailArgs({ inputPath, outputPath, atMs, width = 640 }:
     outputPath,
   ];
 }
+
+export interface ConcatArgs {
+  /** A concat-demuxer list file: one `file '<path>'` line per piece, in order. */
+  listPath: string;
+  outputPath: string;
+  /**
+   * Re-encode instead of stream-copying. Copying is correct only when every
+   * piece shares codec, resolution, pixel format and timebase — true when they
+   * were all cut from one source by `buildCutArgs`, which is the ordinary case
+   * of trimming a clip into pieces. Mixed sources need the re-encode.
+   */
+  reencode?: boolean;
+  crf?: number;
+}
+
+/**
+ * Join pre-cut pieces end to end.
+ *
+ * The concat *demuxer* rather than the filter: the filter would decode every
+ * piece into one graph, which for a stream-copyable join is a full re-encode
+ * for nothing. `-safe 0` because the list holds absolute paths, and the list is
+ * written by the caller rather than passed as a giant argument.
+ */
+export function buildConcatArgs({
+  listPath,
+  outputPath,
+  reencode = false,
+  crf = 18,
+}: ConcatArgs): string[] {
+  assertSafePath(listPath);
+  assertSafePath(outputPath);
+  if (!Number.isInteger(crf) || crf < 0 || crf > 51) throw new Error(`invalid crf: ${crf}`);
+
+  return [
+    "-y",
+    "-f", "concat",
+    "-safe", "0",
+    "-i", listPath,
+    ...(reencode
+      ? [
+          "-c:v", "libx264",
+          "-preset", "fast",
+          "-crf", String(crf),
+          "-pix_fmt", "yuv420p",
+          "-c:a", "aac",
+          "-b:a", "192k",
+        ]
+      : ["-c", "copy"]),
+    "-movflags", "+faststart",
+    outputPath,
+  ];
+}
+
+/**
+ * One line of a concat list.
+ *
+ * ffmpeg's list format takes a single-quoted path and has exactly one escape:
+ * a quote is closed, escaped, and reopened. Paths here are already validated by
+ * `assertSafePath`, but the quoting still has to be right for any path with a
+ * space in it — which on Windows is most of them.
+ */
+export function concatListLine(path: string): string {
+  assertSafePath(path);
+  return `file '${path.replace(/'/g, "'\''")}'`;
+}

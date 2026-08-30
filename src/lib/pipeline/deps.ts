@@ -93,6 +93,12 @@ export interface RenderTarget {
   focusTrackJson: string | null;
   /** Censor settings. Detections are derived from the transcript, not stored. */
   censor: RenderCensorConfig;
+  /**
+   * The clip's timeline, when it has one. Items on a track play end to end, so
+   * the render is their concatenation rather than one cut. Absent, or holding a
+   * single item that is exactly the clip's window, means render as before.
+   */
+  sequence: RenderSequence | null;
   /** Completed voiceover lines to mix in, with the clip's own ducking level. */
   voiceover: { linesJson: string | null; duckDb: number } | null;
   quality: "P720" | "P1080" | "ORIGINAL";
@@ -112,6 +118,24 @@ export interface RenderTarget {
   textOverlays: RenderTextOverlay[];
   /** Per-word caption overrides, keyed by transcript word id. */
   wordStyles: Record<string, { color: string | null; bold: boolean | null; italic: boolean | null }>;
+}
+
+/** A clip's timeline as the renderer needs it. */
+export interface RenderSequence {
+  /** The track composed into the output: the first VIDEO track, by index. */
+  trackId: string;
+  items: Array<{
+    id: string;
+    trackId: string;
+    order: number;
+    sourceIn: number;
+    sourceOut: number;
+    sourceVideoId: string | null;
+    sourceAssetId: string | null;
+    /** Where that source's bytes live, so a piece from another video can be
+     *  fetched without a second lookup mid-render. */
+    sourceStorageKey: string | null;
+  }>;
 }
 
 /** Censor settings as the renderer needs them. */

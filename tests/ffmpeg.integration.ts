@@ -18,11 +18,13 @@ import {
   buildExtractAudioArgs,
   buildProbeArgs,
   buildCensorAudioArgs,
+  buildConcatArgs,
+  concatListLine,
 } from "../src/lib/ffmpeg/args.ts";
 import { buildCues, toSrt } from "../src/lib/captions/layout.ts";
 
 const run = promisify(execFile);
-// The OS temp dir, not a hardcoded /tmp: on Windows that resolved to C:	mp,
+// The OS temp dir, not a hardcoded /tmp: on Windows that resolved to C:\tmp,
 // which is not where anything lives, so every check failed on a path error
 // rather than on anything it was meant to test.
 const DIR = join(tmpdir(), "clipper-integration");
@@ -134,6 +136,27 @@ async function main() {
     ok("reframe with blurred background");
   } catch (e) {
     bad("blurred background", e);
+  }
+
+  // Joining pieces end to end — the timeline's whole job. Two cuts of the same
+  // source stream-copy, so the check is that the demuxer accepts the list and
+  // the result is exactly as long as the pieces put together.
+  try {
+    const a = join(DIR, "piece-a.mp4");
+    const b = join(DIR, "piece-b.mp4");
+    await run("ffmpeg", buildCutArgs({ inputPath: SRC, outputPath: a, startMs: 0, endMs: 2_000 }));
+    await run("ffmpeg", buildCutArgs({ inputPath: SRC, outputPath: b, startMs: 8_000, endMs: 11_000 }));
+    await writeFile(join(DIR, "join.txt"), [a, b].map(concatListLine).join("\n") + "\n", "utf8");
+    await run("ffmpeg", buildConcatArgs({
+      listPath: join(DIR, "join.txt"),
+      outputPath: join(DIR, "joined.mp4"),
+    }));
+    const { stdout } = await run("ffprobe", buildProbeArgs({ inputPath: join(DIR, "joined.mp4") }));
+    const duration = Number(JSON.parse(stdout).format.duration);
+    if (Math.abs(duration - 5) > 0.4) throw new Error(`joined to ${duration.toFixed(2)}s, expected ~5s`);
+    ok("concat two cuts", `${duration.toFixed(2)}s from 2s + 3s`);
+  } catch (e) {
+    bad("concat", e);
   }
 
   // Per-span censoring, with three different treatments in one graph. The unit

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 
@@ -8,7 +8,9 @@ import {
   type AspectRatio,
   type CaptionBurnStyle,
   type OverlayCompositeItem,
+  buildConcatArgs,
   buildCutArgs,
+  concatListLine,
   buildExtractAudioArgs,
   buildOverlayCompositeArgs,
   buildProbeArgs,
@@ -185,6 +187,13 @@ export interface Ffmpeg {
   ): Promise<{ packets: number; backwards: number; duplicateRun: number }>;
   /** Frame-accurate trim (re-encode, never stream-copy). */
   cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void>;
+  /** Join pre-cut pieces end to end, in the order given. */
+  concat(
+    pieces: readonly string[],
+    outputPath: string,
+    opts: { reencode?: boolean; crf?: number },
+    signal?: AbortSignal,
+  ): Promise<void>;
   /** Scale/crop to an aspect preset, optionally burning subtitles. */
   reframe(inputPath: string, outputPath: string, opts: ReframeOptions, signal?: AbortSignal): Promise<void>;
   /** Reframe with a crop window that pans along a focal-point track. */
@@ -306,6 +315,29 @@ export class FfmpegRunner implements Ffmpeg {
     return { packets, backwards, duplicateRun };
   }
 
+
+  async concat(
+    pieces: readonly string[],
+    outputPath: string,
+    opts: { reencode?: boolean; crf?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (pieces.length === 0) throw new Error("nothing to concat");
+    await mkdir(dirname(outputPath), { recursive: true });
+    // The list lives beside the output so it is cleaned up with the job's
+    // scratch dir, and holds absolute paths, which is why -safe 0 is required.
+    const listPath = `${outputPath}.concat.txt`;
+    await writeFile(listPath, pieces.map(concatListLine).join("\n") + "\n", "utf8");
+    try {
+      await this.exec(
+        this.ffmpegPath,
+        buildConcatArgs({ listPath, outputPath, reencode: opts.reencode, crf: opts.crf }),
+        signal,
+      );
+    } finally {
+      await rm(listPath, { force: true }).catch(() => {});
+    }
+  }
 
   async cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void> {
     await mkdir(dirname(outputPath), { recursive: true });

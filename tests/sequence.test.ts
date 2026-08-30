@@ -88,6 +88,8 @@ function makeDeps(over: Partial<SequenceServiceDeps> = {}) {
     },
     sequenceItem: {
       findUnique: async ({ where }) => (items.get(where.id) ?? null) as never,
+      findMany: async ({ where }) =>
+        [...items.values()].filter((i) => i.sequenceId === where.sequenceId) as never,
       create: async ({ data }) => {
         const it = { id: id("i"), order: 0, name: null, sourceVideoId: null, sourceAssetId: null, ...data };
         items.set(it.id, it);
@@ -235,7 +237,34 @@ test("createSequenceItem adds a video item and clamps sourceOut to the source du
     sourceOut: 999999, // past the 60s source
   });
   assert.equal(it.sourceOut, 60000);
-  assert.equal(it.timelineStart, 20000);
+  // Lanes are packed, so a drop is a position in the order, not a coordinate.
+  // Dropping past the seeded 10s piece appends: the new piece starts where that
+  // one ends, and the lane is now as much longer as the new piece is.
+  assert.equal(it.timelineStart, 10_000);
+});
+
+test("dropping media into a lane lengthens the timeline by its duration", async () => {
+  const { deps } = makeDeps();
+  const s = await getOrCreateClipSequence(deps, "c1");
+  const before = s.items.reduce((n, i) => n + (i.sourceOut - i.sourceIn), 0);
+
+  await createSequenceItem(deps, s.id, {
+    trackId: s.tracks[0].id,
+    sourceVideoId: "v1",
+    timelineStart: 999_999,
+    sourceIn: 0,
+    sourceOut: 4_000,
+  });
+  const after = await getOrCreateClipSequence(deps, "c1");
+  const lane = after.items.filter((i) => i.trackId === after.tracks[0].id);
+  const total = lane.reduce((n, i) => n + (i.sourceOut - i.sourceIn), 0);
+
+  assert.equal(total, before + 4_000, "the lane grew by exactly the new piece");
+  assert.deepEqual(
+    lane.map((i) => i.timelineStart).sort((a, b) => a - b),
+    [0, before],
+    "and the pieces sit end to end with no gap between them",
+  );
 });
 
 test("createSequenceItem 422s for a track that isn't in the sequence", async () => {
@@ -272,8 +301,10 @@ test("updateSequenceItem moves and trims, clamped to the source", async () => {
   const { deps } = makeDeps();
   const s = await getOrCreateClipSequence(deps, "c1");
   const id = s.items[0].id;
+  // A lone piece cannot be dragged away from the start: there is nothing to sit
+  // in front of it, and a gap would be a hole in the export.
   const moved = await updateSequenceItem(deps, id, { timelineStart: 15250 });
-  assert.equal(moved.timelineStart, 15250);
+  assert.equal(moved.timelineStart, 0);
   const trimmed = await updateSequenceItem(deps, id, { sourceIn: 6000, sourceOut: 90000 });
   assert.equal(trimmed.sourceIn, 6000);
   assert.equal(trimmed.sourceOut, 60000); // clamped to the 60s source

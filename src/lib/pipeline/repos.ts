@@ -319,6 +319,18 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
               censorAudioExemptWordIds: true,
               censorAudioForceWordIds: true,
               censorWordOverridesJson: true,
+              sequence: {
+                select: {
+                  tracks: { select: { id: true, index: true, kind: true }, orderBy: { index: "asc" } },
+                  items: {
+                    select: {
+                      id: true, trackId: true, order: true, sourceIn: true, sourceOut: true,
+                      sourceVideoId: true, sourceAssetId: true,
+                      video: { select: { storageKey: true } },
+                    },
+                  },
+                },
+              },
               censorAudioMode: true,
               censorReplacement: true,
               censorAllowList: true,
@@ -410,6 +422,27 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
           exemptWordIds: render.clip.censorExemptWordIds,
           forceWordIds: render.clip.censorForceWordIds,
         },
+        // The composed track is the first VIDEO one. Extra video tracks are not
+        // layered — that is compositing, not trimming, and nothing builds it.
+        sequence: (() => {
+          const seq = render.clip.sequence;
+          if (!seq) return null;
+          const track = seq.tracks.find((t) => t.kind === "VIDEO") ?? seq.tracks[0];
+          if (!track) return null;
+          return {
+            trackId: track.id,
+            items: seq.items.map((i) => ({
+              id: i.id,
+              trackId: i.trackId,
+              order: i.order,
+              sourceIn: i.sourceIn,
+              sourceOut: i.sourceOut,
+              sourceVideoId: i.sourceVideoId,
+              sourceAssetId: i.sourceAssetId,
+              sourceStorageKey: i.video?.storageKey ?? null,
+            })),
+          };
+        })(),
         quality: render.quality as "P720" | "P1080" | "ORIGINAL",
         burnCaptions: sc !== null,
         overlays: render.clip.overlays

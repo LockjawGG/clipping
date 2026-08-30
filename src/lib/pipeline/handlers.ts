@@ -17,6 +17,7 @@ import {
   staleLines,
   type VoiceLine,
 } from "../voiceover/sync.ts";
+import { buildComposePlan, isPlainCut, planDurationMs, remapWordsToTimeline } from "../sequence/compose.ts";
 import {
   audioSpans,
   censoredIndices,
@@ -576,12 +577,56 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     const captioned = scratchPath(work, "captioned.mp4");
     await setProgress(0.2);
 
-    await deps.ffmpeg.cut(
-      source,
-      cut,
-      { startMs: target.startMs, endMs: target.endMs, crf: CRF_BY_QUALITY[target.quality] ?? 20 },
-      signal,
-    );
+    const crf = CRF_BY_QUALITY[target.quality] ?? 20;
+
+    // The timeline, if the clip has one that says anything. A single item
+    // covering the clip's own window is the untouched default and takes the
+    // original path, so opening the panel cannot change what a render produces.
+    const plan = target.sequence
+      ? buildComposePlan(target.sequence.items, target.sequence.trackId)
+      : [];
+    const composing = plan.length > 0 && !isPlainCut(plan, target);
+
+    if (composing) {
+      // Each piece is cut on its own, then they are joined end to end. Cutting
+      // first is what makes the join cheap: every piece comes out of the same
+      // encoder settings, so the concat can stream-copy instead of decoding the
+      // whole timeline again.
+      const pieces: string[] = [];
+      const sources = new Map<string, string>([[target.videoId, source]]);
+      for (const [i, piece] of plan.entries()) {
+        let input = sources.get(piece.sourceVideoId);
+        if (!input) {
+          if (!piece.sourceStorageKey) {
+            throw new Error(`sequence piece has no source file: video ${piece.sourceVideoId}`);
+          }
+          input = await deps.source.ensureLocal(piece.sourceVideoId, piece.sourceStorageKey, signal);
+          sources.set(piece.sourceVideoId, input);
+        }
+        const out = scratchPath(work, `piece-${String(i).padStart(3, "0")}.mp4`);
+        await deps.ffmpeg.cut(
+          input,
+          out,
+          { startMs: piece.sourceIn, endMs: piece.sourceOut, crf },
+          signal,
+        );
+        pieces.push(out);
+        await setProgress(0.2 + (0.25 * (i + 1)) / plan.length);
+      }
+      // Pieces from more than one source can disagree on resolution, which the
+      // demuxer cannot paper over — that case pays for a re-encode.
+      await deps.ffmpeg.concat(pieces, cut, { reencode: sources.size > 1, crf }, signal);
+    } else {
+      await deps.ffmpeg.cut(
+        source,
+        cut,
+        { startMs: target.startMs, endMs: target.endMs, crf },
+        signal,
+      );
+    }
+    // What the output actually lasts: the timeline's length when composing, the
+    // clip's window otherwise. Everything downstream measures against this.
+    const outMs = composing ? planDurationMs(plan) : target.endMs - target.startMs;
     await setProgress(0.45);
 
     // The clip's own words. Censoring needs them even when captions are off,
@@ -607,9 +652,16 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
 
     if (target.burnCaptions || censoring) {
       const segments = await deps.transcripts.loadSegments(target.videoId);
-      words = segments
-        .flatMap((s) => s.words)
-        .filter((w) => w.startMs >= target.startMs && w.endMs <= target.endMs);
+      const all = segments.flatMap((s) => s.words);
+      words = composing
+        ? // Composed: a word belongs to whichever piece it was cut into, and
+          // moves to wherever that piece landed. Words in trimmed-out stretches
+          // are dropped — they are not in the video any more, so a caption or a
+          // bleep for them would fire over whatever was spliced in instead.
+          // Times come back source-absolute so the rebasing further down, which
+          // every consumer relies on, keeps working untouched.
+          remapWordsToTimeline(all, plan, target.videoId, target.startMs)
+        : all.filter((w) => w.startMs >= target.startMs && w.endMs <= target.endMs);
     }
 
     // Censor the audio on the cut clip, before anything else touches it: every
@@ -647,7 +699,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     if (target.voiceover) {
       // `clipMs` is declared further down with the reframe logic; the voiceover
       // pass runs before it, so derive the length here.
-      const voClipMs = target.endMs - target.startMs;
+      const voClipMs = outMs;
       const stored = parseLines(target.voiceover.linesJson);
       if (stored.length > 0) {
         const segments = await deps.transcripts.loadSegments(target.videoId);
@@ -753,7 +805,8 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     }
 
     const aspect = toAspectPreset(target.aspectRatio);
-    const clipMs = target.endMs - target.startMs;
+    // The output's length, which is the timeline's when one is composed.
+    const clipMs = outMs;
     // An authored capture window reframes even a 16:9 clip — the user asked for
     // a punch-in, not an aspect change.
     const focusWindow = parseFocusTrack(target.focusTrackJson);
@@ -859,7 +912,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
         width: pre.width ?? width,
         height: pre.height ?? height,
         fps: pre.fps ?? 30,
-        durationMs: target.endMs - target.startMs,
+        durationMs: outMs,
         signal,
       });
       output = captioned;
