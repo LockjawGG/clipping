@@ -1532,6 +1532,8 @@ export function ClipEditor({
           onSeek={seekToWord}
           censoredIds={censoredWordIds}
           censoringOn={draft.censorEnabled}
+          clipStartMs={draft.startMs}
+          clipEndMs={draft.endMs}
           onSetCensored={setWordsCensored}
         />
       </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export interface TranscriptWord {
@@ -62,6 +62,7 @@ export function wordSpanCss(s: WordStyle | undefined): React.CSSProperties {
 const Word = memo(function Word({
   censored,
   censoringOn,
+  outsideClip,
   word,
   style,
   selected,
@@ -75,6 +76,8 @@ const Word = memo(function Word({
   censored?: boolean;
   /** Censoring is switched on, so the mark actually affects the render. */
   censoringOn?: boolean;
+  /** Falls outside the clip's range, so it never reaches the output. */
+  outsideClip?: boolean;
   word: TranscriptWord;
   style: WordStyle | undefined;
   selected: boolean;
@@ -137,6 +140,8 @@ const Word = memo(function Word({
       aria-pressed={selected}
       style={wordSpanCss(style)}
       className={`rounded px-0.5 ${busy ? "opacity-50" : ""} ${
+        outsideClip ? "opacity-40" : ""
+      } ${
         selected
           ? "bg-accent/30 ring-1 ring-accent"
           : active
@@ -150,7 +155,9 @@ const Word = memo(function Word({
         censored && censoringOn ? "line-through decoration-2 decoration-danger" : ""
       }`}
       title={
-        censored
+        outsideClip
+          ? "Outside this clip - it will not appear in the render"
+          : censored
           ? censoringOn
             ? "Censored in this clip - select it and untick Censor to keep it"
             : "Marked to censor - switch censoring on to apply it"
@@ -179,6 +186,13 @@ interface Props {
   /** Whether censoring is switched on for this clip. */
   censoringOn?: boolean;
   /**
+   * The clip's own range. Rows are selected by segment overlap, so the edges of
+   * the transcript show words that fall outside the clip and will never reach
+   * the render — those must not look censorable.
+   */
+  clipStartMs?: number;
+  clipEndMs?: number;
+  /**
    * Turn censoring on or off for these specific occurrences on this clip only.
    * Takes transcript word ids, so "censor this damn but not that one" works;
    * the override is per-clip and never edits the shared lexicon.
@@ -204,6 +218,8 @@ export const EditableTranscript = memo(function EditableTranscript({
   onClipFromSelection,
   censoredIds,
   censoringOn,
+  clipStartMs,
+  clipEndMs,
   onSetCensored,
 }: Props) {
   const [query, setQuery] = useState("");
@@ -225,6 +241,16 @@ export const EditableTranscript = memo(function EditableTranscript({
     return { ids, set: new Set(ids) };
   }, [rows, q]);
 
+  /** Words the render will actually see. Anything outside the clip is visible
+   *  for context but cannot be censored, because it is not in the output. */
+  const inClip = useCallback(
+    (w: TranscriptWord) =>
+      clipStartMs === undefined || clipEndMs === undefined
+        ? true
+        : w.startMs >= clipStartMs && w.endMs <= clipEndMs,
+    [clipStartMs, clipEndMs],
+  );
+
   /**
    * The selected occurrences, split by whether each is currently censored, so
    * the toolbar can offer both directions rather than only the one. Keyed by
@@ -236,11 +262,17 @@ export const EditableTranscript = memo(function EditableTranscript({
     const off: string[] = [];
     for (const row of rows)
       for (const w of row.words) {
-        if (!selectedIds.has(w.id) || !censorKey(w.text)) continue;
+        if (!selectedIds.has(w.id) || !censorKey(w.text) || !inClip(w)) continue;
         (censoredIds?.has(w.id) ? on : off).push(w.id);
       }
     return { censored: on, clean: off };
-  }, [rows, selectedIds, censoredIds]);
+  }, [rows, selectedIds, censoredIds, inClip]);
+
+  /** How many of the selected words the render can actually censor. The plain
+   *  selection count would overstate it whenever the selection reaches past the
+   *  clip's edges. */
+  const censorableCount =
+    selectedByCensored.censored.length + selectedByCensored.clean.length;
 
   /** true = all selected words censored, false = none, null = mixed. */
   const allCensored =
@@ -380,7 +412,7 @@ export const EditableTranscript = memo(function EditableTranscript({
               Clip from selection
             </button>
           )}
-          {onSetCensored && (
+          {onSetCensored && censorableCount > 0 && (
             <label
               className="flex items-center gap-1.5 text-danger"
               title="Censor these words on this clip only. The shared word list is unchanged."
@@ -400,7 +432,7 @@ export const EditableTranscript = memo(function EditableTranscript({
                 }}
                 className="h-3 w-3 cursor-pointer accent-[rgb(var(--c-danger))]"
               />
-              Censor {count === 1 ? "this one" : `these ${count}`}
+              Censor {censorableCount === 1 ? "this one" : `these ${censorableCount}`}
             </label>
           )}
           {onSetCensored && !censoringOn && allCensored !== false && (
@@ -439,7 +471,7 @@ export const EditableTranscript = memo(function EditableTranscript({
                   <span key={w.id} className="whitespace-nowrap">
                     {/* Only on the words you have actually selected — one on
                         every word in the transcript is unreadable noise. */}
-                    {selectedIds.has(w.id) && onSetCensored && (
+                    {selectedIds.has(w.id) && onSetCensored && inClip(w) && (
                       <input
                         type="checkbox"
                         checked={censoredIds?.has(w.id) ?? false}
@@ -453,8 +485,9 @@ export const EditableTranscript = memo(function EditableTranscript({
                       word={w}
                       style={styles[w.id]}
                       selected={selectedIds.has(w.id)}
-                      censored={censoredIds?.has(w.id)}
+                      censored={censoredIds?.has(w.id) && inClip(w)}
                       censoringOn={censoringOn}
+                      outsideClip={!inClip(w)}
                       matched={matches.set.has(w.id)}
                       active={w.id === activeId}
                       onToggleSelect={onToggleSelect}
