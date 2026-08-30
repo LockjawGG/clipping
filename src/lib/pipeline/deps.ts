@@ -41,6 +41,8 @@ export interface VideoRepo {
   setStorageKey(id: string, storageKey: string): Promise<void>;
   /** The video's project's custom transcription terms, parsed to a clean list. */
   transcriptionTerms(id: string): Promise<string[]>;
+  /** Cache the audio-feature pass so re-running the worker costs nothing. */
+  setAudioFeatures?(id: string, json: string): Promise<void>;
 }
 
 export interface TranscriptRepo {

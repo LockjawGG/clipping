@@ -740,6 +740,63 @@ export function buildCensorAudioArgs({
   ];
 }
 
+export interface AudioFeatureArgs {
+  /** The 16 kHz mono WAV the EXTRACT_AUDIO job already produced. */
+  inputPath: string;
+  /** Where ffmpeg writes the per-frame metadata dump. */
+  metadataPath: string;
+  /** Analysis window in ms. 250 keeps a 30-minute dump around 6 MB. */
+  stepMs?: number;
+  /** Below this level counts as silence. */
+  silenceDb?: number;
+  /** Shortest gap reported as dead air, in seconds. */
+  minSilenceSec?: number;
+}
+
+/**
+ * One analysis pass over the already-extracted audio.
+ *
+ * Everything the highlight detector needs comes from three filters and no model:
+ *   - `ebur128` momentary loudness  -> energy, shouting, quiet passages
+ *   - `aspectralstats` flatness     -> harmonic (speech) vs broadband (laughter,
+ *                                      applause, crowd noise)
+ *   - `silencedetect`               -> dead air
+ *
+ * `asetnsamples` sits *after* the analyzers, not before: upstream it gets
+ * re-framed by ebur128 and has no effect, downstream it thins the metadata to
+ * one row per window. Without it a 30-minute clip dumps hundreds of thousands
+ * of lines.
+ */
+export function buildAudioFeatureArgs({
+  inputPath,
+  metadataPath,
+  stepMs = 250,
+  silenceDb = -45,
+  minSilenceSec = 0.4,
+}: AudioFeatureArgs): string[] {
+  assertSafePath(inputPath);
+  assertSafePath(metadataPath);
+  if (!Number.isFinite(stepMs) || stepMs < 20) throw new Error(`bad stepMs: ${stepMs}`);
+
+  // The WAV is 16 kHz mono, so a window in samples is rate * seconds.
+  const samples = Math.round((16000 * stepMs) / 1000);
+  const filters = [
+    "ebur128=metadata=1:framelog=quiet",
+    "aspectralstats=win_size=2048",
+    `silencedetect=n=${fgNum(silenceDb, -120, 0)}dB:d=${fgNum(minSilenceSec, 0.05, 60)}`,
+    `asetnsamples=n=${samples}:p=0`,
+    `ametadata=mode=print:file=${escapeFilterPath(metadataPath)}`,
+  ];
+
+  return [
+    "-y",
+    "-i", inputPath,
+    "-af", filters.join(","),
+    "-f", "null",
+    "-",
+  ];
+}
+
 export interface ThumbnailArgs {
   inputPath: string;
   outputPath: string;

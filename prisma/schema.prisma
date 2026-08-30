@@ -178,6 +178,10 @@ model Video {
 
   errorMessage String?
 
+  /// Windowed loudness / spectral flatness / silence from one ffmpeg pass over
+  /// the extracted audio. Drives highlight detection. JSON `AudioFeatures`.
+  audioFeatureJson String?
+
   /// Last check-in from the browser recording into this video. Only meaningful
   /// while status is LIVE: a lapsed heartbeat means the tab died, and the
   /// sweeper finalises the session from whatever fragments already landed.
@@ -600,6 +604,8 @@ enum JobKind {
   // Offline text translation of an existing transcript into another language,
   // stored as a separate Transcript row (translatedTo = the target code).
   TRANSLATE
+  // Loudness / spectral flatness / silence pass over the extracted audio.
+  AUDIO_FEATURES
 }
 
 model Job {

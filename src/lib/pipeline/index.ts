@@ -2,6 +2,7 @@ import type { JobHandlerMap } from "../jobs/types.ts";
 import type { PipelineDeps } from "./deps.ts";
 import {
   analyzeHandler,
+  audioFeaturesHandler,
   extractAudioHandler,
   fetchHandler,
   probeHandler,
@@ -17,6 +18,7 @@ export {
   fetchHandler,
   probeHandler,
   extractAudioHandler,
+  audioFeaturesHandler,
   transcribeHandler,
   analyzeHandler,
   renderHandler,
@@ -37,4 +39,5 @@ export const PIPELINE_HANDLERS: JobHandlerMap<PipelineDeps> = {
   LIVE_TRANSCRIBE: liveTranscribeHandler,
   LIVE_FINALIZE: liveFinalizeHandler,
   TRANSLATE: translateHandler,
+  AUDIO_FEATURES: audioFeaturesHandler,
 };

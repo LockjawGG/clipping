@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { DEFAULT_SNAP_CONFIG } from "../clips/boundaries.ts";
@@ -6,6 +6,7 @@ import { refineSuggestions } from "../analysis/pipeline.ts";
 import { buildCues, toSrt, toStyledSrt } from "../captions/layout.ts";
 import { DEFAULT_CAPTION_STYLE, remotionPreset } from "../captions/presets.ts";
 import { captionNeedsRemotion } from "../captions/text-style.ts";
+import { parseAudioFeatures, serializeFeatures } from "../audio/features.ts";
 import { censoredIndices, detectSpans } from "../censor/detect.ts";
 import { maskWords } from "../censor/mask.ts";
 import { ASPECT_DIMENSIONS, type CaptionBurnStyle } from "../ffmpeg/args.ts";
@@ -125,7 +126,58 @@ export const extractAudioHandler: JobHandler<PipelineDeps> = async ({ job, deps,
       ...(translatedTo ? { translatedTo } : {}),
     },
   });
+  // Audio features are independent of the transcript, so they run in parallel
+  // rather than lengthening the chain to the first usable clip. A translation
+  // re-runs this handler over the same audio and must not redo the analysis.
+  if (!translatedTo) {
+    await deps.queue.enqueue({ videoId: job.videoId, kind: "AUDIO_FEATURES", payload: { audioKey } });
+  }
   return { audioKey, ...(task ? { task } : {}) };
+};
+
+interface AudioFeaturePayload {
+  audioKey?: string;
+  stepMs?: number;
+}
+
+/**
+ * AUDIO_FEATURES: one loudness / spectral-flatness / silence pass over the
+ * extracted audio, cached on the video.
+ *
+ * This is the signal half of highlight detection — no model, no GPU, and it
+ * reuses the WAV that already exists rather than decoding the video again.
+ */
+export const audioFeaturesHandler: JobHandler<PipelineDeps> = async ({
+  job,
+  deps,
+  signal,
+  setProgress,
+}) => {
+  const payload = (job.payload ?? {}) as AudioFeaturePayload;
+  const audioKey = payload.audioKey ?? audioKeyFor(job.videoId);
+  const work = jobWorkDir(deps.tempDir, job.id);
+  const wav = scratchPath(work, "audio.wav");
+  const dump = scratchPath(work, "features.txt");
+
+  await deps.storage.getToFile(audioKey, wav);
+  await setProgress(0.3);
+
+  await deps.ffmpeg.audioFeatures(wav, dump, { stepMs: payload.stepMs }, signal);
+  await setProgress(0.8);
+
+  // ffmpeg writes no dump when there is nothing to analyse — a silent track, or
+  // a video with no audio stream at all. That is a legitimate result, not a
+  // failure: yield empty features rather than failing the job and stalling the
+  // rest of the chain behind a retry.
+  const dumpText = await readFile(dump, "utf8").catch(() => "");
+  const features = parseAudioFeatures(dumpText, payload.stepMs ?? 250);
+  await deps.videos.setAudioFeatures?.(job.videoId, serializeFeatures(features));
+
+  return {
+    windows: features.loudness.length,
+    silences: features.silences.length,
+    durationMs: features.durationMs,
+  };
 };
 
 interface TranscribePayload {

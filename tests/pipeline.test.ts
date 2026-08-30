@@ -97,6 +97,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       reframeTracked: async () => {},
     reframeZoom: async () => {},
     censorAudio: async () => {},
+    audioFeatures: async () => {},
       thumbnail: async () => {},
       composeOverlays: async () => {},
     },
@@ -360,7 +361,9 @@ test("the ingest chain runs PROBE -> EXTRACT_AUDIO -> TRANSCRIBE -> ANALYZE -> T
 
   assert.deepEqual(
     spy.enqueued.map((e) => e.kind),
-    ["EXTRACT_AUDIO", "TRANSCRIBE", "ANALYZE", "THUMBNAIL"],
+    // AUDIO_FEATURES forks off EXTRACT_AUDIO rather than extending the chain:
+    // it needs no transcript, so it must not delay the first usable clip.
+    ["EXTRACT_AUDIO", "TRANSCRIBE", "AUDIO_FEATURES", "ANALYZE", "THUMBNAIL"],
   );
   assert.equal(spy.statuses.at(-1), "READY");
   assert.equal(spy.savedClips?.length, 1);

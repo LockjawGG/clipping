@@ -106,6 +106,9 @@ export function prismaVideoRepo(client: PrismaClient): VideoRepo {
     async setStorageKey(id, storageKey) {
       await client.video.update({ where: { id }, data: { storageKey } });
     },
+    async setAudioFeatures(id, json) {
+      await client.video.update({ where: { id }, data: { audioFeatureJson: json } });
+    },
     async transcriptionTerms(id) {
       const v = await client.video.findUnique({
         where: { id },

@@ -19,6 +19,7 @@ import {
   buildThumbnailArgs,
   buildTrackedReframeArgs,
   buildZoomReframeArgs,
+  buildAudioFeatureArgs,
   buildCensorAudioArgs,
   type AudioCensorMode,
   type CensorSpanSec,
@@ -192,6 +193,13 @@ export interface Ffmpeg {
     opts: ZoomReframeOptions,
     signal?: AbortSignal,
   ): Promise<void>;
+  /** One loudness / flatness / silence pass; writes a metadata dump. */
+  audioFeatures(
+    inputPath: string,
+    metadataPath: string,
+    opts?: { stepMs?: number },
+    signal?: AbortSignal,
+  ): Promise<void>;
   /** Bleep / mute the audio inside a set of windows. */
   censorAudio(
     inputPath: string,
@@ -301,6 +309,20 @@ export class FfmpegRunner implements Ffmpeg {
   ): Promise<void> {
     await mkdir(dirname(outputPath), { recursive: true });
     await this.exec(this.ffmpegPath, buildReframeArgs({ inputPath, outputPath, ...opts }), signal);
+  }
+
+  async audioFeatures(
+    inputPath: string,
+    metadataPath: string,
+    opts: { stepMs?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await mkdir(dirname(metadataPath), { recursive: true });
+    await this.exec(
+      this.ffmpegPath,
+      buildAudioFeatureArgs({ inputPath, metadataPath, stepMs: opts.stepMs }),
+      signal,
+    );
   }
 
   async censorAudio(
