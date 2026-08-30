@@ -75,8 +75,14 @@ export class PiperTtsProvider implements TtsProvider {
     }
   }
 
+  /**
+   * Listing voices asserts availability first. "I cannot run at all" and "I run
+   * but have no models installed" are different problems with different fixes,
+   * and collapsing the first into an empty list made the UI offer a Generate
+   * button that could only fail once pressed.
+   */
   async voices(): Promise<TtsVoice[]> {
-    if (!existsSync(this.opts.voiceDir)) return [];
+    this.assertAvailable();
     return readdirSync(this.opts.voiceDir)
       .map(parseVoiceFile)
       .filter((v): v is TtsVoice => v !== null)

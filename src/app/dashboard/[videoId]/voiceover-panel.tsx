@@ -122,6 +122,12 @@ export const VoiceoverPanel = memo(function VoiceoverPanel({ clipId }: { clipId:
             anywhere — you just need the binary and at least one voice installed.
           </p>
         )}
+        {available && voices.length === 0 && (
+          <p className="text-[11px] leading-relaxed text-danger">
+            No voice models installed. Drop a Piper <code>.onnx</code> voice into the folder
+            <code> PIPER_VOICE_DIR</code> points at and it will appear here.
+          </p>
+        )}
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <label className="flex items-center gap-1">
@@ -206,7 +212,7 @@ export const VoiceoverPanel = memo(function VoiceoverPanel({ clipId }: { clipId:
           <button
             type="button"
             className="btn btn-primary btn-sm"
-            disabled={busy || running || !available}
+            disabled={busy || running || !available || voices.length === 0}
             onClick={() =>
               save(sourceKind === "SCRIPT" ? { sourceKind, script } : { sourceKind })
             }

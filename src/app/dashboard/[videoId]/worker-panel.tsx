@@ -72,6 +72,12 @@ export const WorkerPanel = memo(function WorkerPanel({ videoId, onSeek }: Props)
     deadAir: true,
   });
   const poll = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * `<details open>` is DOM state, not React state, so a `router.refresh()`
+   * after accepting a suggestion would close the panel mid-triage and drop the
+   * user back to the top of the page. Controlling it keeps it open.
+   */
+  const [open, setOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -177,7 +183,11 @@ export const WorkerPanel = memo(function WorkerPanel({ videoId, onSeek }: Props)
   const decided = run?.suggestions.filter((s) => s.status !== "PENDING") ?? [];
 
   return (
-    <details className="card px-3 py-2 text-sm">
+    <details
+      className="card px-3 py-2 text-sm"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
       <summary className="cursor-pointer select-none font-medium">
         ⚡ Run Worker
         {run && !running && run.suggestions.length > 0 && (
