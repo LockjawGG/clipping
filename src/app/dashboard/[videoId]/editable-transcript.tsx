@@ -61,7 +61,6 @@ export function wordSpanCss(s: WordStyle | undefined): React.CSSProperties {
  */
 const Word = memo(function Word({
   censored,
-  struck,
   outsideClip,
   word,
   style,
@@ -71,11 +70,8 @@ const Word = memo(function Word({
   onToggleSelect,
   onSeek,
 }: {
-  /** Marked for censoring by the clip's settings — regardless of whether
-   *  censoring is currently switched on. */
+  /** This word will be masked in the render. */
   censored?: boolean;
-  /** This word will actually be masked in the render. */
-  struck?: boolean;
   /** Falls outside the clip's range, so it never reaches the output. */
   outsideClip?: boolean;
   word: TranscriptWord;
@@ -150,19 +146,16 @@ const Word = memo(function Word({
               ? "bg-amber-400/25"
               : "hover:bg-accent/15"
       } ${
-        // The strike claims "this will be masked in the render", so it follows
-        // what the render will do rather than the detection toggle: a word
-        // ticked by hand is struck even with detection off.
-        struck ? "line-through decoration-2 decoration-danger" : ""
+        // One meaning: this word will be bleeped. A hand-picked word is struck
+        // even with detection off; an auto-detected one is not.
+        censored ? "line-through decoration-2 decoration-danger" : ""
       }`}
       title={
         outsideClip
           ? "Outside this clip - it will not appear in the render"
-          : struck
+          : censored
             ? "Censored in this clip - select it and untick Censor to keep it"
-            : censored
-              ? "Would be censored - switch detection on for this clip to apply it"
-              : "Click to jump the preview here · double-click to fix a typo"
+            : "Click to jump the preview here · double-click to fix a typo"
       }
     >
       {value}
@@ -182,11 +175,8 @@ interface Props {
   onSeek: (absStartMs: number) => void;
   /** Make a clip spanning the currently-selected words (absolute ms). */
   onClipFromSelection?: (startMs: number, endMs: number) => void;
-  /** Word ids the clip's censor settings would currently mask. */
+  /** Word ids the render will mask — drives both the tick and the strike. */
   censoredIds?: ReadonlySet<string>;
-  /** Word ids the render will actually mask. A word can be marked without
-   *  being struck (detection off) but never struck without being masked. */
-  struckIds?: ReadonlySet<string>;
   /**
    * The clip's own range. Rows are selected by segment overlap, so the edges of
    * the transcript show words that fall outside the clip and will never reach
@@ -219,7 +209,6 @@ export const EditableTranscript = memo(function EditableTranscript({
   onSeek,
   onClipFromSelection,
   censoredIds,
-  struckIds,
   clipStartMs,
   clipEndMs,
   onSetCensored,
@@ -484,7 +473,6 @@ export const EditableTranscript = memo(function EditableTranscript({
                       style={styles[w.id]}
                       selected={selectedIds.has(w.id)}
                       censored={censoredIds?.has(w.id) && inClip(w)}
-                      struck={struckIds?.has(w.id) && inClip(w)}
                       outsideClip={!inClip(w)}
                       matched={matches.set.has(w.id)}
                       active={w.id === activeId}

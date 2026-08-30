@@ -324,26 +324,17 @@ export function ClipEditor({
   );
 
   /**
-   * Words the settings mark for censoring, computed whether or not censoring is
-   * switched on — the tick has to tell the truth about what is marked even
-   * while the clip would render untouched. The transcript decides separately
-   * whether to draw the strike-through.
+   * Exactly what the render will mask — one set, driving both the tick and the
+   * strike-through.
+   *
+   * These were briefly two sets, with the tick computed as if detection were
+   * always on so marks could be "prepared" before enabling it. That produced a
+   * checkbox that contradicted the strike beside it: with detection off a
+   * lexicon word showed ticked but unstruck. Since a hand-picked word now
+   * applies whether or not detection is on, there is nothing left to prepare,
+   * and one set means the tick can never claim something the render will not do.
    */
   const censoredWordIds = useMemo(() => {
-    const flat = transcript.flatMap((r) => r.words);
-    if (flat.length === 0) return new Set<string>();
-    const idx = censoredIndices(flat, { ...censorCfg, enabled: true });
-    return new Set([...idx].map((i) => flat[i].id));
-  }, [transcript, censorCfg]);
-
-  /**
-   * What the render will *actually* mask, which is not the same set.
-   *
-   * With detection switched off the lexicon and term lists go quiet, but words
-   * ticked by hand still apply — so the strike-through follows this rather than
-   * the toggle, and always means "this will be bleeped".
-   */
-  const struckWordIds = useMemo(() => {
     const flat = transcript.flatMap((r) => r.words);
     if (flat.length === 0) return new Set<string>();
     return new Set([...censoredIndices(flat, censorCfg)].map((i) => flat[i].id));
@@ -354,18 +345,27 @@ export function ClipEditor({
    * overrides? Needed to keep the toggle reversible: ticking a word the rules
    * already catch means clearing an exemption, not adding a force-censor, so
    * neither list accumulates entries that no longer do anything.
+   *
+   * This honours the detection toggle, so with detection off the rules catch
+   * nothing and ticking any word records a real hand-picked mark.
    */
   const censoredByRules = useMemo(() => {
     const flat = transcript.flatMap((r) => r.words);
     if (flat.length === 0) return new Set<string>();
     const idx = censoredIndices(flat, {
-      enabled: true,
+      enabled: draft.censorEnabled,
       sensitivity: draft.censorSensitivity,
       allowList: draft.censorAllowList,
       denyList: draft.censorDenyList,
     });
     return new Set([...idx].map((i) => flat[i].id));
-  }, [transcript, draft.censorSensitivity, draft.censorAllowList, draft.censorDenyList]);
+  }, [
+    transcript,
+    draft.censorEnabled,
+    draft.censorSensitivity,
+    draft.censorAllowList,
+    draft.censorDenyList,
+  ]);
 
   /**
    * Turn censoring on or off for specific occurrences, on this clip only.
@@ -1544,7 +1544,7 @@ export function ClipEditor({
           onClearSelection={clearWordSelection}
           onSeek={seekToWord}
           censoredIds={censoredWordIds}
-          struckIds={struckWordIds}
+
           clipStartMs={draft.startMs}
           clipEndMs={draft.endMs}
           onSetCensored={setWordsCensored}
