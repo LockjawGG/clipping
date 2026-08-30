@@ -166,7 +166,7 @@ export const CensorControls = memo(function CensorControls({ value, words, onCha
           {spans.length === 0 ? (
             <p className="text-muted">
               Nothing matched at this sensitivity. Add your own terms below if something is missing —
-              the built-in list covers profanity only.
+              the built-in list covers profanity and slurs.
             </p>
           ) : (
             <ul className="flex flex-col gap-1">

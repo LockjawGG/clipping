@@ -51,6 +51,7 @@ export function wordSpanCss(s: WordStyle | undefined): React.CSSProperties {
  * caption styling); double-click edits its text.
  */
 const Word = memo(function Word({
+  censored,
   word,
   style,
   selected,
@@ -59,6 +60,8 @@ const Word = memo(function Word({
   onToggleSelect,
   onSeek,
 }: {
+  /** Currently masked by the clip's censor settings. */
+  censored?: boolean;
   word: TranscriptWord;
   style: WordStyle | undefined;
   selected: boolean;
@@ -128,8 +131,15 @@ const Word = memo(function Word({
             : matched
               ? "bg-amber-400/25"
               : "hover:bg-accent/15"
+      } ${
+        // Marked even while selected, so you can see what you are exempting.
+        censored ? "line-through decoration-2 decoration-danger" : ""
       }`}
-      title="Click to jump the preview here · double-click to fix a typo"
+      title={
+        censored
+          ? "Censored in this clip - select it and choose “Don’t censor” to keep it"
+          : "Click to jump the preview here · double-click to fix a typo"
+      }
     >
       {value}
     </button>
@@ -148,6 +158,13 @@ interface Props {
   onSeek: (absStartMs: number) => void;
   /** Make a clip spanning the currently-selected words (absolute ms). */
   onClipFromSelection?: (startMs: number, endMs: number) => void;
+  /** Word ids the clip's censor settings would currently mask. */
+  censoredIds?: ReadonlySet<string>;
+  /**
+   * Exempt these words from censoring on this clip only. Takes the words'
+   * text — the exemption is per-clip and never edits the shared lexicon.
+   */
+  onUncensor?: (texts: string[]) => void;
 }
 
 /**
@@ -166,6 +183,8 @@ export const EditableTranscript = memo(function EditableTranscript({
   onClearSelection,
   onSeek,
   onClipFromSelection,
+  censoredIds,
+  onUncensor,
 }: Props) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
@@ -185,6 +204,19 @@ export const EditableTranscript = memo(function EditableTranscript({
     }
     return { ids, set: new Set(ids) };
   }, [rows, q]);
+
+  /** Selected words that censoring would currently mask, de-duplicated. */
+  const selectedCensored = useMemo(() => {
+    if (!censoredIds || censoredIds.size === 0) return [] as string[];
+    const seen = new Set<string>();
+    for (const row of rows)
+      for (const w of row.words)
+        if (selectedIds.has(w.id) && censoredIds.has(w.id)) {
+          const key = w.text.toLowerCase().replace(/[^\p{L}']/gu, "");
+          if (key) seen.add(key);
+        }
+    return [...seen];
+  }, [rows, selectedIds, censoredIds]);
 
   const selectedSpan = useMemo(() => {
     let lo = Infinity;
@@ -318,6 +350,16 @@ export const EditableTranscript = memo(function EditableTranscript({
               Clip from selection
             </button>
           )}
+          {onUncensor && selectedCensored.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm text-accent"
+              title="Stop censoring these words on this clip. The shared word list is unchanged."
+              onClick={() => onUncensor(selectedCensored)}
+            >
+              Don&apos;t censor {selectedCensored.length === 1 ? `"${selectedCensored[0]}"` : `these ${selectedCensored.length}`}
+            </button>
+          )}
           <button type="button" onClick={onClearSelection} className="btn btn-ghost btn-sm ml-auto">
             Done
           </button>
@@ -347,6 +389,7 @@ export const EditableTranscript = memo(function EditableTranscript({
                   word={w}
                   style={styles[w.id]}
                   selected={selectedIds.has(w.id)}
+                  censored={censoredIds?.has(w.id)}
                   matched={matches.set.has(w.id)}
                   active={w.id === activeId}
                   onToggleSelect={onToggleSelect}

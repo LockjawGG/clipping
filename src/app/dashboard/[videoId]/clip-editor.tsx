@@ -295,6 +295,41 @@ export function ClipEditor({
    * so what you scrub is what burns — the same rule the animation engine
    * follows. Toggling censoring updates the overlay immediately.
    */
+  /**
+   * Which transcript words the clip's censor settings would mask right now.
+   *
+   * Computed from the rows actually on screen so the strike-through always
+   * matches what is displayed, and recomputed as the settings change so
+   * exempting a word un-marks it immediately.
+   */
+  const censorCfg = useMemo(
+    () => ({
+      enabled: draft.censorEnabled,
+      sensitivity: draft.censorSensitivity,
+      allowList: draft.censorAllowList,
+      denyList: draft.censorDenyList,
+    }),
+    [draft.censorEnabled, draft.censorSensitivity, draft.censorAllowList, draft.censorDenyList],
+  );
+
+  const censoredWordIds = useMemo(() => {
+    const flat = transcript.flatMap((r) => r.words);
+    if (flat.length === 0) return new Set<string>();
+    const idx = censoredIndices(flat, { ...censorCfg, enabled: true });
+    // Marked even while censoring is off, so you can see what turning it on
+    // would do before committing to it.
+    return new Set([...idx].map((i) => flat[i].id));
+  }, [transcript, censorCfg]);
+
+  /** Exempt words on this clip only — the shared lexicon is never touched. */
+  const uncensorWords = useCallback((texts: string[]) => {
+    setDraft((d) => {
+      const next = [...d.censorAllowList];
+      for (const t of texts) if (t && !next.includes(t)) next.push(t);
+      return next.length === d.censorAllowList.length ? d : { ...d, censorAllowList: next };
+    });
+  }, []);
+
   const previewWords = useMemo(() => {
     if (!draft.censorEnabled) return words;
     const cfg = {
@@ -1437,6 +1472,8 @@ export function ClipEditor({
           onReset={resetWordStyle}
           onClearSelection={clearWordSelection}
           onSeek={seekToWord}
+          censoredIds={censoredWordIds}
+          onUncensor={uncensorWords}
         />
       </div>
 

@@ -102,6 +102,37 @@ test("the lexicon ships profanity only — no slurs list", () => {
   assert.equal(spans[0].tier, "custom");
 });
 
+test("slurs are caught at every sensitivity, including the most permissive", () => {
+  // Sensitivity is a dial for how much ordinary swearing to mask. It is not a
+  // reason to let a slur through, so lowering it must not disable them.
+  const words = line("nigger faggot retard chink spastic");
+  for (const sensitivity of ["LOW", "MEDIUM", "HIGH"] as const) {
+    const hits = detectSpans(words, { enabled: true, sensitivity });
+    assert.equal(hits.length, 5, sensitivity);
+    assert.deepEqual([...new Set(hits.map((h) => h.tier))], ["slur"], sensitivity);
+  }
+});
+
+test("a slur is still exempt-able per clip, which is how reclaimed use gets through", () => {
+  const words = line("nigga dyke queer");
+  assert.ok(detectSpans(words, { enabled: true, sensitivity: "LOW" }).length > 0);
+  assert.deepEqual(
+    detectSpans(words, { enabled: true, sensitivity: "LOW", allowList: ["nigga", "dyke"] }).map(
+      (s) => s.text,
+    ),
+    [],
+    "the allow-list overrides the slur tier like any other",
+  );
+});
+
+test("words whose innocent sense dominates are deliberately absent", () => {
+  // A filter that masks "the ace of spades" or "that's lame" gets switched off
+  // entirely, which protects nobody. "niggardly" is the classic trap: an
+  // unrelated word that a careless list would flag.
+  const words = line("spades cracker nip lame fairy dwarf oreo guinea niggardly");
+  assert.deepEqual(detectSpans(words, { enabled: true, sensitivity: "HIGH" }), []);
+});
+
 test("the allow-list rescues a false positive and beats the deny-list", () => {
   const words = line("what the hell");
   assert.equal(detectSpans(words, { enabled: true, sensitivity: "HIGH" }).length, 1);
