@@ -187,6 +187,9 @@ export interface WorkerRunTarget {
   /** Cached audio-feature JSON from the AUDIO_FEATURES pass; null if not run. */
   audioFeatureJson: string | null;
   durationMs: number | null;
+  /** The learned style for this video's content type; null if none is built. */
+  profileJson: unknown;
+  contentType: string;
 }
 
 export interface WorkerSuggestionRow {

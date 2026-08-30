@@ -464,10 +464,28 @@ export function prismaWorkerRepo(client: PrismaClient): WorkerRepo {
           videoId: true,
           clipId: true,
           objectivesJson: true,
-          video: { select: { audioFeatureJson: true, durationMs: true } },
+          video: {
+            select: {
+              audioFeatureJson: true,
+              durationMs: true,
+              contentType: true,
+              project: { select: { userId: true } },
+            },
+          },
         },
       });
       if (!run) return null;
+      // The profile is looked up by (owner, content type): style is learned per
+      // format, so a podcast profile must not steer a gaming clip.
+      const profile = await client.styleProfile.findUnique({
+        where: {
+          userId_contentType: {
+            userId: run.video.project.userId,
+            contentType: run.video.contentType,
+          },
+        },
+        select: { profileJson: true },
+      });
       return {
         runId: run.id,
         videoId: run.videoId,
@@ -475,6 +493,8 @@ export function prismaWorkerRepo(client: PrismaClient): WorkerRepo {
         objectives: (run.objectivesJson as WorkerRunTarget["objectives"]) ?? null,
         audioFeatureJson: run.video.audioFeatureJson,
         durationMs: run.video.durationMs,
+        profileJson: profile?.profileJson ?? null,
+        contentType: run.video.contentType,
       };
     },
     async begin(runId) {

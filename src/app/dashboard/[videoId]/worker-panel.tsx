@@ -126,6 +126,23 @@ export const WorkerPanel = memo(function WorkerPanel({ videoId, onSeek }: Props)
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ status }),
       });
+      // Record the decision itself. Undo is not feedback — it is the user
+      // correcting their own click, and logging it would teach nothing.
+      if (status !== "PENDING") {
+        const s = run?.suggestions.find((x) => x.id === id);
+        void fetch("/api/training/feedback", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            kind: s?.kind ?? "UNKNOWN",
+            action: status,
+            videoId,
+            suggested: s
+              ? { startMs: s.startMs, endMs: s.endMs, score: s.score, signals: s.payloadJson?.signals }
+              : {},
+          }),
+        }).catch(() => {});
+      }
     } catch {
       void load();
     }

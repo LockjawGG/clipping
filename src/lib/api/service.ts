@@ -16,6 +16,7 @@ import type { TextPresetServiceDeps } from "./text-presets.ts";
 import type { SequenceServiceDeps } from "./sequence.ts";
 import type { LiveServiceDeps } from "./live.ts";
 import type { WorkerServiceDeps } from "./worker.ts";
+import type { LearningServiceDeps } from "./learning.ts";
 
 /** Throws 404 unless `projectId` belongs to `userId`. Shared by every service. */
 function ownsProject(userId: string) {
@@ -57,6 +58,15 @@ export function workerService(userId: string): WorkerServiceDeps {
     db: db as unknown as WorkerServiceDeps["db"],
     assertProjectOwned: ownsProject(userId),
     enqueue: (input) => enqueueJob(db, input),
+  };
+}
+
+/** Training repository + style profiles, scoped to the signed-in user. */
+export function learningService(userId: string): LearningServiceDeps {
+  return {
+    db: db as unknown as LearningServiceDeps["db"],
+    userId,
+    assertProjectOwned: ownsProject(userId),
   };
 }
 

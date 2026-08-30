@@ -5,8 +5,9 @@ import { useState } from "react";
 import { SignOutButton } from "./sign-out-button";
 import { ProjectRail, type ProjectSummary, type FavoriteClip } from "./project-rail";
 import { MediaLibrary, type AssetView } from "./media-library";
+import { TrainingRail } from "./training-rail";
 
-/** Left column: a Projects / Media tab switch above the two panels. */
+/** Left column: a Projects / Media / Training tab switch above the panels. */
 export function LeftRail({
   projects,
   activeProjectId,
@@ -18,7 +19,7 @@ export function LeftRail({
   favorites: FavoriteClip[];
   assets: AssetView[];
 }) {
-  const [tab, setTab] = useState<"projects" | "media">("projects");
+  const [tab, setTab] = useState<"projects" | "media" | "training">("projects");
 
   return (
     <div className="rail flex h-full min-h-0 flex-col px-0">
@@ -34,13 +35,22 @@ export function LeftRail({
         <button role="tab" aria-selected={tab === "media"} className="tab" onClick={() => setTab("media")}>
           Media
         </button>
+        <button
+          role="tab"
+          aria-selected={tab === "training"}
+          className="tab"
+          onClick={() => setTab("training")}
+          title="What the editor has learned from your finished edits"
+        >
+          Training
+        </button>
       </div>
 
-      {tab === "projects" ? (
+      {tab === "projects" && (
         <ProjectRail projects={projects} activeProjectId={activeProjectId} favorites={favorites} />
-      ) : (
-        <MediaLibrary assets={assets} />
       )}
+      {tab === "media" && <MediaLibrary assets={assets} />}
+      {tab === "training" && <TrainingRail />}
     </div>
   );
 }

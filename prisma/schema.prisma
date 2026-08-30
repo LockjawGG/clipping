@@ -34,6 +34,9 @@ model User {
   projects    Project[]
   assets      Asset[]
   textPresets TextPreset[]
+  trainingExamples TrainingExample[]
+  styleProfiles    StyleProfile[]
+  suggestionFeedback SuggestionFeedback[]
 
   @@map("users")
 }
@@ -177,6 +180,10 @@ model Video {
   hasAudio     Boolean @default(true)
 
   errorMessage String?
+
+  /// What kind of content this is, for picking the right learned profile.
+  /// Heuristically guessed on ingest; the user can override it.
+  contentType ContentType @default(UNKNOWN)
 
   /// Windowed loudness / spectral flatness / silence from one ffmpeg pass over
   /// the extracted audio. Drives highlight detection. JSON `AudioFeatures`.
@@ -366,6 +373,7 @@ model Clip {
   renders        Render[]
   wordStyles     CaptionWordStyle[]
   sequence       Sequence?
+  trainingExamples TrainingExample[]
 
   @@index([videoId, startMs])
   @@index([savedToProjectId])
@@ -589,6 +597,88 @@ model Render {
   @@map("renders")
 }
 
+/// Editing styles differ enormously between formats, so profiles are kept per
+/// content type rather than averaged into one mush.
+enum ContentType {
+  PODCAST
+  INTERVIEW
+  GAMING
+  COMMENTARY
+  EDUCATIONAL
+  NEWS
+  VLOG
+  SHORT
+  LONGFORM
+  UNKNOWN
+}
+
+enum FeedbackAction {
+  ACCEPTED
+  REJECTED
+  MODIFIED
+}
+
+/// One finished edit, approved by the user as something to learn from.
+///
+/// `featureJson` is the extracted vector and is the only field training reads —
+/// it is computed once at approval and never recomputed, so rebuilding a
+/// profile never touches the original media.
+model TrainingExample {
+  id          String      @id @default(cuid())
+  userId      String
+  clipId      String?
+  contentType ContentType @default(UNKNOWN)
+  featureJson Json
+  /// Recency weight; halves roughly every 90 days at read time.
+  weight      Float       @default(1.0)
+  createdAt   DateTime    @default(now())
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clip Clip? @relation(fields: [clipId], references: [id], onDelete: SetNull)
+
+  @@index([userId, contentType, createdAt])
+  @@map("training_examples")
+}
+
+/// The learned style for one user + content type. An aggregate, not a network:
+/// it retrains in well under a second, works from three examples, and can say
+/// in plain language what it learned.
+model StyleProfile {
+  id           String      @id @default(cuid())
+  userId       String
+  contentType  ContentType
+  profileJson  Json
+  /// 0..1, from example count and how consistent those examples are.
+  confidence   Float       @default(0)
+  exampleCount Int         @default(0)
+  version      Int         @default(1)
+  trainedAt    DateTime    @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, contentType])
+  @@map("style_profiles")
+}
+
+/// Every accept / reject / modify of a worker suggestion. Read only as an
+/// aggregate, so old rows can be folded into the profile and deleted.
+model SuggestionFeedback {
+  id            String         @id @default(cuid())
+  userId        String
+  videoId       String?
+  kind          String
+  action        FeedbackAction
+  /// What was proposed, and what the user changed it to when MODIFIED.
+  suggestedJson Json
+  finalJson     Json?
+  createdAt     DateTime       @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind, createdAt])
+  @@map("suggestion_feedback")
+}
+
 enum SuggestionStatus {
   PENDING
   ACCEPTED
@@ -665,6 +755,8 @@ enum JobKind {
   AUDIO_FEATURES
   // Generate reviewable suggestions from the transcript + audio features.
   WORKER_RUN
+  // Rebuild a user's style profile from their approved training examples.
+  TRAIN_PROFILE
 }
 
 model Job {

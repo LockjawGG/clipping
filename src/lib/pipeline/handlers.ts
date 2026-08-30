@@ -8,6 +8,8 @@ import { DEFAULT_CAPTION_STYLE, remotionPreset } from "../captions/presets.ts";
 import { captionNeedsRemotion } from "../captions/text-style.ts";
 import { parseAudioFeatures, parseStoredFeatures, serializeFeatures } from "../audio/features.ts";
 import { buildSuggestions } from "../worker-ai/suggest.ts";
+import { parseProfile } from "../learning/profile.ts";
+import { clipLengthBias } from "../learning/apply.ts";
 import { censoredIndices, detectSpans } from "../censor/detect.ts";
 import { maskWords } from "../censor/mask.ts";
 import { ASPECT_DIMENSIONS, type CaptionBurnStyle } from "../ffmpeg/args.ts";
@@ -214,10 +216,19 @@ export const workerRunHandler: JobHandler<PipelineDeps> = async ({
     const segments = await deps.transcripts.loadSegments(run.videoId);
     await setProgress(0.3);
 
+    // The learned style biases the *request* as well as the ranking: asking for
+    // 60s candidates from an editor who always cuts 20s wastes the provider's
+    // attention on windows they will never accept.
+    const profile = parseProfile(run.profileJson);
+    const bias = clipLengthBias(profile, {
+      minClipMs: payload.minClipMs ?? 15_000,
+      maxClipMs: payload.maxClipMs ?? 60_000,
+    });
+
     // Reuse the configured analysis provider rather than scoring transcripts a
     // second way here — two rankings would drift apart.
-    const minClipMs = payload.minClipMs ?? 15_000;
-    const maxClipMs = payload.maxClipMs ?? 60_000;
+    const minClipMs = payload.minClipMs ?? bias.minClipMs;
+    const maxClipMs = payload.maxClipMs ?? bias.maxClipMs;
     const candidates =
       segments.length > 0
         ? await deps.analysis.suggestClips(segments, {
@@ -234,6 +245,7 @@ export const workerRunHandler: JobHandler<PipelineDeps> = async ({
       features: parseStoredFeatures(run.audioFeatureJson),
       objectives: run.objectives ?? undefined,
       maxHighlights: payload.maxClips ?? 8,
+      profile,
     });
 
     const written = await deps.workers.complete(
@@ -247,7 +259,12 @@ export const workerRunHandler: JobHandler<PipelineDeps> = async ({
         payloadJson: { signals: d.signals, ...(d.payload ?? {}) },
       })),
     );
-    return { suggestions: written, candidates: candidates.length };
+    return {
+      suggestions: written,
+      candidates: candidates.length,
+      profileApplied: bias.learned,
+      contentType: run.contentType,
+    };
   } catch (err) {
     await deps.workers.fail(runId, err instanceof Error ? err.message : String(err));
     throw err;

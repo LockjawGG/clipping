@@ -15,6 +15,8 @@
 import type { AudioFeatures } from "../audio/features.ts";
 import { findAudioMoments, findDeadAir, windowStats, type AudioMoment } from "../audio/energy.ts";
 import type { ClipSuggestion } from "../providers/types.ts";
+import { explainLengthFit, isUsable, lengthAffinity } from "../learning/apply.ts";
+import type { StyleProfile } from "../learning/profile.ts";
 
 export type SuggestionKind = "HIGHLIGHT" | "REACTION" | "DEAD_AIR";
 
@@ -30,6 +32,8 @@ export interface SuggestionSignals {
   transcript?: number;
   /** ms of dead air removed, for DEAD_AIR. */
   savedMs?: number;
+  /** 0..1 agreement with the learned clip length, when a profile applied. */
+  lengthFit?: number;
 }
 
 export interface SuggestionDraft {
@@ -68,6 +72,8 @@ export interface WorkerInput {
   maxHighlights?: number;
   /** Dead air shorter than this is not worth a suggestion. */
   minDeadAirMs?: number;
+  /** The learned style for this content type, when one exists and is trusted. */
+  profile?: StyleProfile | null;
 }
 
 const clamp01 = (n: number) => (n < 0 ? 0 : n > 1 ? 1 : n);
@@ -89,9 +95,21 @@ function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): b
 const TRANSCRIPT_WEIGHT = 0.65;
 const AUDIO_WEIGHT = 0.35;
 
+/**
+ * How much a usable profile shifts a highlight's score.
+ *
+ * Small on purpose. The profile knows what lengths this editor tends to cut,
+ * which is a genuine preference — but it knows nothing about *this* recording,
+ * so it nudges the ranking rather than driving it. A profile that could
+ * outvote the content would turn "learned your style" into "ignores the
+ * material".
+ */
+const PROFILE_WEIGHT = 0.2;
+
 function highlightSuggestions(input: WorkerInput, moments: AudioMoment[]): SuggestionDraft[] {
   const { candidates, features } = input;
   const max = input.maxHighlights ?? 8;
+  const profile = isUsable(input.profile) ? input.profile : null;
 
   const drafts = candidates.map((c) => {
     const signals: SuggestionSignals = { transcript: clamp01(c.score) };
@@ -123,7 +141,19 @@ function highlightSuggestions(input: WorkerInput, moments: AudioMoment[]): Sugge
       }
     }
 
-    const score = clamp01(TRANSCRIPT_WEIGHT * clamp01(c.score) + AUDIO_WEIGHT * audioScore);
+    let score = clamp01(TRANSCRIPT_WEIGHT * clamp01(c.score) + AUDIO_WEIGHT * audioScore);
+
+    // The learned profile contributes a nudge and a sentence. The sentence is
+    // the point: it is what turns "the model liked this" into something the
+    // user can check against their own habits.
+    if (profile) {
+      const affinity = lengthAffinity(profile, c.startMs, c.endMs);
+      score = clamp01(score * (1 - PROFILE_WEIGHT) + affinity * PROFILE_WEIGHT);
+      signals.lengthFit = affinity;
+      const fit = explainLengthFit(profile, c.startMs, c.endMs);
+      if (fit) why.push(fit);
+    }
+
     // The transcript scorer already explains itself; the audio adds to that.
     const reason = [c.reason?.trim(), ...why].filter(Boolean).join(" · ") || "matched the clip scorer";
 

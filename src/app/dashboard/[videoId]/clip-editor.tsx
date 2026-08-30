@@ -270,6 +270,26 @@ export function ClipEditor({
   const [busy, setBusy] = useState<"save" | "render" | "delete" | "thumb" | "save-to" | null>(null);
   const [focusEditing, setFocusEditing] = useState(false);
   /**
+   * Approving an edit for training is deliberately an explicit act. Learning
+   * from everything that gets rendered would fill the repository with abandoned
+   * experiments; the repository is only useful because it is curated.
+   */
+  const [trained, setTrained] = useState<string | null>(null);
+  const trainOnThis = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/clips/${clip.id}/train`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) return;
+      const body = (await res.json()) as { contentType?: string };
+      setTrained(body.contentType ?? "UNKNOWN");
+    } catch {
+      /* the button simply stays available */
+    }
+  }, [clip.id]);
+  /**
    * Captions in the preview are masked exactly as the render will mask them,
    * so what you scrub is what burns — the same rule the animation engine
    * follows. Toggling censoring updates the overlay immediately.
@@ -1178,6 +1198,15 @@ export function ClipEditor({
           className={`pill ${draft.accepted ? "border-accent/50 text-accent" : ""}`}
         >
           {draft.accepted ? "✓ accepted" : "mark accepted"}
+        </button>
+        <button
+          type="button"
+          onClick={trainOnThis}
+          disabled={trained !== null}
+          className={`pill ${trained ? "border-accent/50 text-accent" : ""}`}
+          title="Add this edit to the training repository so the editor learns your style from it"
+        >
+          {trained === null ? "🧠 train on this" : `🧠 learning from this${trained === "UNKNOWN" ? "" : ` · ${trained.toLowerCase()}`}`}
         </button>
       </div>
 

@@ -45,25 +45,26 @@ function makeDeps(over: { videoOwner?: string } = {}): Fixture {
   const updated: Fixture["updated"] = [];
   const owner = over.videoOwner ?? "proj-mine";
 
+  type W = { where: { id: string }; data?: Record<string, unknown> };
   const deps: WorkerServiceDeps = {
     db: {
       video: {
-        findUnique: async ({ where }) =>
+        findUnique: async ({ where }: W) =>
           where.id === "vidA" ? { id: "vidA", projectId: owner, durationMs: 60_000 } : null,
       },
       workerRun: {
-        create: async ({ data }) => {
+        create: async ({ data }: { data: Record<string, unknown> }) => {
           created.push(data);
           return { id: "run-new" };
         },
-        findUnique: async ({ where }) => (where.id === "run1" ? { ...RUN } : null),
-        findFirst: async ({ where }) =>
-          (where as { videoId?: string }).videoId === "vidA" ? { ...RUN } : null,
+        findUnique: async ({ where }: W) => (where.id === "run1" ? { ...RUN } : null),
+        findFirst: async ({ where }: { where: { videoId?: string } }) =>
+          where.videoId === "vidA" ? { ...RUN } : null,
       },
       workerSuggestion: {
-        findUnique: async ({ where }) =>
+        findUnique: async ({ where }: W) =>
           where.id === "s1" ? { ...RUN.suggestions[0], run: { videoId: "vidA" } } : null,
-        update: async ({ where, data }) => {
+        update: async ({ where, data }: Required<W>) => {
           updated.push({ id: where.id, data });
           return { ...RUN.suggestions[0], ...(data as object) } as (typeof RUN.suggestions)[0];
         },
