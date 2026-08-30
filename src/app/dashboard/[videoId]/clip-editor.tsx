@@ -9,6 +9,9 @@ import { RailThumb } from "../rail-thumb";
 import { CaptionControls, CAPTION_DEFAULTS, type CaptionConfig } from "./caption-controls";
 import { ClipPlayer, type PreviewWord } from "./clip-player";
 import { KEYFRAME_SNAP_MS } from "./focus-window";
+import { CensorControls, type CensorSettings } from "./censor-controls";
+import { censoredIndices } from "@/lib/censor/detect.ts";
+import { maskWords } from "@/lib/censor/mask.ts";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
 import type { TranscriptView } from "../editor-pane";
 import { TRANSLATE_TARGETS } from "@/lib/translation/targets";
@@ -56,6 +59,13 @@ export interface ClipData {
   focalX: number | null;
   focalY: number | null;
   focusTrackJson: string | null;
+  censorEnabled: boolean;
+  censorSensitivity: "LOW" | "MEDIUM" | "HIGH";
+  censorCaptionMode: "FULL" | "PARTIAL" | "FIRST" | "CUSTOM";
+  censorAudioMode: "MUTE" | "BEEP" | "TONE";
+  censorReplacement: string | null;
+  censorAllowList: string[];
+  censorDenyList: string[];
   accepted: boolean;
   savedToProjectId: string | null;
   captions: CaptionConfig | null;
@@ -78,6 +88,9 @@ export interface ClipData {
 }
 
 const s = (ms: number) => (ms / 1000).toFixed(1);
+/** Order-sensitive equality for the censor word lists. */
+const sameList = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((x, i) => x === b[i]);
 const MIN_LEN_MS = 100;
 
 /** "4.2 MB" / "812 KB" for the export card. */
@@ -256,6 +269,34 @@ export function ClipEditor({
   const [draft, setDraft] = useState(clip);
   const [busy, setBusy] = useState<"save" | "render" | "delete" | "thumb" | "save-to" | null>(null);
   const [focusEditing, setFocusEditing] = useState(false);
+  /**
+   * Captions in the preview are masked exactly as the render will mask them,
+   * so what you scrub is what burns — the same rule the animation engine
+   * follows. Toggling censoring updates the overlay immediately.
+   */
+  const previewWords = useMemo(() => {
+    if (!draft.censorEnabled) return words;
+    const cfg = {
+      enabled: true,
+      sensitivity: draft.censorSensitivity,
+      allowList: draft.censorAllowList,
+      denyList: draft.censorDenyList,
+    };
+    return maskWords(
+      words,
+      censoredIndices(words, cfg),
+      draft.censorCaptionMode,
+      draft.censorReplacement ?? undefined,
+    );
+  }, [
+    words,
+    draft.censorEnabled,
+    draft.censorSensitivity,
+    draft.censorAllowList,
+    draft.censorDenyList,
+    draft.censorCaptionMode,
+    draft.censorReplacement,
+  ]);
   const focusTrack = useMemo(
     () => parseFocusTrack(draft.focusTrackJson),
     [draft.focusTrackJson],
@@ -556,6 +597,13 @@ export function ClipEditor({
     draft.focalX !== clip.focalX ||
     draft.focalY !== clip.focalY ||
     draft.focusTrackJson !== clip.focusTrackJson ||
+    draft.censorEnabled !== clip.censorEnabled ||
+    draft.censorSensitivity !== clip.censorSensitivity ||
+    draft.censorCaptionMode !== clip.censorCaptionMode ||
+    draft.censorAudioMode !== clip.censorAudioMode ||
+    draft.censorReplacement !== clip.censorReplacement ||
+    !sameList(draft.censorAllowList, clip.censorAllowList) ||
+    !sameList(draft.censorDenyList, clip.censorDenyList) ||
     draft.accepted !== clip.accepted;
 
   async function call(kind: NonNullable<typeof busy>, req: () => Promise<Response>) {
@@ -586,6 +634,13 @@ export function ClipEditor({
         focalX: draft.focalX,
         focalY: draft.focalY,
         focusTrack: focusTrack.length ? focusTrack : null,
+        censorEnabled: draft.censorEnabled,
+        censorSensitivity: draft.censorSensitivity,
+        censorCaptionMode: draft.censorCaptionMode,
+        censorAudioMode: draft.censorAudioMode,
+        censorReplacement: draft.censorReplacement,
+        censorAllowList: draft.censorAllowList,
+        censorDenyList: draft.censorDenyList,
         accepted: draft.accepted,
       }),
     });
@@ -997,7 +1052,7 @@ export function ClipEditor({
         sourceUrl={sourceUrl}
         startMs={clip.startMs}
         endMs={clip.endMs}
-        words={words}
+        words={previewWords}
         captionsOn={captionsOn}
         caption={captionDraft}
         wordStyles={wordStyles}
@@ -1209,6 +1264,14 @@ export function ClipEditor({
           )}
         </div>
       )}
+
+      <div className="rounded-lg bg-surface-raised px-3 py-2">
+        <CensorControls
+          value={draft as CensorSettings}
+          words={words}
+          onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+        />
+      </div>
 
       <CaptionControls
         clipId={clip.id}

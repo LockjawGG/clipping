@@ -57,10 +57,12 @@ interface Spy {
     preset: string;
     videoPath: string;
     cueCount: number;
+    cueText: string;
     textOverlayCount: number;
     imageOverlays: Array<{ path: string; animationJson: string | null }>;
   }>;
   composed: OverlayCompositeOptions[];
+  censors: Array<{ input: string; mode: string; spans: Array<{ startSec: number; endSec: number }> }>;
   evicted: string[];
 }
 
@@ -79,6 +81,7 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
     puts: [],
     captioned: [],
     composed: [],
+    censors: [],
     evicted: [],
   };
   const deps = {
@@ -114,6 +117,13 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
           sampleCount: opts.samples.length,
           maxScale: Math.max(...opts.samples.map((s) => s.scale)),
         });
+      },
+      censorAudio: async (
+        i: string,
+        _o: string,
+        opts: { spans: Array<{ startSec: number; endSec: number }>; mode: string },
+      ) => {
+        spy.censors.push({ input: i, mode: opts.mode, spans: opts.spans });
       },
       thumbnail: async () => {},
       composeOverlays: async (_i: string, _o: string, opts: OverlayCompositeOptions) => {
@@ -171,6 +181,7 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
           preset: input.preset,
           videoPath: input.videoPath,
           cueCount: input.cues.length,
+          cueText: JSON.stringify(input.cues),
           textOverlayCount: input.textOverlays?.length ?? 0,
           imageOverlays: input.imageOverlays ?? [],
         });
@@ -220,6 +231,15 @@ function target(over: Partial<RenderTarget> = {}): RenderTarget {
     focalX: 0.5,
     focalY: 0.4,
     focusTrackJson: null,
+    censor: {
+      enabled: false,
+      sensitivity: "MEDIUM",
+      captionMode: "FULL",
+      audioMode: "BEEP",
+      replacement: null,
+      allowList: [],
+      denyList: [],
+    },
     quality: "P1080",
     burnCaptions: false,
     captionAnimation: "NONE",
@@ -322,6 +342,100 @@ test("a layer with motion is composited by Remotion, static ones stay on ffmpeg"
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+const CENSOR_WORDS: Segment[] = [
+  {
+    startMs: 0,
+    endMs: 40_000,
+    text: "well shit that worked",
+    words: [
+      { id: "c1", text: "well", startMs: 11_000, endMs: 11_300 },
+      { id: "c2", text: "shit", startMs: 12_000, endMs: 12_400 },
+      { id: "c3", text: "that", startMs: 13_000, endMs: 13_300 },
+      { id: "c4", text: "worked", startMs: 14_000, endMs: 14_400 },
+    ],
+  },
+];
+
+const censorOn = {
+  enabled: true,
+  sensitivity: "MEDIUM" as const,
+  captionMode: "FULL" as const,
+  audioMode: "BEEP" as const,
+  replacement: null,
+  allowList: [],
+  denyList: [],
+};
+
+const withTranscript = (segments: Segment[]) =>
+  ({
+    transcripts: { save: async () => ({ segmentCount: 0 }), loadSegments: async () => segments },
+  }) as unknown as Partial<PipelineDeps>;
+
+test("censoring bleeps the cut clip before anything else touches it", async () => {
+  const { deps, spy } = makeDeps(target({ censor: censorOn }), withTranscript(CENSOR_WORDS));
+  await renderHandler(ctx(deps, { renderId: "r-cen" }));
+
+  assert.equal(spy.censors.length, 1);
+  assert.equal(spy.censors[0].mode, "BEEP");
+  // Runs on the cut, so every later pass can keep -c:a copy.
+  assert.match(spy.censors[0].input, /cut\.mp4$/);
+  // One span, rebased onto the clip's own timeline (the clip starts at 10s)
+  // and padded 60ms either side.
+  assert.equal(spy.censors[0].spans.length, 1);
+  assert.ok(Math.abs(spy.censors[0].spans[0].startSec - 1.94) < 1e-9);
+  assert.ok(Math.abs(spy.censors[0].spans[0].endSec - 2.46) < 1e-9);
+});
+
+test("a clean transcript runs no censor pass at all", async () => {
+  const { deps, spy } = makeDeps(
+    target({ censor: censorOn }),
+    withTranscript([
+      {
+        startMs: 0,
+        endMs: 40_000,
+        text: "all clean here",
+        words: [
+          { id: "d1", text: "all", startMs: 11_000, endMs: 11_200 },
+          { id: "d2", text: "clean", startMs: 12_000, endMs: 12_200 },
+        ],
+      },
+    ]),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-clean" }));
+  assert.equal(spy.censors.length, 0, "nothing detected -> no transcode");
+});
+
+test("censoring off leaves the audio untouched even with profanity present", async () => {
+  const { deps, spy } = makeDeps(target(), withTranscript(CENSOR_WORDS));
+  await renderHandler(ctx(deps, { renderId: "r-off" }));
+  assert.equal(spy.censors.length, 0);
+});
+
+test("captions are masked for the same words the audio bleeped", async () => {
+  const { deps, spy } = makeDeps(
+    target({ censor: censorOn, burnCaptions: true, captionAnimation: "POP" }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-mask" }));
+
+  assert.equal(spy.censors.length, 1, "audio still bleeped");
+  assert.equal(spy.captioned.length, 1, "an animated preset routes to Remotion");
+  const text = spy.captioned[0].cueText;
+  assert.ok(text.includes("****"), `expected a masked word, got ${text}`);
+  assert.ok(!text.includes("shit"), "the raw word must never reach the renderer");
+  assert.ok(text.includes("worked"), "innocent words are untouched");
+});
+
+test("censoring works with captions off — the words only drive the bleep", async () => {
+  const { deps, spy } = makeDeps(
+    target({ censor: censorOn, burnCaptions: false }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-nocap" }));
+  assert.equal(spy.censors.length, 1);
+  assert.equal(spy.captioned.length, 0, "no caption pass was triggered");
 });
 
 test("no overlays -> no composite pass", async () => {

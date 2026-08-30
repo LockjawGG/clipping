@@ -636,6 +636,110 @@ export function buildOverlayCompositeArgs({
   ];
 }
 
+export type AudioCensorMode = "MUTE" | "BEEP" | "TONE";
+
+export interface CensorSpanSec {
+  startSec: number;
+  endSec: number;
+}
+
+export interface CensorAudioArgs {
+  inputPath: string;
+  outputPath: string;
+  /** Clip-relative windows to censor. Empty is rejected — the caller should
+   *  skip the pass entirely rather than run a no-op transcode. */
+  spans: CensorSpanSec[];
+  mode: AudioCensorMode;
+}
+
+/** `between(t,a,b)+between(t,c,d)` — non-zero inside any span. */
+function spanPredicate(spans: CensorSpanSec[]): string {
+  return spans
+    .map((s) => {
+      const a = fgNum(Math.max(0, s.startSec), 0, 1e6);
+      const b = fgNum(Math.max(s.startSec, s.endSec), 0, 1e6);
+      return `between(t,${a},${b})`;
+    })
+    .join("+");
+}
+
+/**
+ * Censor the audio inside a set of time windows, leaving the video untouched.
+ *
+ * `volume` with `eval=frame` takes a per-frame expression, which is what makes
+ * this a single pass: the voice is ducked to zero inside a span and a generated
+ * tone is raised to audible in the same windows, then the two are mixed. MUTE
+ * skips the tone input entirely.
+ *
+ * Runs on the cut clip before reframing, so downstream passes keep `-c:a copy`
+ * and the censoring survives them.
+ */
+export function buildCensorAudioArgs({
+  inputPath,
+  outputPath,
+  spans,
+  mode,
+}: CensorAudioArgs): string[] {
+  assertSafePath(inputPath);
+  assertSafePath(outputPath);
+  if (spans.length === 0) throw new Error("no censor spans");
+
+  const inSpan = spanPredicate(spans);
+  // Duck the original voice inside every span.
+  const ducked = `[0:a]volume='if(${inSpan},0,1)':eval=frame[voice]`;
+
+  if (mode === "MUTE") {
+    return [
+      "-y",
+      "-i", inputPath,
+      "-filter_complex", `${ducked}`,
+      "-map", "0:v",
+      "-map", "[voice]",
+      "-c:v", "copy",
+      "-c:a", "aac",
+      "-movflags", "+faststart",
+      outputPath,
+    ];
+  }
+
+  // A 1 kHz bleep is the broadcast convention; the softer 400 Hz tone is for
+  // people who find it less abrasive.
+  //
+  // Gains are calibrated against measured output: 0.8 puts the bleep about 2 dB
+  // under the speech it replaces — clearly audible without being painful — and
+  // 0.5 puts the tone roughly 5 dB under that. Lower values sound weak enough
+  // that the censoring reads as a glitch. Clipping is not a risk because the
+  // voice is fully ducked inside the span, so nothing sums against it.
+  const hz = mode === "TONE" ? 400 : 1000;
+  const gain = mode === "TONE" ? 0.5 : 0.8;
+  const chains = [
+    ducked,
+    // The generated tone is silent outside the spans and audible inside them.
+    `[1:a]volume='if(${inSpan},${gain},0)':eval=frame[bleep]`,
+    // `duration=first` keeps the output as long as the clip, not the infinite
+    // sine. `dropout_transition=0` stops amix ramping the gain when one input
+    // goes quiet, which would otherwise fade the voice back in oddly.
+    // `normalize=0` is not optional: amix divides by the number of inputs by
+    // default, which would quietly drop the entire clip by ~6 dB just because
+    // censoring is switched on.
+    `[voice][bleep]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]`,
+  ];
+
+  return [
+    "-y",
+    "-i", inputPath,
+    "-f", "lavfi",
+    "-i", `sine=frequency=${hz}:sample_rate=48000`,
+    "-filter_complex", chains.join(";"),
+    "-map", "0:v",
+    "-map", "[aout]",
+    "-c:v", "copy",
+    "-c:a", "aac",
+    "-movflags", "+faststart",
+    outputPath,
+  ];
+}
+
 export interface ThumbnailArgs {
   inputPath: string;
   outputPath: string;

@@ -19,6 +19,9 @@ import {
   buildThumbnailArgs,
   buildTrackedReframeArgs,
   buildZoomReframeArgs,
+  buildCensorAudioArgs,
+  type AudioCensorMode,
+  type CensorSpanSec,
 } from "./args.ts";
 import type { FocalPoint } from "../faces/track.ts";
 import type { FocusSample } from "../focus/keyframes.ts";
@@ -143,6 +146,12 @@ export interface ZoomReframeOptions {
   subtitleStyle?: CaptionBurnStyle;
 }
 
+/** Bleep / mute windows over the clip's audio; video is copied untouched. */
+export interface CensorAudioOptions {
+  spans: CensorSpanSec[];
+  mode: AudioCensorMode;
+}
+
 export interface OverlayCompositeOptions {
   /** Frame width of `inputPath`; overlay sizes scale off it. */
   frameWidth: number;
@@ -181,6 +190,13 @@ export interface Ffmpeg {
     inputPath: string,
     outputPath: string,
     opts: ZoomReframeOptions,
+    signal?: AbortSignal,
+  ): Promise<void>;
+  /** Bleep / mute the audio inside a set of windows. */
+  censorAudio(
+    inputPath: string,
+    outputPath: string,
+    opts: CensorAudioOptions,
     signal?: AbortSignal,
   ): Promise<void>;
   /** Grab a single frame as a JPEG. */
@@ -285,6 +301,20 @@ export class FfmpegRunner implements Ffmpeg {
   ): Promise<void> {
     await mkdir(dirname(outputPath), { recursive: true });
     await this.exec(this.ffmpegPath, buildReframeArgs({ inputPath, outputPath, ...opts }), signal);
+  }
+
+  async censorAudio(
+    inputPath: string,
+    outputPath: string,
+    opts: CensorAudioOptions,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await this.exec(
+      this.ffmpegPath,
+      buildCensorAudioArgs({ inputPath, outputPath, spans: opts.spans, mode: opts.mode }),
+      signal,
+    );
   }
 
   async reframeZoom(

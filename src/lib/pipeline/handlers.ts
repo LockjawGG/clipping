@@ -6,6 +6,8 @@ import { refineSuggestions } from "../analysis/pipeline.ts";
 import { buildCues, toSrt, toStyledSrt } from "../captions/layout.ts";
 import { DEFAULT_CAPTION_STYLE, remotionPreset } from "../captions/presets.ts";
 import { captionNeedsRemotion } from "../captions/text-style.ts";
+import { censoredIndices, detectSpans } from "../censor/detect.ts";
+import { maskWords } from "../censor/mask.ts";
 import { ASPECT_DIMENSIONS, type CaptionBurnStyle } from "../ffmpeg/args.ts";
 import { type FocalPoint, resampleTrack } from "../faces/track.ts";
 import {
@@ -334,6 +336,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
   try {
     const source = await deps.source.ensureLocal(target.videoId, target.sourceKey, signal);
     const cut = scratchPath(work, "cut.mp4");
+    const censored = scratchPath(work, "censored.mp4");
     const reframed = scratchPath(work, "reframed.mp4");
     const captioned = scratchPath(work, "captioned.mp4");
     await setProgress(0.2);
@@ -346,14 +349,62 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     );
     await setProgress(0.45);
 
-    // The clip's own words, rebased onto the clip timeline.
+    // The clip's own words. Censoring needs them even when captions are off,
+    // because the bleep is driven by the transcript either way.
     let words: Array<{ text: string; startMs: number; endMs: number }> = [];
-    if (target.burnCaptions) {
+    if (target.burnCaptions || target.censor.enabled) {
       const segments = await deps.transcripts.loadSegments(target.videoId);
       words = segments
         .flatMap((s) => s.words)
         .filter((w) => w.startMs >= target.startMs && w.endMs <= target.endMs);
     }
+
+    // Censor the audio on the cut clip, before anything else touches it: every
+    // later pass carries audio through with `-c:a copy`, so doing it here means
+    // the bleep survives reframing, captioning and compositing untouched.
+    let staged = cut;
+    if (target.censor.enabled && words.length > 0) {
+      const spans = detectSpans(words, {
+        enabled: true,
+        sensitivity: target.censor.sensitivity,
+        allowList: target.censor.allowList,
+        denyList: target.censor.denyList,
+      });
+      if (spans.length > 0) {
+        await deps.ffmpeg.censorAudio(
+          cut,
+          censored,
+          {
+            // Word times are absolute; the cut clip starts at zero.
+            spans: spans.map((sp) => ({
+              startSec: Math.max(0, sp.startMs - target.startMs) / 1000,
+              endSec: Math.max(0, sp.endMs - target.startMs) / 1000,
+            })),
+            mode: target.censor.audioMode,
+          },
+          signal,
+        );
+        staged = censored;
+      }
+    }
+
+    // Mask the caption text for the same words the audio bleeped.
+    if (target.censor.enabled && words.length > 0) {
+      const flagged = censoredIndices(words, {
+        enabled: true,
+        sensitivity: target.censor.sensitivity,
+        allowList: target.censor.allowList,
+        denyList: target.censor.denyList,
+      });
+      words = maskWords(
+        words,
+        flagged,
+        target.censor.captionMode,
+        target.censor.replacement ?? undefined,
+      );
+    }
+    // Captions off: the words were only loaded to drive the bleep.
+    if (!target.burnCaptions) words = [];
     // Rich style (gradient / glow / glass / effect layers) or a real animation
     // routes through Remotion; a plain scalar style burns statically with ffmpeg.
     const animated =
@@ -415,8 +466,8 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
       target.focalY === null &&
       aspect !== "16:9"
     ) {
-      const pre = await deps.ffmpeg.probe(cut, signal);
-      const raw = await deps.faces.detectTrack(cut, {
+      const pre = await deps.ffmpeg.probe(staged, signal);
+      const raw = await deps.faces.detectTrack(staged, {
         durationMs: clipMs,
         width: pre.width ?? undefined,
         height: pre.height ?? undefined,
@@ -428,9 +479,9 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
 
     if (needsReframe && hasWindow && focusNeedsZoom(focusWindow)) {
       // Zoom means the window changes size, which `crop` cannot express.
-      const pre = await deps.ffmpeg.probe(cut, signal);
+      const pre = await deps.ffmpeg.probe(staged, signal);
       await deps.ffmpeg.reframeZoom(
-        cut,
+        staged,
         reframed,
         {
           aspect,
@@ -444,21 +495,21 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     } else if (needsReframe && hasWindow) {
       // Pan-only: flatten to a focal track and reuse the cheaper crop path.
       await deps.ffmpeg.reframeTracked(
-        cut,
+        staged,
         reframed,
         { aspect, track: focusToFocalTrack(focusWindow, clipMs), subtitlePath, subtitleStyle },
         signal,
       );
     } else if (needsReframe && tracked) {
       await deps.ffmpeg.reframeTracked(
-        cut,
+        staged,
         reframed,
         { aspect, track: focalTrack, subtitlePath, subtitleStyle },
         signal,
       );
     } else if (needsReframe) {
       await deps.ffmpeg.reframe(
-        cut,
+        staged,
         reframed,
         {
           aspect,
@@ -472,7 +523,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     }
     await setProgress(0.7);
 
-    let output = needsReframe ? reframed : cut;
+    let output = needsReframe ? reframed : staged;
 
     // Fetch the bytes for layers Remotion composites before it runs.
     const movingLayers = await Promise.all(

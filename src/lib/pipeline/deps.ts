@@ -88,6 +88,8 @@ export interface RenderTarget {
   /** Authored capture window (JSON `FocusKeyframe[]`); beats focalX/Y and the
    *  detected face track. Null = no window. */
   focusTrackJson: string | null;
+  /** Censor settings. Detections are derived from the transcript, not stored. */
+  censor: RenderCensorConfig;
   quality: "P720" | "P1080" | "ORIGINAL";
   burnCaptions: boolean;
   /** Prisma CaptionAnimation enum value; "NONE" means a static ffmpeg burn. */
@@ -105,6 +107,17 @@ export interface RenderTarget {
   textOverlays: RenderTextOverlay[];
   /** Per-word caption overrides, keyed by transcript word id. */
   wordStyles: Record<string, { color: string | null; bold: boolean | null; italic: boolean | null }>;
+}
+
+/** Censor settings as the renderer needs them. */
+export interface RenderCensorConfig {
+  enabled: boolean;
+  sensitivity: "LOW" | "MEDIUM" | "HIGH";
+  captionMode: "FULL" | "PARTIAL" | "FIRST" | "CUSTOM";
+  audioMode: "MUTE" | "BEEP" | "TONE";
+  replacement: string | null;
+  allowList: string[];
+  denyList: string[];
 }
 
 /** One image/GIF overlay on a clip. Times are clip-relative ms; null = clip edge. */

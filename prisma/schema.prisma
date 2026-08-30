@@ -315,6 +315,24 @@ model Clip {
   // Normalised 0..1 crop centre. Null means "auto / face-tracked".
   focalX      Float?
   focalY      Float?
+  /// Censor settings. Detections themselves are never stored: they are a pure
+  /// function of the transcript plus this config, so a second copy would go
+  /// stale the moment a transcript word is edited.
+  censorEnabled     Boolean @default(false)
+  /// LOW | MEDIUM | HIGH — which lexicon tiers are caught.
+  censorSensitivity String  @default("MEDIUM")
+  /// FULL | PARTIAL | FIRST | CUSTOM
+  censorCaptionMode String  @default("FULL")
+  /// MUTE | BEEP | TONE
+  censorAudioMode   String  @default("BEEP")
+  /// Replacement text for the CUSTOM caption mode, e.g. "[BLEEP]".
+  censorReplacement String?
+  /// Terms never censored; the escape hatch for a false positive.
+  censorAllowList   String[] @default([])
+  /// Extra terms to censor. Anything beyond plain profanity belongs here,
+  /// authored and reviewed by the user rather than shipped in the lexicon.
+  censorDenyList    String[] @default([])
+
   /// An authored capture window: JSON `FocusKeyframe[]` of { atMs, x, y, scale,
   /// ease } that pans and zooms the crop over the clip. Takes precedence over
   /// focalX/focalY, which in turn beat the detected face track. Null = neither.

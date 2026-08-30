@@ -42,6 +42,13 @@ export const updateClipSchema = z
       )
       .max(400)
       .nullable(),
+    censorEnabled: z.boolean(),
+    censorSensitivity: z.enum(["LOW", "MEDIUM", "HIGH"]),
+    censorCaptionMode: z.enum(["FULL", "PARTIAL", "FIRST", "CUSTOM"]),
+    censorAudioMode: z.enum(["MUTE", "BEEP", "TONE"]),
+    censorReplacement: z.string().max(40).nullable(),
+    censorAllowList: z.array(z.string().min(1).max(60)).max(500),
+    censorDenyList: z.array(z.string().min(1).max(60)).max(500),
     muted: z.boolean(),
     volume: z.number().min(0).max(2),
     playbackRate: z.number().min(0.25).max(4),
@@ -103,6 +110,13 @@ interface ClipListRow {
   focalX: number | null;
   focalY: number | null;
   focusTrackJson: string | null;
+  censorEnabled: boolean;
+  censorSensitivity: "LOW" | "MEDIUM" | "HIGH";
+  censorCaptionMode: "FULL" | "PARTIAL" | "FIRST" | "CUSTOM";
+  censorAudioMode: "MUTE" | "BEEP" | "TONE";
+  censorReplacement: string | null;
+  censorAllowList: string[];
+  censorDenyList: string[];
   accepted: boolean;
   savedToProjectId: string | null;
   caption: string | null;
@@ -370,6 +384,14 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
         focalX: c.focalX,
         focalY: c.focalY,
         focusTrackJson: c.focusTrackJson,
+        censorEnabled: c.censorEnabled,
+        // Stored as plain columns; the schema constrains the values on write.
+        censorSensitivity: c.censorSensitivity as "LOW" | "MEDIUM" | "HIGH",
+        censorCaptionMode: c.censorCaptionMode as "FULL" | "PARTIAL" | "FIRST" | "CUSTOM",
+        censorAudioMode: c.censorAudioMode as "MUTE" | "BEEP" | "TONE",
+        censorReplacement: c.censorReplacement,
+        censorAllowList: c.censorAllowList,
+        censorDenyList: c.censorDenyList,
         accepted: c.accepted,
         savedToProjectId: c.savedToProjectId,
         caption: c.caption,
