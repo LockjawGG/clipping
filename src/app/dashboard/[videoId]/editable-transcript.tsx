@@ -61,6 +61,7 @@ export function wordSpanCss(s: WordStyle | undefined): React.CSSProperties {
  */
 const Word = memo(function Word({
   censored,
+  censoringOn,
   word,
   style,
   selected,
@@ -69,8 +70,11 @@ const Word = memo(function Word({
   onToggleSelect,
   onSeek,
 }: {
-  /** Currently masked by the clip's censor settings. */
+  /** Marked for censoring by the clip's settings — regardless of whether
+   *  censoring is currently switched on. */
   censored?: boolean;
+  /** Censoring is switched on, so the mark actually affects the render. */
+  censoringOn?: boolean;
   word: TranscriptWord;
   style: WordStyle | undefined;
   selected: boolean;
@@ -141,12 +145,15 @@ const Word = memo(function Word({
               ? "bg-amber-400/25"
               : "hover:bg-accent/15"
       } ${
-        // Marked even while selected, so you can see what you are exempting.
-        censored ? "line-through decoration-2 decoration-danger" : ""
+        // The strike claims "this will be masked in the render", so it only
+        // appears once censoring is actually on. The tick still shows the mark.
+        censored && censoringOn ? "line-through decoration-2 decoration-danger" : ""
       }`}
       title={
         censored
-          ? "Censored in this clip - select it and choose “Don’t censor” to keep it"
+          ? censoringOn
+            ? "Censored in this clip - select it and untick Censor to keep it"
+            : "Marked to censor - switch censoring on to apply it"
           : "Click to jump the preview here · double-click to fix a typo"
       }
     >
@@ -169,14 +176,14 @@ interface Props {
   onClipFromSelection?: (startMs: number, endMs: number) => void;
   /** Word ids the clip's censor settings would currently mask. */
   censoredIds?: ReadonlySet<string>;
+  /** Whether censoring is switched on for this clip. */
+  censoringOn?: boolean;
   /**
    * Turn censoring on or off for these specific occurrences on this clip only.
    * Takes transcript word ids, so "censor this damn but not that one" works;
    * the override is per-clip and never edits the shared lexicon.
    */
   onSetCensored?: (wordIds: string[], censored: boolean) => void;
-  /** Show a per-word censor checkbox. Only meaningful while censoring is on. */
-  showCensorChecks?: boolean;
 }
 
 /**
@@ -196,8 +203,8 @@ export const EditableTranscript = memo(function EditableTranscript({
   onSeek,
   onClipFromSelection,
   censoredIds,
+  censoringOn,
   onSetCensored,
-  showCensorChecks,
 }: Props) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
@@ -234,6 +241,12 @@ export const EditableTranscript = memo(function EditableTranscript({
       }
     return { censored: on, clean: off };
   }, [rows, selectedIds, censoredIds]);
+
+  /** true = all selected words censored, false = none, null = mixed. */
+  const allCensored =
+    selectedByCensored.censored.length > 0 && selectedByCensored.clean.length > 0
+      ? null
+      : selectedByCensored.censored.length > 0;
 
   const selectedSpan = useMemo(() => {
     let lo = Infinity;
@@ -367,31 +380,33 @@ export const EditableTranscript = memo(function EditableTranscript({
               Clip from selection
             </button>
           )}
-          {onSetCensored && selectedByCensored.censored.length > 0 && (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm text-accent"
-              title="Stop censoring these words on this clip. The shared word list is unchanged."
-              onClick={() => onSetCensored(selectedByCensored.censored, false)}
+          {onSetCensored && (
+            <label
+              className="flex items-center gap-1.5 text-danger"
+              title="Censor these words on this clip only. The shared word list is unchanged."
             >
-              Don&apos;t censor{" "}
-              {selectedByCensored.censored.length === 1
-                ? "this one"
-                : `these ${selectedByCensored.censored.length}`}
-            </button>
+              <input
+                type="checkbox"
+                ref={(el) => {
+                  // Mixed selections show a dash rather than a misleading
+                  // checked/unchecked state.
+                  if (el) el.indeterminate = allCensored === null;
+                }}
+                checked={allCensored === true}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  const ids = on ? selectedByCensored.clean : selectedByCensored.censored;
+                  if (ids.length > 0) onSetCensored(ids, on);
+                }}
+                className="h-3 w-3 cursor-pointer accent-[rgb(var(--c-danger))]"
+              />
+              Censor {count === 1 ? "this one" : `these ${count}`}
+            </label>
           )}
-          {onSetCensored && selectedByCensored.clean.length > 0 && (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm text-danger"
-              title="Censor these words on this clip. The shared word list is unchanged."
-              onClick={() => onSetCensored(selectedByCensored.clean, true)}
-            >
-              Censor{" "}
-              {selectedByCensored.clean.length === 1
-                ? "this one"
-                : `these ${selectedByCensored.clean.length}`}
-            </button>
+          {onSetCensored && !censoringOn && allCensored !== false && (
+            <span className="text-[11px] text-muted">
+              censoring is off for this clip
+            </span>
           )}
           <button type="button" onClick={onClearSelection} className="btn btn-ghost btn-sm ml-auto">
             Done
@@ -422,7 +437,9 @@ export const EditableTranscript = memo(function EditableTranscript({
                   // control inside another breaks both keyboard and screen
                   // reader behaviour.
                   <span key={w.id} className="whitespace-nowrap">
-                    {showCensorChecks && onSetCensored && (
+                    {/* Only on the words you have actually selected — one on
+                        every word in the transcript is unreadable noise. */}
+                    {selectedIds.has(w.id) && onSetCensored && (
                       <input
                         type="checkbox"
                         checked={censoredIds?.has(w.id) ?? false}
@@ -437,6 +454,7 @@ export const EditableTranscript = memo(function EditableTranscript({
                       style={styles[w.id]}
                       selected={selectedIds.has(w.id)}
                       censored={censoredIds?.has(w.id)}
+                      censoringOn={censoringOn}
                       matched={matches.set.has(w.id)}
                       active={w.id === activeId}
                       onToggleSelect={onToggleSelect}

@@ -323,14 +323,17 @@ export function ClipEditor({
     ],
   );
 
+  /**
+   * Words the settings mark for censoring, computed whether or not censoring is
+   * switched on — the tick has to tell the truth about what is marked even
+   * while the clip would render untouched. The transcript decides separately
+   * whether to draw the strike-through.
+   */
   const censoredWordIds = useMemo(() => {
-    // Nothing is marked while censoring is off: the strike-through means "this
-    // will be masked in the render", so showing it on a clip that will render
-    // untouched would be claiming something false.
-    if (!censorCfg.enabled) return new Set<string>();
     const flat = transcript.flatMap((r) => r.words);
     if (flat.length === 0) return new Set<string>();
-    return new Set([...censoredIndices(flat, censorCfg)].map((i) => flat[i].id));
+    const idx = censoredIndices(flat, { ...censorCfg, enabled: true });
+    return new Set([...idx].map((i) => flat[i].id));
   }, [transcript, censorCfg]);
 
   /**
@@ -1528,8 +1531,8 @@ export function ClipEditor({
           onClearSelection={clearWordSelection}
           onSeek={seekToWord}
           censoredIds={censoredWordIds}
+          censoringOn={draft.censorEnabled}
           onSetCensored={setWordsCensored}
-          showCensorChecks={draft.censorEnabled}
         />
       </div>
 
