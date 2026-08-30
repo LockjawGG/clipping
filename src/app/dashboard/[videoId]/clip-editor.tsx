@@ -582,6 +582,12 @@ export function ClipEditor({
   );
 
   /** A playable URL for every source the plan touches. */
+  /** How long the preview runs — the clip's window less anything cut out. */
+  const previewDurationMs = useMemo(
+    () => Math.max(1, previewPlan.base.reduce((e, p) => Math.max(e, p.timelineStart + p.durationMs), 0)),
+    [previewPlan],
+  );
+
   const planSourceUrls = useMemo(
     () => ({ [videoId]: sourceUrl, ...(plan?.sourceUrls ?? {}) }),
     [videoId, sourceUrl, plan],
@@ -770,15 +776,22 @@ export function ClipEditor({
   // A seek requested from the transcript (click a word). `n` forces the player's
   // effect to re-run even when the same word is clicked twice.
   const [seekReq, setSeekReq] = useState<{ ms: number; n: number } | null>(null);
+  /**
+   * Jump the preview to a word.
+   *
+   * The transcript speaks in source time; the preview's clock skips whatever
+   * was cut. Sending the word's own offset straight through landed a second
+   * late once anything was struck out — you clicked one word and the frame that
+   * appeared belonged to another. Converting first is what makes the click mean
+   * "show me this word".
+   */
   const seekToWord = useCallback(
     (absStartMs: number) => {
-      const rel = Math.min(
-        Math.max(0, absStartMs - clip.startMs),
-        Math.max(0, clip.endMs - clip.startMs - 1),
-      );
-      setSeekReq({ ms: rel, n: Date.now() });
+      const authored = Math.max(0, absStartMs - clip.startMs);
+      const at = toPreview(authored);
+      setSeekReq({ ms: Math.min(Math.max(0, at), previewDurationMs - 1), n: Date.now() });
     },
-    [clip.startMs, clip.endMs],
+    [clip.startMs, toPreview, previewDurationMs],
   );
   const [playToggleReq, setPlayToggleReq] = useState<{ n: number } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -1260,9 +1273,13 @@ export function ClipEditor({
       const t = e.target as HTMLElement;
       if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
       if (!cardRef.current?.matches(":hover")) return;
-      const clipLen = Math.max(1, clip.endMs - clip.startMs);
+      // Bounded by the preview's own length, not the clip's: once words are cut
+      // the preview is shorter, and the arrow keys should stop where it does.
       const seek = (deltaMs: number) =>
-        setSeekReq({ ms: Math.min(clipLen - 1, Math.max(0, playheadMs + deltaMs)), n: Date.now() });
+        setSeekReq({
+          ms: Math.min(previewDurationMs - 1, Math.max(0, playheadMs + deltaMs)),
+          n: Date.now(),
+        });
       switch (e.key) {
         case " ":
           e.preventDefault();
@@ -1291,7 +1308,7 @@ export function ClipEditor({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playheadMs, clip.startMs, clip.endMs]);
+  }, [playheadMs, clip.startMs, clip.endMs, previewDurationMs]);
 
   /**
    * The moment of the source under the playhead.
