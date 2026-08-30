@@ -22,6 +22,7 @@ import {
   remapAcrossCuts,
 } from "@/lib/sequence/cuts.ts";
 import type { ClipPlan } from "@/lib/api/sequence.ts";
+import { remapWordsToTimeline } from "@/lib/sequence/compose.ts";
 import type { TranscriptView } from "../editor-pane";
 import { TRANSLATE_TARGETS } from "@/lib/translation/targets";
 import { OverlayPanel, type OverlayView } from "./overlay-panel";
@@ -495,22 +496,6 @@ export function ClipEditor({
     [],
   );
 
-  /**
-   * Exactly the stretches the render will bleep, for the preview to bleep too.
-   *
-   * Built from the same `audioSpans` the renderer calls, on the same config, so
-   * toggling a word or changing the sound is audible immediately instead of
-   * being a promise the export keeps later. Clip-relative, like `words`.
-   */
-  const bleepSpans = useMemo(
-    () =>
-      audioSpans(words, censorCfg).map((sp) => ({
-        startMs: sp.startMs,
-        endMs: sp.endMs,
-        mode: sp.audioMode ?? draft.censorAudioMode,
-      })),
-    [words, censorCfg, draft.censorAudioMode],
-  );
 
   const cutWordIds = useMemo(() => new Set(draft.removedWordIds), [draft.removedWordIds]);
   /**
@@ -574,6 +559,41 @@ export function ClipEditor({
     () => ({ [videoId]: sourceUrl, ...(plan?.sourceUrls ?? {}) }),
     [videoId, sourceUrl, plan],
   );
+
+  /**
+   * The words as the preview timeline sees them.
+   *
+   * Struck words are gone and everything after a cut has moved up, because they
+   * are run through the same `remapWordsToTimeline` the renderer uses on the
+   * same plan. Anything timed off the transcript — the caption overlay, the
+   * bleeps — has to start from this rather than from the raw clip-relative
+   * times, or it fires where the word *used* to be.
+   */
+  const timelineWords = useMemo(() => {
+    const inSource = words.map((w) => ({
+      ...w,
+      startMs: w.startMs + clip.startMs,
+      endMs: w.endMs + clip.startMs,
+    }));
+    return remapWordsToTimeline(inSource, previewPlan.base, videoId, 0);
+  }, [words, clip.startMs, previewPlan, videoId]);
+
+  /**
+   * Exactly the stretches the render will bleep, for the preview to bleep too.
+   *
+   * Built from the same `audioSpans` the renderer calls, on the same config and
+   * the same remapped words, so toggling a word or changing the sound is
+   * audible immediately instead of being a promise the export keeps later.
+   */
+  const bleepSpans = useMemo(
+    () =>
+      audioSpans(timelineWords, censorCfg).map((sp) => ({
+        startMs: sp.startMs,
+        endMs: sp.endMs,
+        mode: sp.audioMode ?? draft.censorAudioMode,
+      })),
+    [timelineWords, censorCfg, draft.censorAudioMode],
+  );
   const setWordsCut = useCallback((wordIds: string[], cut: boolean) => {
     if (wordIds.length === 0) return;
     setDraft((d) => {
@@ -627,10 +647,10 @@ export function ClipEditor({
    * appeared at all.
    */
   const previewWords = useMemo(() => {
-    // A struck word is not in the export, so it is not in the preview captions
-    // either — masking or bleeping something that was cut would describe a
-    // render that will never happen.
-    const shown = cutWordIds.size === 0 ? words : words.filter((w) => !cutWordIds.has(w.id));
+    // Already remapped: struck words are absent and the rest sit where the
+    // export will put them, so a cue never describes a render that will not
+    // happen.
+    const shown = timelineWords;
     const flagged = censoredIndices(shown, censorCfg);
     if (flagged.size === 0) return shown;
 
@@ -649,8 +669,7 @@ export function ClipEditor({
       perWord,
     );
   }, [
-    words,
-    cutWordIds,
+    timelineWords,
     censorCfg,
     draft.censorCaptionMode,
     draft.censorReplacement,
