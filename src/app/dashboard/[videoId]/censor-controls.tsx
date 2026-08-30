@@ -2,7 +2,8 @@
 
 import { memo, useMemo, useState } from "react";
 
-import { detectSpans, type CensorWord } from "@/lib/censor/detect.ts";
+import { audioSpans, detectSpans, type CensorWord } from "@/lib/censor/detect.ts";
+import type { AudioCensorMode, CensorWordOverrides } from "@/lib/censor/overrides.ts";
 import { CAPTION_CENSOR_MODES, maskWord } from "@/lib/censor/mask.ts";
 
 /**
@@ -29,6 +30,7 @@ export interface CensorSettings {
   censorForceWordIds: string[];
   censorAudioExemptWordIds: string[];
   censorAudioForceWordIds: string[];
+  censorWordOverrides: CensorWordOverrides;
 }
 
 const SENSITIVITIES: { id: CensorSettings["censorSensitivity"]; label: string; hint: string }[] = [
@@ -42,6 +44,12 @@ const AUDIO_MODES: { id: CensorSettings["censorAudioMode"]; label: string }[] = 
   { id: "TONE", label: "Soft tone (400 Hz)" },
   { id: "MUTE", label: "Silence" },
 ];
+
+const SOUND_LABEL: Record<AudioCensorMode, string> = {
+  BEEP: "beeped",
+  TONE: "400 Hz tone",
+  MUTE: "silenced",
+};
 
 const fmt = (ms: number) => {
   const s = Math.max(0, Math.round(ms / 100) / 10);
@@ -58,31 +66,54 @@ interface Props {
 export const CensorControls = memo(function CensorControls({ value, words, onChange }: Props) {
   const [term, setTerm] = useState("");
 
-  const spans = useMemo(
-    () =>
-      detectSpans(
-        words,
-        {
-          enabled: true, // preview the detection even while censoring is off
-          sensitivity: value.censorSensitivity,
-          allowList: value.censorAllowList,
-          denyList: value.censorDenyList,
-          // Included so this list agrees with what the render will actually do
-          // — a word ticked in the transcript must appear here too.
-          exemptWordIds: value.censorExemptWordIds,
-          censorWordIds: value.censorForceWordIds,
-        },
-        0, // no audio padding in the review list — show the word's own timing
-      ),
-    [
-      words,
-      value.censorSensitivity,
-      value.censorAllowList,
-      value.censorDenyList,
-      value.censorExemptWordIds,
-      value.censorForceWordIds,
-    ],
+  /** The clip's real settings, as the renderer will read them. */
+  const liveConfig = useMemo(
+    () => ({
+      enabled: value.censorEnabled,
+      sensitivity: value.censorSensitivity,
+      allowList: value.censorAllowList,
+      denyList: value.censorDenyList,
+      exemptWordIds: value.censorExemptWordIds,
+      censorWordIds: value.censorForceWordIds,
+      audioEnabled: value.censorAudioEnabled,
+      audioExemptWordIds: value.censorAudioExemptWordIds,
+      audioForceWordIds: value.censorAudioForceWordIds,
+      wordOverrides: value.censorWordOverrides,
+    }),
+    [value],
   );
+
+  const spans = useMemo(() => {
+    // Detection is previewed as if switched on, so the list still shows what
+    // *would* be caught while censoring is off. The per-row outcome below is
+    // computed from the real config, so nothing here claims an effect the
+    // render will not have.
+    const preview = detectSpans(words, { ...liveConfig, enabled: true }, 0);
+    const seen = new Set(preview.map((sp) => sp.wordId));
+    // A word can be bleeped without being masked, and un-masking a word must
+    // not drop it from the one screen that exists so nothing is applied
+    // silently. Anything the audio will touch is listed too.
+    const audioOnly = audioSpans(words, liveConfig, 0).filter((sp) => !seen.has(sp.wordId));
+    return [...preview, ...audioOnly].sort((a, b) => a.startMs - b.startMs);
+  }, [words, liveConfig]);
+
+  /** Word ids the render will really mask, and really bleep. */
+  const outcome = useMemo(() => {
+    const masked = new Set(
+      detectSpans(words, liveConfig, 0)
+        .map((s) => s.wordId)
+        .filter(Boolean) as string[],
+    );
+    const bleeped = new Set(
+      audioSpans(words, liveConfig, 0)
+        .map((s) => s.wordId)
+        .filter(Boolean) as string[],
+    );
+    return { masked, bleeped };
+  }, [words, liveConfig]);
+
+  const soundOf = (wordId: string | undefined): AudioCensorMode =>
+    (wordId ? value.censorWordOverrides[wordId]?.audioMode : undefined) ?? value.censorAudioMode;
 
   const keep = (span: { text: string; wordId?: string; tier: string }) => {
     // A hand-picked occurrence is undone by dropping it, not by exempting the
@@ -217,9 +248,39 @@ export const CensorControls = memo(function CensorControls({ value, words, onCha
                   <span className="font-mono">{s.text}</span>
                   <span className="text-muted">→</span>
                   <span className="font-mono">
-                    {maskWord(s.text, value.censorCaptionMode, value.censorReplacement ?? undefined)}
+                    {/* An audio-only occurrence changes no caption, so showing
+                        it a mask would promise a substitution that never
+                        happens. */}
+                    {!outcome.masked.has(s.wordId ?? "")
+                      ? "—"
+                      : maskWord(
+                      s.text,
+                      (s.wordId && value.censorWordOverrides[s.wordId]?.captionMode) ||
+                        value.censorCaptionMode,
+                      (s.wordId ? value.censorWordOverrides[s.wordId]?.replacement : null) ??
+                        value.censorReplacement ??
+                          undefined,
+                      )}
                   </span>
                   <span className="chip">{s.tier}</span>
+                  {/* What this occurrence will actually do, which the tier
+                      alone no longer implies: the mask and the bleep are
+                      switched separately and can differ per word. */}
+                  <span
+                    className={
+                      outcome.masked.has(s.wordId ?? "") || outcome.bleeped.has(s.wordId ?? "")
+                        ? "chip text-danger"
+                        : "chip text-muted"
+                    }
+                  >
+                    {outcome.bleeped.has(s.wordId ?? "")
+                      ? outcome.masked.has(s.wordId ?? "")
+                        ? `masked · ${SOUND_LABEL[soundOf(s.wordId)]}`
+                        : SOUND_LABEL[soundOf(s.wordId)]
+                      : outcome.masked.has(s.wordId ?? "")
+                        ? "masked · audible"
+                        : "not censored"}
+                  </span>
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm ml-auto"

@@ -527,3 +527,24 @@ test("word overrides survive a round trip and drop anything unrecognised", () =>
   assert.deepEqual(parseWordOverrides('["nope"]'), {});
   assert.deepEqual(parseWordOverrides(null), {});
 });
+
+test("an audio-only occurrence is still discoverable, not just audible", () => {
+  // The review panel lists the union of these two, so a word that is bleeped
+  // without being masked cannot slip through unlisted.
+  const words = [
+    { id: "r1", text: "shit", startMs: 0, endMs: 400 },
+    { id: "r2", text: "hello", startMs: 2_000, endMs: 2_300 },
+  ];
+  const cfg = {
+    enabled: true,
+    sensitivity: "MEDIUM" as const,
+    exemptWordIds: ["r1"],
+    audioForceWordIds: ["r1", "r2"],
+  };
+  assert.deepEqual(detectSpans(words, cfg), [], "neither is masked");
+  assert.deepEqual(
+    audioSpans(words, cfg).map((s) => s.wordId),
+    ["r1", "r2"],
+    "but both are silenced, so both must be listed somewhere",
+  );
+});
