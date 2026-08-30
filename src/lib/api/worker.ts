@@ -96,6 +96,27 @@ export interface WorkerServiceDeps {
   /** Throws 404 unless the signed-in user owns the project. */
   assertProjectOwned: (projectId: string) => Promise<void>;
   enqueue: (input: { videoId: string; kind: JobKind; payload?: unknown }) => Promise<string>;
+  /**
+   * Create a clip from an accepted highlight. Injected rather than done here so
+   * there stays exactly one clip-creation path — sentence snapping and learned
+   * defaults must apply to a worker highlight exactly as they do to a manual
+   * clip.
+   */
+  createClip: (
+    videoId: string,
+    input: {
+      startMs: number;
+      endMs: number;
+      title?: string;
+      hook?: string | null;
+      caption?: string | null;
+      socialTitle?: string | null;
+      hashtags?: string[];
+      reason?: string | null;
+      score?: number | null;
+      origin?: "AI_SUGGESTED" | "USER_CREATED";
+    },
+  ) => Promise<{ id: string; appliedDefaults: string[] }>;
 }
 
 async function ownedVideo(deps: WorkerServiceDeps, videoId: string) {
@@ -170,12 +191,27 @@ export async function getWorkerRun(
   return run;
 }
 
+interface HighlightPayload {
+  title?: unknown;
+  hook?: unknown;
+  caption?: unknown;
+  socialTitle?: unknown;
+  hashtags?: unknown;
+}
+
+const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
+
 /**
  * Accept or reject one suggestion.
  *
- * This is the only place a suggestion's status changes, and it is deliberately
- * a separate call from applying it: the decision is the signal worth recording,
- * whether or not the user then acts on it.
+ * Accepting a HIGHLIGHT turns it into a real clip; the other kinds only record
+ * the decision. That asymmetry is deliberate. "Cut this dead air" and "look at
+ * this reaction" have no single obvious edit to perform — applying them
+ * silently would be a different way of doing something the user did not ask
+ * for — whereas a highlight *is* a clip, so creating it is the whole point.
+ *
+ * The decision is recorded either way, because the accept / reject signal is
+ * worth learning from whether or not it produced an edit.
  */
 export async function updateSuggestion(
   deps: WorkerServiceDeps,
@@ -190,8 +226,43 @@ export async function updateSuggestion(
   if (!existing) throw new ApiError(404, "not found");
   await ownedVideo(deps, existing.run.videoId);
 
+  // Creating the clip is idempotent: a second accept (or an undo followed by a
+  // re-accept) links back to the clip that already exists rather than making a
+  // duplicate the user then has to find and delete.
+  if (status === "ACCEPTED" && existing.kind === "HIGHLIGHT" && !existing.createdClipId) {
+    const payload = (existing.payloadJson ?? {}) as HighlightPayload;
+    const created = await deps.createClip(existing.run.videoId, {
+      startMs: existing.startMs,
+      endMs: existing.endMs,
+      title: str(payload.title) ?? "Suggested clip",
+      hook: str(payload.hook) ?? null,
+      caption: str(payload.caption) ?? null,
+      socialTitle: str(payload.socialTitle) ?? null,
+      hashtags: Array.isArray(payload.hashtags)
+        ? payload.hashtags.filter((h): h is string => typeof h === "string")
+        : [],
+      reason: existing.reason,
+      score: existing.score,
+      origin: "AI_SUGGESTED",
+    });
+    return deps.db.workerSuggestion.update({
+      where: { id: suggestionId },
+      data: { status: "APPLIED", createdClipId: created.id },
+    });
+  }
+
+  // An accepted highlight that already has its clip stays APPLIED — reverting
+  // to ACCEPTED would misreport a clip that exists as one that does not.
+  const next =
+    status === "ACCEPTED" && existing.kind === "HIGHLIGHT" && existing.createdClipId
+      ? "APPLIED"
+      : status;
+
+  // Undo never deletes the clip. The user may have edited it since, and
+  // silently removing their work to honour an undo of a *decision* would be a
+  // far worse surprise than leaving an extra clip behind.
   return deps.db.workerSuggestion.update({
     where: { id: suggestionId },
-    data: { status },
+    data: { status: next },
   });
 }

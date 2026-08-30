@@ -17,6 +17,8 @@ import type { SequenceServiceDeps } from "./sequence.ts";
 import type { LiveServiceDeps } from "./live.ts";
 import type { WorkerServiceDeps } from "./worker.ts";
 import type { LearningServiceDeps } from "./learning.ts";
+import { loadProfile } from "./learning.ts";
+import { createClipFromRange } from "./clips.ts";
 import type { VoiceoverServiceDeps } from "./voiceover.ts";
 
 /** Throws 404 unless `projectId` belongs to `userId`. Shared by every service. */
@@ -50,6 +52,9 @@ export function clipService(userId: string): ClipServiceDeps {
     storage: getStorage(),
     assertProjectOwned: ownsProject(userId),
     enqueue: (input) => enqueueJob(db, input),
+    // New clips start with whatever style this user has settled into for this
+    // kind of video. An unbuilt or low-confidence profile changes nothing.
+    loadProfile: (contentType) => loadProfile(learningService(userId), contentType),
   };
 }
 
@@ -59,6 +64,7 @@ export function workerService(userId: string): WorkerServiceDeps {
     db: db as unknown as WorkerServiceDeps["db"],
     assertProjectOwned: ownsProject(userId),
     enqueue: (input) => enqueueJob(db, input),
+    createClip: (videoId, input) => createClipFromRange(clipService(userId), videoId, input),
   };
 }
 

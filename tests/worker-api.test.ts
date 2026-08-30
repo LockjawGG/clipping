@@ -14,9 +14,31 @@ interface Fixture {
   enqueued: Array<{ videoId: string; kind: string; payload?: unknown }>;
   created: Array<Record<string, unknown>>;
   updated: Array<{ id: string; data: Record<string, unknown> }>;
+  clips: Array<{ videoId: string; input: Record<string, unknown> }>;
 }
 
-const RUN = {
+interface SuggestionFixture {
+  id: string;
+  kind: string;
+  startMs: number;
+  endMs: number;
+  score: number;
+  reason: string;
+  payloadJson: Record<string, unknown> | null;
+  status: string;
+  createdClipId: string | null;
+}
+
+const RUN: {
+  id: string;
+  videoId: string;
+  clipId: string | null;
+  status: string;
+  errorMessage: string | null;
+  createdAt: Date;
+  finishedAt: Date | null;
+  suggestions: SuggestionFixture[];
+} = {
   id: "run1",
   videoId: "vidA",
   clipId: null,
@@ -39,11 +61,15 @@ const RUN = {
   ],
 };
 
-function makeDeps(over: { videoOwner?: string } = {}): Fixture {
+function makeDeps(
+  over: { videoOwner?: string; suggestion?: Partial<SuggestionFixture> } = {},
+): Fixture {
   const enqueued: Fixture["enqueued"] = [];
   const created: Fixture["created"] = [];
   const updated: Fixture["updated"] = [];
+  const clips: Fixture["clips"] = [];
   const owner = over.videoOwner ?? "proj-mine";
+  const suggestion = { ...RUN.suggestions[0], ...(over.suggestion ?? {}) };
 
   type W = { where: { id: string }; data?: Record<string, unknown> };
   const deps: WorkerServiceDeps = {
@@ -63,10 +89,10 @@ function makeDeps(over: { videoOwner?: string } = {}): Fixture {
       },
       workerSuggestion: {
         findUnique: async ({ where }: W) =>
-          where.id === "s1" ? { ...RUN.suggestions[0], run: { videoId: "vidA" } } : null,
+          where.id === "s1" ? { ...suggestion, run: { videoId: "vidA" } } : null,
         update: async ({ where, data }: Required<W>) => {
           updated.push({ id: where.id, data });
-          return { ...RUN.suggestions[0], ...(data as object) } as (typeof RUN.suggestions)[0];
+          return { ...suggestion, ...(data as object) } as SuggestionFixture;
         },
       },
     } as unknown as WorkerServiceDeps["db"],
@@ -81,8 +107,12 @@ function makeDeps(over: { videoOwner?: string } = {}): Fixture {
       enqueued.push(input);
       return "job-1";
     },
+    createClip: async (videoId, input) => {
+      clips.push({ videoId, input: input as unknown as Record<string, unknown> });
+      return { id: "clip-new", appliedDefaults: ["captions"] };
+    },
   };
-  return { deps, enqueued, created, updated };
+  return { deps, enqueued, created, updated, clips };
 }
 
 test("starting a run queues a job and returns the id to poll", async () => {
@@ -139,12 +169,83 @@ test("reading a run checks ownership of its video, not just the run id", async (
   await assert.rejects(() => latestWorkerRun(f.deps, "vidA"), /not found/);
 });
 
-test("accepting a suggestion records the decision and nothing else", async () => {
-  const f = makeDeps();
+test("accepting a highlight creates the clip it describes", async () => {
+  const f = makeDeps({
+    suggestion: {
+      payloadJson: {
+        title: "A moment",
+        hook: "wait for it",
+        caption: "cap",
+        socialTitle: "social",
+        hashtags: ["#a", 7, "#b"],
+      },
+    },
+  });
   await updateSuggestion(f.deps, "s1", { status: "ACCEPTED" });
-  assert.deepEqual(f.updated, [{ id: "s1", data: { status: "ACCEPTED" } }]);
-  // Deciding is not applying: no job is queued and no clip is created here.
-  assert.equal(f.enqueued.length, 0);
+
+  assert.equal(f.clips.length, 1);
+  assert.equal(f.clips[0].videoId, "vidA");
+  assert.deepEqual(f.clips[0].input, {
+    startMs: 1000,
+    endMs: 6000,
+    title: "A moment",
+    hook: "wait for it",
+    caption: "cap",
+    socialTitle: "social",
+    // Non-string hashtags from a payload are dropped, not passed through.
+    hashtags: ["#a", "#b"],
+    reason: "opens on a question · energy in the top quarter",
+    score: 0.8,
+    origin: "AI_SUGGESTED",
+  });
+  // The suggestion is marked APPLIED and linked to what it produced.
+  assert.deepEqual(f.updated, [
+    { id: "s1", data: { status: "APPLIED", createdClipId: "clip-new" } },
+  ]);
+});
+
+test("a highlight with an empty payload still creates a usable clip", async () => {
+  const f = makeDeps({ suggestion: { payloadJson: null } });
+  await updateSuggestion(f.deps, "s1", { status: "ACCEPTED" });
+  assert.equal(f.clips.length, 1);
+  assert.equal(f.clips[0].input.title, "Suggested clip");
+  assert.deepEqual(f.clips[0].input.hashtags, []);
+});
+
+test("accepting twice does not create a second clip", async () => {
+  // Idempotent via createdClipId — a duplicate would be the user's to find and
+  // delete, which is a worse outcome than a no-op.
+  const f = makeDeps({ suggestion: { createdClipId: "clip-existing" } });
+  await updateSuggestion(f.deps, "s1", { status: "ACCEPTED" });
+  assert.equal(f.clips.length, 0);
+  assert.deepEqual(f.updated, [{ id: "s1", data: { status: "APPLIED" } }]);
+});
+
+test("accepting a non-highlight records the decision without creating anything", async () => {
+  // Dead air and reactions have no single obvious edit to perform, so applying
+  // them silently would be doing something the user did not ask for.
+  for (const kind of ["DEAD_AIR", "REACTION"]) {
+    const f = makeDeps({ suggestion: { kind } });
+    await updateSuggestion(f.deps, "s1", { status: "ACCEPTED" });
+    assert.equal(f.clips.length, 0, kind);
+    assert.deepEqual(f.updated, [{ id: "s1", data: { status: "ACCEPTED" } }], kind);
+  }
+});
+
+test("rejecting a highlight creates nothing", async () => {
+  const f = makeDeps();
+  await updateSuggestion(f.deps, "s1", { status: "REJECTED" });
+  assert.equal(f.clips.length, 0);
+  assert.deepEqual(f.updated, [{ id: "s1", data: { status: "REJECTED" } }]);
+});
+
+test("undo never deletes a clip that was already created", async () => {
+  // The user may have edited it since; removing their work to honour an undo of
+  // a *decision* would be a far worse surprise than an extra clip.
+  const f = makeDeps({ suggestion: { createdClipId: "clip-existing", status: "APPLIED" } });
+  await updateSuggestion(f.deps, "s1", { status: "PENDING" });
+  assert.equal(f.clips.length, 0);
+  assert.deepEqual(f.updated, [{ id: "s1", data: { status: "PENDING" } }]);
 });
 
 test("a decision can be taken back", async () => {

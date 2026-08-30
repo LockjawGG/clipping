@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 /**
  * The AI worker's review panel.
@@ -19,6 +20,7 @@ interface Suggestion {
   score: number;
   reason: string;
   status: string;
+  createdClipId: string | null;
   payloadJson: {
     title?: string;
     hook?: string;
@@ -60,6 +62,7 @@ interface Props {
 }
 
 export const WorkerPanel = memo(function WorkerPanel({ videoId, onSeek }: Props) {
+  const router = useRouter();
   const [run, setRun] = useState<Run | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -116,16 +119,37 @@ export const WorkerPanel = memo(function WorkerPanel({ videoId, onSeek }: Props)
   };
 
   const decide = async (id: string, status: "ACCEPTED" | "REJECTED" | "PENDING") => {
+    const target = run?.suggestions.find((x) => x.id === id);
     // Optimistic: the decision is local and instantly reversible.
     setRun((r) =>
       r ? { ...r, suggestions: r.suggestions.map((s) => (s.id === id ? { ...s, status } : s)) } : r,
     );
     try {
-      await fetch(`/api/worker-suggestions/${id}`, {
+      const res = await fetch(`/api/worker-suggestions/${id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ status }),
       });
+      // Accepting a highlight creates a real clip, so the editor's clip list
+      // below is now stale.
+      if (res.ok && status === "ACCEPTED" && target?.kind === "HIGHLIGHT") {
+        const updated = (await res.json().catch(() => null)) as { createdClipId?: string } | null;
+        if (updated?.createdClipId) {
+          setRun((r) =>
+            r
+              ? {
+                  ...r,
+                  suggestions: r.suggestions.map((s) =>
+                    s.id === id
+                      ? { ...s, status: "APPLIED", createdClipId: updated.createdClipId! }
+                      : s,
+                  ),
+                }
+              : r,
+          );
+          router.refresh();
+        }
+      }
       // Record the decision itself. Undo is not feedback — it is the user
       // correcting their own click, and logging it would teach nothing.
       if (status !== "PENDING") {
@@ -196,7 +220,8 @@ export const WorkerPanel = memo(function WorkerPanel({ videoId, onSeek }: Props)
         </div>
 
         <p className="text-[11px] text-muted">
-          The worker only proposes. Nothing changes until you accept a suggestion.
+          The worker only proposes. Accepting a highlight creates that clip; the other kinds just
+          record your decision.
         </p>
 
         {error && <p className="text-xs text-danger">{error}</p>}
@@ -251,10 +276,27 @@ export const WorkerPanel = memo(function WorkerPanel({ videoId, onSeek }: Props)
               </div>
 
               {done ? (
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs text-muted">
-                    {s.status === "ACCEPTED" ? "accepted" : "rejected"}
+                    {s.status === "REJECTED"
+                      ? "rejected"
+                      : s.createdClipId
+                        ? "clip created below"
+                        : "accepted"}
                   </span>
+                  {s.createdClipId && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() =>
+                        document
+                          .getElementById(`clip-${s.createdClipId}`)
+                          ?.scrollIntoView({ behavior: "smooth", block: "center" })
+                      }
+                    >
+                      Go to clip
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm"
@@ -270,7 +312,7 @@ export const WorkerPanel = memo(function WorkerPanel({ videoId, onSeek }: Props)
                     className="btn btn-primary btn-sm"
                     onClick={() => decide(s.id, "ACCEPTED")}
                   >
-                    Accept
+                    {s.kind === "HIGHLIGHT" ? "Accept — create clip" : "Accept"}
                   </button>
                   <button
                     type="button"

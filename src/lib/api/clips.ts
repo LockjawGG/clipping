@@ -4,6 +4,8 @@ import type { Segment, StorageProvider } from "../providers/types.ts";
 import { DEFAULT_SNAP_CONFIG, snapToSentences } from "../clips/boundaries.ts";
 import { CAPTION_ANIMATIONS } from "../captions/presets.ts";
 import { serializeFocusTrack } from "../focus/keyframes.ts";
+import { learnedDefaults } from "../learning/apply.ts";
+import type { StyleProfile } from "../learning/profile.ts";
 import { ApiError } from "./http.ts";
 
 /**
@@ -171,7 +173,7 @@ export interface ClipDb {
   video: {
     findUnique(args: {
       where: { id: string };
-    }): Promise<{ projectId: string; durationMs: number | null } | null>;
+    }): Promise<{ projectId: string; durationMs: number | null; contentType?: string } | null>;
   };
   transcriptSegment: {
     findMany(args: {
@@ -199,6 +201,12 @@ export interface ClipServiceDeps {
   storage: StorageProvider;
   /** Throws 404 unless the project is owned by the signed-in user. */
   assertProjectOwned: (projectId: string) => Promise<void>;
+  /**
+   * The learned style for a content type, when one has been built. Optional so
+   * a caller that does not care about learning (or a test) can leave it out —
+   * an absent profile simply means no defaults are applied.
+   */
+  loadProfile?: (contentType: string) => Promise<StyleProfile | null>;
   enqueue: (input: {
     videoId: string;
     kind: "RENDER" | "THUMBNAIL";
@@ -287,36 +295,120 @@ export async function deleteClip(deps: ClipServiceDeps, clipId: string) {
   return { id: clipId, deleted: true };
 }
 
-export async function createManualClip(deps: ClipServiceDeps, videoId: string, input: unknown) {
-  const { startMs, endMs, title } = manualClipSchema.parse(input);
-  if (endMs <= startMs) throw new ApiError(400, "endMs must be after startMs");
+/** Everything a new clip can carry, whatever created it. */
+export interface NewClipInput {
+  startMs: number;
+  endMs: number;
+  title?: string;
+  hook?: string | null;
+  caption?: string | null;
+  socialTitle?: string | null;
+  hashtags?: string[];
+  reason?: string | null;
+  score?: number | null;
+  origin?: "AI_SUGGESTED" | "USER_CREATED";
+}
+
+export interface CreatedClip {
+  id: string;
+  startMs: number;
+  endMs: number;
+  /** Fields the learned profile filled in, for the UI to mention. */
+  appliedDefaults: string[];
+}
+
+/**
+ * The one clip-creation path.
+ *
+ * Both the manual "new clip" button and an accepted worker highlight come
+ * through here, so sentence snapping and learned defaults apply identically to
+ * each. Two creation paths would have drifted.
+ */
+export async function createClipFromRange(
+  deps: ClipServiceDeps,
+  videoId: string,
+  input: NewClipInput,
+): Promise<CreatedClip> {
+  if (input.endMs <= input.startMs) throw new ApiError(400, "endMs must be after startMs");
 
   const video = await deps.db.video.findUnique({ where: { id: videoId } });
   await assertOwnsProject(deps, video?.projectId);
 
   const rows = await deps.db.transcriptSegment.findMany({ where: { transcript: { videoId } } });
-  const durationMs = video?.durationMs ?? (rows.at(-1)?.endMs ?? endMs);
+  const durationMs = video?.durationMs ?? (rows.at(-1)?.endMs ?? input.endMs);
 
-  let snappedStart = startMs;
-  let snappedEnd = endMs;
+  // Snap to sentence boundaries so a clip never opens or closes mid-word.
+  let snappedStart = input.startMs;
+  let snappedEnd = input.endMs;
   if (rows.length > 0) {
     const segments: Segment[] = rows.map((r) => ({ ...r, text: "", words: [] }));
-    const snap = snapToSentences({ startMs, endMs }, segments, durationMs, DEFAULT_SNAP_CONFIG);
+    const snap = snapToSentences(
+      { startMs: input.startMs, endMs: input.endMs },
+      segments,
+      durationMs,
+      DEFAULT_SNAP_CONFIG,
+    );
     snappedStart = snap.startMs;
     snappedEnd = snap.endMs;
   }
 
+  // Learned defaults, if this user has a settled style for this kind of video.
+  const profile = deps.loadProfile
+    ? await deps.loadProfile(video?.contentType ?? "UNKNOWN").catch(() => null)
+    : null;
+  const defaults = learnedDefaults(profile);
+  const appliedDefaults: string[] = [];
+
   const clip = await deps.db.clip.create({
     data: {
       videoId,
-      origin: "USER_CREATED",
+      origin: input.origin ?? "USER_CREATED",
       startMs: snappedStart,
       endMs: snappedEnd,
-      title: title ?? "Untitled clip",
-      hashtags: [],
+      title: input.title ?? "Untitled clip",
+      hook: input.hook ?? null,
+      caption: input.caption ?? null,
+      socialTitle: input.socialTitle ?? null,
+      reason: input.reason ?? null,
+      score: input.score ?? null,
+      hashtags: input.hashtags ?? [],
+      ...(defaults.aspectRatio ? { aspectRatio: defaults.aspectRatio } : {}),
     },
   });
-  return { id: clip.id, startMs: snappedStart, endMs: snappedEnd };
+  if (defaults.aspectRatio) appliedDefaults.push("aspect ratio");
+
+  // Captions are a separate row, created only when the profile is confident the
+  // user wants them — a clip with no SubtitleConfig renders without captions.
+  if (defaults.captionsOn) {
+    await deps.db.subtitleConfig.upsert({
+      where: { clipId: clip.id },
+      create: {
+        clipId: clip.id,
+        ...(defaults.captionAnimation ? { animation: defaults.captionAnimation } : {}),
+        ...(defaults.fontFamily ? { fontFamily: defaults.fontFamily } : {}),
+        ...(defaults.fontSizePx ? { fontSizePx: defaults.fontSizePx } : {}),
+        ...(defaults.positionY !== undefined ? { positionY: defaults.positionY } : {}),
+        ...(defaults.captionTemplateId
+          ? { styleJson: JSON.stringify({ templateId: defaults.captionTemplateId }) }
+          : {}),
+      },
+      update: {},
+    });
+    appliedDefaults.push("captions");
+  }
+
+  return { id: clip.id, startMs: snappedStart, endMs: snappedEnd, appliedDefaults };
+}
+
+export async function createManualClip(deps: ClipServiceDeps, videoId: string, input: unknown) {
+  const { startMs, endMs, title } = manualClipSchema.parse(input);
+  const created = await createClipFromRange(deps, videoId, {
+    startMs,
+    endMs,
+    title,
+    origin: "USER_CREATED",
+  });
+  return { id: created.id, startMs: created.startMs, endMs: created.endMs };
 }
 
 export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {

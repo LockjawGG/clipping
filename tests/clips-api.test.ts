@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import type { StorageProvider } from "../src/lib/providers/types.ts";
 import type { ClipDb, ClipServiceDeps } from "../src/lib/api/clips.ts";
 import {
+  createClipFromRange,
   createManualClip,
   deleteCaptionConfig,
   deleteClip,
@@ -14,6 +15,8 @@ import {
   upsertCaptionConfig,
 } from "../src/lib/api/clips.ts";
 import { ApiError } from "../src/lib/api/http.ts";
+import { extractFeatures } from "../src/lib/learning/features.ts";
+import { buildProfile } from "../src/lib/learning/profile.ts";
 
 function fakeStorage(): StorageProvider {
   return {
@@ -271,6 +274,84 @@ test("deleteClip 404s for a clip in another project", async () => {
 });
 
 // --- createManualClip -----------------------------------------
+
+test("a learned profile fills in the defaults a new clip starts with", async () => {
+  // A settled profile: every example is 9:16 with captions on, in the same style.
+  const example = extractFeatures({
+    startMs: 0,
+    endMs: 20_000,
+    aspectRatio: "SQUARE_1_1",
+    overlays: [],
+    captions: {
+      enabled: true,
+      templateId: "viral-pop-yellow",
+      animation: "POP",
+      fontFamily: "Archivo Black",
+      fontSizePx: 72,
+      positionY: 0.8,
+    },
+  });
+  const profile = buildProfile(
+    "PODCAST",
+    Array.from({ length: 15 }, () => ({ features: example })),
+  );
+
+  const { deps, created, captionConfigs } = makeDeps({
+    loadProfile: async () => profile,
+  });
+  const out = await createClipFromRange(deps, "vidA", { startMs: 25_000, endMs: 40_000 });
+
+  assert.equal(created[0].aspectRatio, "SQUARE_1_1", "learned framing was applied");
+  // Captions are a separate row, created because the profile says they are usual.
+  const caps = captionConfigs.get(out.id);
+  assert.ok(caps, "a caption config was created");
+  assert.equal(caps.animation, "POP");
+  assert.equal(caps.fontFamily, "Archivo Black");
+  assert.equal(caps.fontSizePx, 72);
+  assert.equal(caps.positionY, 0.8);
+  assert.match(String(caps.styleJson), /viral-pop-yellow/);
+  assert.deepEqual(out.appliedDefaults, ["aspect ratio", "captions"]);
+});
+
+test("with no profile a new clip keeps the global defaults", async () => {
+  const { deps, created, captionConfigs } = makeDeps();
+  const out = await createClipFromRange(deps, "vidA", { startMs: 25_000, endMs: 40_000 });
+  assert.equal(created[0].aspectRatio, undefined, "nothing was forced");
+  assert.equal(captionConfigs.get(out.id), undefined, "no captions were assumed");
+  assert.deepEqual(out.appliedDefaults, []);
+});
+
+test("a profile that fails to load never blocks clip creation", async () => {
+  const { deps } = makeDeps({
+    loadProfile: async () => {
+      throw new Error("profile store is down");
+    },
+  });
+  const out = await createClipFromRange(deps, "vidA", { startMs: 25_000, endMs: 40_000 });
+  assert.ok(out.id, "the clip was still created");
+  assert.deepEqual(out.appliedDefaults, []);
+});
+
+test("an accepted highlight carries its title and metadata onto the clip", async () => {
+  const { deps, created } = makeDeps();
+  await createClipFromRange(deps, "vidA", {
+    startMs: 25_000,
+    endMs: 40_000,
+    title: "The moment",
+    hook: "wait for it",
+    caption: "cap",
+    socialTitle: "social",
+    hashtags: ["#a"],
+    reason: "scored well",
+    score: 0.82,
+    origin: "AI_SUGGESTED",
+  });
+  assert.equal(created[0].origin, "AI_SUGGESTED");
+  assert.equal(created[0].title, "The moment");
+  assert.equal(created[0].hook, "wait for it");
+  assert.equal(created[0].score, 0.82);
+  assert.deepEqual(created[0].hashtags, ["#a"]);
+});
 
 test("createManualClip snaps the window to sentence boundaries and marks it USER_CREATED", async () => {
   const { deps, created } = makeDeps();
