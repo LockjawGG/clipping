@@ -3,6 +3,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { mkdir, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
+import { executableExists } from "../providers/executable.ts";
 import { ProviderUnavailableError } from "../providers/types.ts";
 import type { SynthesisResult, SynthesizeOptions, TtsProvider, TtsVoice } from "./types.ts";
 
@@ -61,10 +62,10 @@ export class PiperTtsProvider implements TtsProvider {
 
   /** Throws with an actionable hint when the binary or models are missing. */
   private assertAvailable(): void {
-    if (!existsSync(this.opts.binary)) {
+    if (!executableExists(this.opts.binary)) {
       throw new ProviderUnavailableError(
         "tts:piper-local",
-        `piper binary not found at "${this.opts.binary}" — install Piper and set PIPER_BINARY`,
+        `piper binary "${this.opts.binary}" not found on PATH or at that path — install Piper, or set PIPER_BINARY to its location`,
       );
     }
     if (!existsSync(this.opts.voiceDir)) {

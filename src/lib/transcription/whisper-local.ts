@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { executableExists } from "../providers/executable.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os, { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
@@ -147,7 +148,9 @@ export class WhisperLocalProvider implements TranscriptionProvider {
       args.push("--initial_prompt", options.vocabulary.join(", "));
     }
 
-    const binaryExists = existsSync(this.opts.binary);
+    // PATH-aware: a bare `whisper` is the normal install, and treating it as
+    // missing turned a retryable ENOENT into a hard failure.
+    const binaryExists = executableExists(this.opts.binary);
     const jsonPath = join(outDir, `${basename(audioPath, extname(audioPath))}.json`);
     try {
       // The pip console-script shim on Windows is flaky when spawned from a

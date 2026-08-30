@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { executableExists } from "../src/lib/providers/executable.ts";
 
 import {
   missingLines,
@@ -206,4 +207,20 @@ test("the mixer refuses a no-op pass", () => {
     () => buildVoiceoverMixArgs({ inputPath: "/tmp/a.mp4", outputPath: "/tmp/b.mp4", lines: [] }),
     /no voiceover lines/,
   );
+});
+
+test("a command on PATH counts as installed, not just one given as a path", () => {
+  // Every local binary defaults to a bare name, because that is how a package
+  // manager installs it. Checking that name as a filesystem path meant the
+  // default configuration could never pass its own availability check.
+  assert.equal(executableExists("node"), true, "the process running this test is on PATH");
+  assert.equal(executableExists("definitely-not-a-real-binary-xyz"), false);
+  assert.equal(executableExists(""), false);
+});
+
+test("a value that looks like a path is checked as a path", () => {
+  // Writing a path is an explicit instruction to use that file, so it must not
+  // fall back to a PATH lookup of the same name.
+  assert.equal(executableExists("./package.json"), true);
+  assert.equal(executableExists("./no-such-file-here.txt"), false);
 });
