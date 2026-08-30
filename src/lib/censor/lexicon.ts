@@ -25,14 +25,23 @@ export const TIERS_BY_SENSITIVITY: Record<CensorSensitivity, CensorTier[]> = {
   HIGH: ["strong", "common", "mild"],
 };
 
-/** The harshest terms — caught at every sensitivity. */
+/**
+ * The harshest terms — caught at every sensitivity.
+ *
+ * Entries are *verb stems* where one exists, not the agent noun, because
+ * `detect.ts` folds inflections down rather than up. Listing "motherfucker"
+ * alone caught "motherfucker" and "motherfuckers" but missed "motherfucking",
+ * since stripping "-ing" yields "motherfuck". The agent nouns are kept
+ * alongside the stems so the list still reads as words rather than fragments.
+ */
 const STRONG = [
   "fuck",
+  "motherfuck",
   "motherfucker",
   "cunt",
   "cock",
+  "cocksuck",
   "cocksucker",
-  "wanker",
   "twat",
   "prick",
 ];
@@ -59,6 +68,7 @@ const COMMON = [
   "bollocks",
   "bugger",
   "wank",
+  "wanker",
 ];
 
 /** Mild or borderline — only at high sensitivity, where over-catching is the

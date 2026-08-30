@@ -32,9 +32,40 @@ test("dropped-g colloquialisms still fold to their stem", () => {
   assert.equal(detectSpans(line("nothin' doin'"), on).length, 0, "innocent ones are untouched");
 });
 
+test("agent nouns and their -ing forms both fold to one stem", () => {
+  // Regression: the lexicon listed "motherfucker" but not the stem, so
+  // "motherfucker" and "motherfuckers" matched while "motherfucking" did not —
+  // stripping "-ing" yields "motherfuck", which was in no list.
+  const variants = [
+    "motherfucker",
+    "motherfuckers",
+    "motherfucking",
+    "motherfuckin",
+    "cocksucker",
+    "cocksucking",
+    "cocksuckers",
+  ];
+  const hits = new Set(
+    detectSpans(line(variants.join(" ")), { enabled: true, sensitivity: "LOW" }).flatMap((s) =>
+      s.text.split(" "),
+    ),
+  );
+  for (const v of variants) assert.ok(hits.has(v), `${v} was not caught`);
+});
+
+test("a term and its agent noun share a tier", () => {
+  // "wanker" sitting in strong while "wank" sat in common meant "wanking"
+  // escaped at LOW while "wanker" did not, which reads as a bug to a user.
+  const words = line("wank wanker wanking");
+  assert.equal(detectSpans(words, { enabled: true, sensitivity: "LOW" }).length, 0);
+  assert.equal(detectSpans(words, { enabled: true, sensitivity: "MEDIUM" }).length, 3);
+});
+
 test("detection is whole-word, so innocent words never trip", () => {
   // The Scunthorpe problem: substring matching would ruin all of these.
-  const words = line("class assassin passage bassist Scunthorpe hello shitake");
+  const words = line(
+    "class assassin passage bassist Scunthorpe hello shitake motherhood cocktail peacock",
+  );
   const spans = detectSpans(words, { enabled: true, sensitivity: "HIGH" });
   assert.deepEqual(spans, [], "no false positives");
 });
