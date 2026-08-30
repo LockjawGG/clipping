@@ -17,7 +17,13 @@ import {
   staleLines,
   type VoiceLine,
 } from "../voiceover/sync.ts";
-import { buildComposePlan, isPlainCut, planDurationMs, remapWordsToTimeline } from "../sequence/compose.ts";
+import {
+  buildComposePlan,
+  buildLayerPlan,
+  isPlainCut,
+  planDurationMs,
+  remapWordsToTimeline,
+} from "../sequence/compose.ts";
 import {
   audioSpans,
   censoredIndices,
@@ -585,7 +591,11 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     const plan = target.sequence
       ? buildComposePlan(target.sequence.items, target.sequence.trackId)
       : [];
-    const composing = plan.length > 0 && !isPlainCut(plan, target);
+    // Upper lanes only mean something once there is a base to lay them over.
+    const layerPlan = target.sequence
+      ? buildLayerPlan(target.sequence.items, target.sequence.trackId, target.sequence.trackOrder)
+      : [];
+    const composing = plan.length > 0 && (!isPlainCut(plan, target) || layerPlan.length > 0);
 
     if (composing) {
       // Each piece is cut on its own, then they are joined end to end. Cutting
@@ -615,7 +625,36 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
       }
       // Pieces from more than one source can disagree on resolution, which the
       // demuxer cannot paper over — that case pays for a re-encode.
-      await deps.ffmpeg.concat(pieces, cut, { reencode: sources.size > 1, crf }, signal);
+      const joined = layerPlan.length > 0 ? scratchPath(work, "base.mp4") : cut;
+      await deps.ffmpeg.concat(pieces, joined, { reencode: sources.size > 1, crf }, signal);
+
+      // Anything on a lane above the base covers it for as long as it lasts.
+      // Done here, on the joined base, so everything downstream — censoring,
+      // reframing, captions — sees one video and needs to know nothing about
+      // lanes.
+      if (layerPlan.length > 0) {
+        const base = await deps.ffmpeg.probe(joined, signal);
+        const layers: Array<{ path: string; startSec: number }> = [];
+        for (const [i, piece] of layerPlan.entries()) {
+          let input = sources.get(piece.sourceVideoId);
+          if (!input) {
+            if (!piece.sourceStorageKey) continue;
+            input = await deps.source.ensureLocal(piece.sourceVideoId, piece.sourceStorageKey, signal);
+            sources.set(piece.sourceVideoId, input);
+          }
+          const out = scratchPath(work, `layer-${String(i).padStart(3, "0")}.mp4`);
+          await deps.ffmpeg.cut(input, out, { startMs: piece.sourceIn, endMs: piece.sourceOut, crf }, signal);
+          layers.push({ path: out, startSec: piece.timelineStart / 1000 });
+        }
+        if (layers.length > 0) {
+          await deps.ffmpeg.layerVideo(
+            joined,
+            cut,
+            { layers, width: base.width ?? 1080, height: base.height ?? 1920, crf },
+            signal,
+          );
+        }
+      }
     } else {
       await deps.ffmpeg.cut(
         source,

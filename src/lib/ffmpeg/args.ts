@@ -1002,3 +1002,84 @@ export function concatListLine(path: string): string {
   assertSafePath(path);
   return `file '${path.replace(/'/g, "'\''")}'`;
 }
+
+export interface VideoLayerItem {
+  /** A pre-cut piece, already the length it should occupy. */
+  path: string;
+  /** Where it starts on the base timeline. */
+  startSec: number;
+}
+
+export interface VideoLayerArgs {
+  /** The composed base lane. */
+  inputPath: string;
+  outputPath: string;
+  layers: VideoLayerItem[];
+  /** Base frame size — layers are fitted to it. */
+  width: number;
+  height: number;
+  crf?: number;
+}
+
+/**
+ * Lay pieces from upper lanes over the base lane.
+ *
+ * A higher layer covers the base for as long as it lasts — a cut-in, the
+ * ordinary reason to put something on V2. It is fitted inside the frame rather
+ * than cropped to it, so a differently-shaped source is letterboxed instead of
+ * silently losing its edges.
+ *
+ * `setpts` is what places a layer in time: its own frames start at zero, and
+ * without the shift every layer would play from the top of the timeline. The
+ * base keeps its audio — a cut-in normally lets the interview keep talking
+ * underneath, and mixing two soundtracks unasked is worse than ignoring one.
+ */
+export function buildVideoLayerArgs({
+  inputPath,
+  outputPath,
+  layers,
+  width,
+  height,
+  crf = 18,
+}: VideoLayerArgs): string[] {
+  assertSafePath(inputPath);
+  assertSafePath(outputPath);
+  if (layers.length === 0) throw new Error("no layers to composite");
+  if (!Number.isFinite(width) || width <= 0) throw new Error(`bad width: ${width}`);
+  if (!Number.isFinite(height) || height <= 0) throw new Error(`bad height: ${height}`);
+
+  const inputs: string[] = ["-y", "-i", inputPath];
+  const chains: string[] = [];
+  let prev = "0:v";
+
+  layers.forEach((layer, i) => {
+    assertSafePath(layer.path);
+    inputs.push("-i", layer.path);
+    const idx = i + 1;
+    const start = fgNum(Math.max(0, layer.startSec), 0, 1e6);
+    // Fit inside the frame, pad out the rest, then move it to its slot in time.
+    chains.push(
+      `[${idx}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+        `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,` +
+        `setpts=PTS-STARTPTS+${start}/TB[l${i}]`,
+    );
+    const out = i === layers.length - 1 ? "vout" : `b${i}`;
+    // `shortest=0` and `eof_action=pass`: the base runs on after a layer ends.
+    chains.push(`[${prev}][l${i}]overlay=eof_action=pass:shortest=0[${out}]`);
+    prev = out;
+  });
+
+  return [
+    ...inputs,
+    "-filter_complex", chains.join(";"),
+    "-map", "[vout]",
+    "-map", "0:a?",
+    "-c:v", "libx264",
+    "-preset", "fast",
+    "-crf", String(crf),
+    "-pix_fmt", "yuv420p",
+    "-c:a", "copy",
+    "-movflags", "+faststart",
+    outputPath,
+  ];
+}

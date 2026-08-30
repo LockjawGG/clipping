@@ -10,13 +10,14 @@ import {
 } from "../src/lib/sequence/lane.ts";
 import {
   buildComposePlan,
+  buildLayerPlan,
   isPlainCut,
   mapSourceToTimeline,
   planDurationMs,
   remapWordsToTimeline,
   type ComposableItem,
 } from "../src/lib/sequence/compose.ts";
-import { buildConcatArgs, concatListLine } from "../src/lib/ffmpeg/args.ts";
+import { buildConcatArgs, buildVideoLayerArgs, concatListLine } from "../src/lib/ffmpeg/args.ts";
 
 const item = (over: Partial<ComposableItem> & { id: string }): ComposableItem => ({
   trackId: "v1",
@@ -172,4 +173,43 @@ test("concat list quoting survives the paths Windows actually produces", () => {
 
 test("itemDurationMs never goes negative", () => {
   assert.equal(itemDurationMs({ sourceIn: 500, sourceOut: 100 }), 0);
+});
+
+test("the base lane is composed; the others are laid over it", () => {
+  const items = [
+    item({ id: "b0", trackId: "v1", order: 0, sourceIn: 0, sourceOut: 8_000 }),
+    item({ id: "u0", trackId: "v2", order: 0, sourceIn: 20_000, sourceOut: 22_000 }),
+    item({ id: "u1", trackId: "v2", order: 1, sourceIn: 30_000, sourceOut: 31_000 }),
+  ];
+  const base = buildComposePlan(items, "v1");
+  const layers = buildLayerPlan(items, "v1", ["v1", "v2"]);
+
+  assert.equal(base.length, 1, "the base lane holds only its own pieces");
+  assert.deepEqual(
+    layers.map((l) => [l.timelineStart, l.durationMs]),
+    [[0, 2_000], [2_000, 1_000]],
+    "and the upper lane packs from zero, exactly like the base",
+  );
+});
+
+test("layer args place each piece in time and fit it to the frame", () => {
+  const args = buildVideoLayerArgs({
+    inputPath: "/tmp/base.mp4",
+    outputPath: "/tmp/out.mp4",
+    width: 1080,
+    height: 1920,
+    layers: [{ path: "/tmp/l0.mp4", startSec: 0 }, { path: "/tmp/l1.mp4", startSec: 2.5 }],
+  });
+  const filter = args[args.indexOf("-filter_complex") + 1];
+
+  // Without the PTS shift every layer would play from the top of the timeline.
+  assert.match(filter, /setpts=PTS-STARTPTS\+0\/TB\[l0\]/);
+  assert.match(filter, /setpts=PTS-STARTPTS\+2\.5\/TB\[l1\]/);
+  // Fitted and padded, not cropped — a differently shaped source keeps its edges.
+  assert.match(filter, /force_original_aspect_ratio=decrease/);
+  assert.match(filter, /pad=1080:1920/);
+  // The base runs on after a layer ends.
+  assert.match(filter, /eof_action=pass:shortest=0/);
+  // The base keeps its own audio.
+  assert.deepEqual(args.slice(args.indexOf("-c:a"), args.indexOf("-c:a") + 2), ["-c:a", "copy"]);
 });

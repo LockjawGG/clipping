@@ -124,6 +124,8 @@ export interface RenderTarget {
 export interface RenderSequence {
   /** The track composed into the output: the first VIDEO track, by index. */
   trackId: string;
+  /** Every video track, bottom first — upper ones are laid over the base. */
+  trackOrder: string[];
   items: Array<{
     id: string;
     trackId: string;

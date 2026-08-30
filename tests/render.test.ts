@@ -48,6 +48,7 @@ interface Spy {
   failed: Array<{ id: string; message: string }>;
   cuts: CutOptions[];
   concats: Array<{ pieces: string[]; reencode?: boolean }>;
+  layered: Array<{ layers: Array<{ path: string; startSec: number }>; width: number; height: number }>;
   reframes: ReframeOptions[];
   trackedReframes: number;
   trackedTracks: Array<Array<{ atMs: number; x: number; y: number }>>;
@@ -77,6 +78,7 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
     failed: [],
     cuts: [],
     concats: [],
+    layered: [],
     reframes: [],
     trackedReframes: 0,
     trackedTracks: [],
@@ -102,6 +104,13 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
       },
       concat: async (pieces: readonly string[], _o: string, opts: { reencode?: boolean }) => {
         spy.concats.push({ pieces: [...pieces], reencode: opts?.reencode });
+      },
+      layerVideo: async (
+        _i: string,
+        _o: string,
+        opts: { layers: Array<{ path: string; startSec: number }>; width: number; height: number },
+      ) => {
+        spy.layered.push({ layers: opts.layers, width: opts.width, height: opts.height });
       },
       reframe: async (_i: string, _o: string, opts: ReframeOptions) => {
         spy.reframes.push(opts);
@@ -1045,6 +1054,7 @@ test("cues reach Remotion on the clip's own timeline, not the source video's", a
 /** A timeline on the clip's own video: `[in,out]` pairs, in lane order. */
 const timeline = (ranges: Array<[number, number]>, videoId = "vid1") => ({
   trackId: "t1",
+  trackOrder: ["t1"],
   items: ranges.map(([sourceIn, sourceOut], order) => ({
     id: `i${order}`,
     trackId: "t1",
@@ -1147,4 +1157,73 @@ test("a piece from another video is fetched and forces a re-encode on the join",
     true,
     "two sources can disagree on resolution, which a stream copy cannot reconcile",
   );
+});
+
+/** Two lanes: `base` plays through, `upper` is laid over it. */
+const layered = (
+  base: Array<[number, number]>,
+  upper: Array<[number, number]>,
+  videoId = "vid1",
+) => ({
+  trackId: "t1",
+  trackOrder: ["t1", "t2"],
+  items: [
+    ...base.map(([sourceIn, sourceOut], order) => ({
+      id: `b${order}`, trackId: "t1", order, sourceIn, sourceOut,
+      sourceVideoId: videoId, sourceAssetId: null, sourceStorageKey: "videos/vid1/source.mp4",
+    })),
+    ...upper.map(([sourceIn, sourceOut], order) => ({
+      id: `u${order}`, trackId: "t2", order, sourceIn, sourceOut,
+      sourceVideoId: videoId, sourceAssetId: null, sourceStorageKey: "videos/vid1/source.mp4",
+    })),
+  ],
+});
+
+test("a piece dragged to another layer is laid over the base, not dropped", async () => {
+  // The whole hazard of cross-lane dragging: a piece that leaves the base lane
+  // must still reach the export, or moving it would quietly delete it.
+  const { deps, spy } = makeDeps(
+    target({ sequence: layered([[10_000, 20_000]], [[30_000, 32_000]]) }),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-layer" }));
+
+  assert.equal(spy.layered.length, 1, "the upper lane is composited");
+  assert.equal(spy.layered[0].layers.length, 1);
+  assert.equal(spy.layered[0].layers[0].startSec, 0, "its own lane packs from zero");
+  // Both the base piece and the upper piece are cut.
+  assert.deepEqual(
+    spy.cuts.map((c) => [c.startMs, c.endMs]),
+    [[10_000, 20_000], [30_000, 32_000]],
+  );
+});
+
+test("an upper lane packs from zero, so its pieces keep their own order", async () => {
+  const { deps, spy } = makeDeps(
+    target({ sequence: layered([[10_000, 20_000]], [[30_000, 32_000], [34_000, 35_000]]) }),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-layer2" }));
+
+  assert.deepEqual(
+    spy.layered[0].layers.map((l) => l.startSec),
+    [0, 2],
+    "the second layer piece follows the first, two seconds in",
+  );
+});
+
+test("an untouched base with something on a layer still composes", async () => {
+  // isPlainCut alone would take the single-cut path and lose the upper lane.
+  const { deps, spy } = makeDeps(
+    target({ sequence: layered([[10_000, 38_000]], [[5_000, 6_000]]) }),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-layer3" }));
+
+  assert.equal(spy.concats.length, 1, "the base still goes through the compose path");
+  assert.equal(spy.layered.length, 1, "and the layer is not silently dropped");
+});
+
+test("no upper lane means no compositing pass at all", async () => {
+  const { deps, spy } = makeDeps(target({ sequence: timeline([[10_000, 38_000]]) }));
+  await renderHandler(ctx(deps, { renderId: "r-nolayer" }));
+  assert.equal(spy.layered.length, 0);
+  assert.equal(spy.concats.length, 0, "and it is still just the one cut");
 });

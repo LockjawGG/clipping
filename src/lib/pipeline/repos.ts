@@ -431,6 +431,7 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
           if (!track) return null;
           return {
             trackId: track.id,
+            trackOrder: seq.tracks.filter((t) => t.kind === "VIDEO").map((t) => t.id),
             items: seq.items.map((i) => ({
               id: i.id,
               trackId: i.trackId,

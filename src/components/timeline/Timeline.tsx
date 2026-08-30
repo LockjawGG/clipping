@@ -120,6 +120,8 @@ interface DragState {
   startX: number;
   dxPx: number;
   raf: number;
+  /** The lane the pointer is currently over, for a move that crosses layers. */
+  overTrackId?: string;
 }
 
 export function Timeline({
@@ -168,6 +170,25 @@ export function Timeline({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
+  /**
+   * Live rects for the lane rows, so a vertical drag can say which lane the
+   * pointer is over. Measured rather than derived from TRACK_H: the row heights
+   * are laid out by flexbox, and duplicating that arithmetic here would drift
+   * the moment the layout changes.
+   */
+  const trackRows = useRef(new Map<string, HTMLDivElement>());
+  const trackAtY = useCallback((clientY: number): string | null => {
+    let nearest: { id: string; distance: number } | null = null;
+    for (const [id, el] of trackRows.current) {
+      const r = el.getBoundingClientRect();
+      if (clientY >= r.top && clientY <= r.bottom) return id;
+      // Outside every row (the gaps, or past the ends) the nearest lane is what
+      // the user is reaching for — dropping into a gap should not be a no-op.
+      const distance = clientY < r.top ? r.top - clientY : clientY - r.bottom;
+      if (!nearest || distance < nearest.distance) nearest = { id, distance };
+    }
+    return nearest?.id ?? null;
+  }, []);
   const [snapX, setSnapX] = useState<number | null>(null);
   const [dropActive, setDropActive] = useState(false);
 
@@ -241,7 +262,7 @@ export function Timeline({
       e.stopPropagation();
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
       setSelected(clip.id);
-      setDrag({ clipId: clip.id, mode, startX: e.clientX, dxPx: 0, raf: 0 });
+      setDrag({ clipId: clip.id, mode, startX: e.clientX, dxPx: 0, raf: 0, overTrackId: clip.trackId });
     },
     [setSelected, tracks],
   );
@@ -260,10 +281,12 @@ export function Timeline({
             : msToX(clip.start) + dx;
         dx = applySnap(edgeX, dx, clip.id);
         if (!d.raf) d.raf = requestAnimationFrame(paint);
-        return { ...d, dxPx: dx };
+        // Only a move changes lanes; trimming an edge stays where it is.
+        const overTrackId = d.mode === "move" ? (trackAtY(e.clientY) ?? d.overTrackId) : d.overTrackId;
+        return { ...d, dxPx: dx, overTrackId };
       });
     },
-    [applySnap, clips, msToX, paint],
+    [applySnap, clips, msToX, paint, trackAtY],
   );
 
   const commitDrag = useCallback(() => {
@@ -275,7 +298,12 @@ export function Timeline({
       const deltaMs = xToMs(d.dxPx);
 
       if (d.mode === "move") {
-        patchClip(clip.id, { start: Math.max(0, Math.round(clip.start + deltaMs)) });
+        // A move can cross lanes as well as slide along one.
+        const trackId = d.overTrackId && d.overTrackId !== clip.trackId ? d.overTrackId : undefined;
+        patchClip(clip.id, {
+          start: Math.max(0, Math.round(clip.start + deltaMs)),
+          ...(trackId ? { trackId } : {}),
+        });
       } else if (d.mode === "trim-l") {
         const maxLeft = clip.duration - MIN_CLIP_MS; // can't cross the right edge
         const minLeft = -clip.sourceIn; // can't expose media before sourceIn
@@ -616,11 +644,20 @@ export function Timeline({
               {tracks.map((track) => (
                 <div
                   key={track.id}
+                  ref={(el) => {
+                    if (el) trackRows.current.set(track.id, el);
+                    else trackRows.current.delete(track.id);
+                  }}
                   className="relative rounded-lg"
                   style={{
                     height: TRACK_H,
                     background: C.surface,
-                    border: `1px solid ${C.border}`,
+                    // The lane a dragged piece would land in is outlined, so a
+                    // cross-lane drop is visible before the pointer is released.
+                    border:
+                      drag?.mode === "move" && drag.overTrackId === track.id
+                        ? `1px solid ${C.accent}`
+                        : `1px solid ${C.border}`,
                     opacity: track.locked ? 0.65 : 1,
                   }}
                 >

@@ -91,6 +91,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       },
       remux: async () => {},
       concat: async () => {},
+      layerVideo: async () => {},
       transcodeAv: async () => {},
       videoTimestampReport: async () => ({ packets: 0, backwards: 0, duplicateRun: 0 }),
       cut: async () => {},

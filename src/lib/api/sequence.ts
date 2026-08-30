@@ -26,6 +26,9 @@ export type SequenceTrackKind = "VIDEO" | "AUDIO" | "OVERLAY" | "TEXT";
 /** Default on-timeline length for a still image dropped onto the timeline. */
 const STILL_IMAGE_MS = 5_000;
 
+/** Enough lanes to organise with, few enough that the panel stays readable. */
+const MAX_TRACKS = 6;
+
 /**
  * Injected media (image / GIF overlays) lives in its own `Overlay` table, not in
  * `SequenceItem`. The timeline still *shows* it: overlays are projected onto a
@@ -499,6 +502,39 @@ export async function getOrCreateClipSequence(
     },
   });
   return withOverlays(deps, await toView(deps, { ...seq, tracks: [track], items: [item] }), clipLenMs);
+}
+
+/**
+ * Add an empty video lane above the existing ones.
+ *
+ * Lanes are what makes "move this piece somewhere else" possible at all — with
+ * one lane a drag can only reorder. They are numbered from the top like every
+ * other editor, so a new lane takes index 0 and the rest shift down.
+ */
+export async function createSequenceTrack(
+  deps: SequenceServiceDeps,
+  sequenceId: string,
+): Promise<SequenceView> {
+  const seq = await ownedSequence(deps, sequenceId);
+  if (seq.tracks.length >= MAX_TRACKS) {
+    throw new ApiError(422, `a sequence can hold at most ${MAX_TRACKS} layers`);
+  }
+  const clip = await deps.db.clip.findUnique({ where: { id: seq.clipId } });
+  const nextIndex = Math.max(-1, ...seq.tracks.map((t) => t.index)) + 1;
+  await deps.db.sequenceTrack.create({
+    data: {
+      sequenceId,
+      index: nextIndex,
+      kind: "VIDEO",
+      name: `V${seq.tracks.filter((t) => t.kind === "VIDEO").length + 1}`,
+    },
+  });
+  const full = await deps.db.sequence.findUnique({
+    where: { id: sequenceId },
+    include: { tracks: true, items: true },
+  });
+  const clipLenMs = clip ? Math.max(1, clip.endMs - clip.startMs) : 1;
+  return withOverlays(deps, await toView(deps, full ?? seq), clipLenMs);
 }
 
 export async function updateSequence(

@@ -211,6 +211,22 @@ export function SequenceEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overlaySig]);
 
+  /** Add an empty lane, then refetch — a new track changes the whole layout. */
+  const addLayer = useCallback(async () => {
+    const id = seq?.id;
+    if (!id) return;
+    setSave("saving");
+    try {
+      const r = await fetch(`/api/sequences/${id}/tracks`, { method: "POST" });
+      if (!r.ok) throw new Error();
+      setSave("saved");
+      setTimeout(() => setSave("idle"), 1500);
+      await load();
+    } catch {
+      setError("couldn't add a layer — try again");
+    }
+  }, [seq?.id, load]);
+
   const flush = useCallback((id: string) => {
     const body = pending.current.get(id);
     pending.current.delete(id);
@@ -427,6 +443,21 @@ export function SequenceEditor({
 
   return (
     <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2 text-xs">
+        <button
+          type="button"
+          onClick={() => void addLayer()}
+          className="btn btn-ghost btn-sm"
+          title="Add an empty layer to drag pieces onto"
+        >
+          + Add layer
+        </button>
+        <span className="text-muted">
+          {seq.tracks.filter((t) => t.kind === "VIDEO").length} video layer
+          {seq.tracks.filter((t) => t.kind === "VIDEO").length === 1 ? "" : "s"} · drag a piece up or
+          down to move it between them
+        </span>
+      </div>
       <div style={{ height: tlHeight }}>
       <Timeline
         className="h-full"

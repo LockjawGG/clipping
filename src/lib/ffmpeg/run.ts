@@ -9,6 +9,7 @@ import {
   type CaptionBurnStyle,
   type OverlayCompositeItem,
   buildConcatArgs,
+  buildVideoLayerArgs,
   buildCutArgs,
   concatListLine,
   buildExtractAudioArgs,
@@ -187,6 +188,13 @@ export interface Ffmpeg {
   ): Promise<{ packets: number; backwards: number; duplicateRun: number }>;
   /** Frame-accurate trim (re-encode, never stream-copy). */
   cut(inputPath: string, outputPath: string, opts: CutOptions, signal?: AbortSignal): Promise<void>;
+  /** Lay pre-cut pieces from upper lanes over a base video. */
+  layerVideo(
+    inputPath: string,
+    outputPath: string,
+    opts: { layers: Array<{ path: string; startSec: number }>; width: number; height: number; crf?: number },
+    signal?: AbortSignal,
+  ): Promise<void>;
   /** Join pre-cut pieces end to end, in the order given. */
   concat(
     pieces: readonly string[],
@@ -315,6 +323,16 @@ export class FfmpegRunner implements Ffmpeg {
     return { packets, backwards, duplicateRun };
   }
 
+
+  async layerVideo(
+    inputPath: string,
+    outputPath: string,
+    opts: { layers: Array<{ path: string; startSec: number }>; width: number; height: number; crf?: number },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await this.exec(this.ffmpegPath, buildVideoLayerArgs({ inputPath, outputPath, ...opts }), signal);
+  }
 
   async concat(
     pieces: readonly string[],

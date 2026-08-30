@@ -69,6 +69,26 @@ export function buildComposePlan(
   return out;
 }
 
+/**
+ * Pieces on the lanes above the base one, with where each sits in the output.
+ *
+ * Each upper lane is packed from zero like the base, so a piece dragged up
+ * keeps the position it had. They are returned flat, bottom lane first, since
+ * that is the order they must be laid down in.
+ */
+export function buildLayerPlan(
+  items: readonly ComposableItem[],
+  baseTrackId: string,
+  trackOrder: readonly string[],
+): ComposePiece[] {
+  const out: ComposePiece[] = [];
+  for (const trackId of trackOrder) {
+    if (trackId === baseTrackId) continue;
+    out.push(...buildComposePlan(items, trackId));
+  }
+  return out;
+}
+
 /** Total output length of a plan, including any gap left by a skipped item. */
 export function planDurationMs(plan: readonly ComposePiece[]): number {
   return plan.reduce((end, p) => Math.max(end, p.timelineStart + p.durationMs), 0);

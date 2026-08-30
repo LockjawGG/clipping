@@ -19,6 +19,7 @@ import {
   buildProbeArgs,
   buildCensorAudioArgs,
   buildConcatArgs,
+  buildVideoLayerArgs,
   concatListLine,
 } from "../src/lib/ffmpeg/args.ts";
 import { buildCues, toSrt } from "../src/lib/captions/layout.ts";
@@ -157,6 +158,32 @@ async function main() {
     ok("concat two cuts", `${duration.toFixed(2)}s from 2s + 3s`);
   } catch (e) {
     bad("concat", e);
+  }
+
+  // Laying a piece from an upper lane over the base. Only ffmpeg can say
+  // whether the scale/pad/setpts/overlay chain actually builds.
+  try {
+    const layer = join(DIR, "layer.mp4");
+    await run("ffmpeg", buildCutArgs({ inputPath: SRC, outputPath: layer, startMs: 5_000, endMs: 7_000 }));
+    await run("ffmpeg", buildVideoLayerArgs({
+      inputPath: join(DIR, "clip.mp4"),
+      outputPath: join(DIR, "layered.mp4"),
+      // The base's own frame size: layers are fitted into the base, so passing
+      // anything else just makes the layer smaller than the picture.
+      width: 1280,
+      height: 720,
+      layers: [{ path: layer, startSec: 1.5 }],
+    }));
+    const { stdout } = await run("ffprobe", buildProbeArgs({ inputPath: join(DIR, "layered.mp4") }));
+    const meta = JSON.parse(stdout);
+    const v = meta.streams.find((s: any) => s.codec_type === "video");
+    if (v.width !== 1280 || v.height !== 720) throw new Error(`got ${v.width}x${v.height}`);
+    // The base must run its full length: a layer covers part of it, not all.
+    const duration = Number(meta.format.duration);
+    if (duration < 5) throw new Error(`base was truncated to ${duration.toFixed(2)}s`);
+    ok("layer over base", `${v.width}x${v.height}, base still ${duration.toFixed(2)}s`);
+  } catch (e) {
+    bad("video layer", e);
   }
 
   // Per-span censoring, with three different treatments in one graph. The unit
