@@ -407,16 +407,39 @@ export function Timeline({
 
   const rootRef = useRef<HTMLDivElement>(null);
 
-  /** Split the selected clip at the playhead — only when the playhead is
-   *  strictly inside it. Handled here and by the toolbar button. */
-  const splitAtPlayhead = useCallback(() => {
-    if (!selected || !onSplit) return;
-    const c = clips.find((x) => x.id === selected);
-    if (!c) return;
-    if (playhead > c.start + 1 && playhead < c.start + c.duration - 1) {
-      onSplit(selected, Math.round(playhead));
+  /**
+   * The piece Split would act on.
+   *
+   * A selection wins, because picking a piece is an explicit statement about
+   * which one you mean. With nothing selected it is simply whatever sits under
+   * the playhead, which is what the button looks like it should do — requiring
+   * a selection first made it a button that did nothing for no visible reason.
+   *
+   * Only a piece the playhead is strictly inside counts: splitting on a
+   * boundary would produce a zero-length piece. When several lanes have one
+   * there the base lane wins — it is the lane that decides how long the export
+   * is, and an upper lane can still be split by clicking it first.
+   */
+  const splitTarget = useMemo(() => {
+    const inside = (c: TimelineClip) =>
+      playhead > c.start + 1 && playhead < c.start + c.duration - 1;
+    if (selected) {
+      const c = clips.find((x) => x.id === selected);
+      return c && inside(c) ? c : null;
     }
-  }, [clips, onSplit, playhead, selected]);
+    const lane = new Map(tracks.map((t, i) => [t.id, i]));
+    return (
+      [...clips]
+        .filter(inside)
+        .sort((a, b) => (lane.get(a.trackId) ?? 0) - (lane.get(b.trackId) ?? 0))[0] ?? null
+    );
+  }, [clips, playhead, selected, tracks]);
+
+  /** Handled here and by the toolbar button. */
+  const splitAtPlayhead = useCallback(() => {
+    if (!onSplit || !splitTarget) return;
+    onSplit(splitTarget.id, Math.round(playhead));
+  }, [onSplit, playhead, splitTarget]);
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -513,8 +536,12 @@ export function Timeline({
           )}
           {onSplit && (
             <TBtn
-              label="Split at playhead (S)"
-              disabled={!selected}
+              label={
+                splitTarget
+                  ? `Split ${splitTarget.name} at the playhead (S)`
+                  : "Split at playhead (S) — move the playhead over a piece"
+              }
+              disabled={!splitTarget}
               onClick={splitAtPlayhead}
             >
               ✂
