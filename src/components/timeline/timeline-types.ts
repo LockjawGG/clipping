@@ -57,6 +57,8 @@ export interface TimelineProps {
   onTracksChange?: (next: TimelineTrack[]) => void;
   /** Reorder an overlay lane. When set, overlay track headers show ▲▼ controls. */
   onReorderTrack?: (trackId: string, direction: "up" | "down") => void;
+  /** Remove a layer. Offered only for an empty video lane that is not the last. */
+  onRemoveTrack?: (trackId: string) => void;
 
   /** Playhead position in ms. Controlled if provided with `onSeek`. */
   playheadMs?: number;

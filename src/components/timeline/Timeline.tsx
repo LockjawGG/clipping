@@ -130,6 +130,7 @@ export function Timeline({
   onClipsChange,
   onTracksChange,
   onReorderTrack,
+  onRemoveTrack,
   playheadMs,
   onSeek,
   durationMs,
@@ -596,6 +597,17 @@ export function Timeline({
                   onReorder={reorderable ? (dir) => onReorderTrack!(t.id, dir) : undefined}
                   canUp={pos > 0}
                   canDown={pos >= 0 && pos < overlayIdxs.length - 1}
+                  onRemove={
+                    // Only an empty video lane, and never the last one — the
+                    // control is absent rather than disabled, so there is no
+                    // button that looks like it would throw work away.
+                    onRemoveTrack &&
+                    t.kind === "video" &&
+                    tracks.filter((x) => x.kind === "video").length > 1 &&
+                    !clips.some((c) => c.trackId === t.id)
+                      ? () => onRemoveTrack(t.id)
+                      : undefined
+                  }
                 />
               );
             })}
@@ -777,6 +789,7 @@ function TrackHeader({
   onReorder,
   canUp,
   canDown,
+  onRemove,
 }: {
   track: TimelineTrack;
   onChange: (patch: Partial<TimelineTrack>) => void;
@@ -784,6 +797,8 @@ function TrackHeader({
   onReorder?: (direction: "up" | "down") => void;
   canUp?: boolean;
   canDown?: boolean;
+  /** Present only for a lane that can actually go: empty, and not the last. */
+  onRemove?: () => void;
 }) {
   const dot = ACCENT_BY_KIND[track.kind];
   return (
@@ -796,6 +811,18 @@ function TrackHeader({
         <span className="min-w-0 flex-1 truncate font-semibold" title={track.label}>
           {track.label}
         </span>
+        {onRemove && (
+          <button
+            type="button"
+            aria-label={`Remove ${track.label}`}
+            title="Remove this empty layer"
+            onClick={onRemove}
+            className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+            style={{ color: C.muted }}
+          >
+            ✕
+          </button>
+        )}
         {onReorder && (
           <span className="flex shrink-0 flex-col leading-none opacity-0 transition-opacity group-hover:opacity-100">
             {(["up", "down"] as const).map((dir) => (

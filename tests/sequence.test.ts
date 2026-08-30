@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import type { StorageProvider } from "../src/lib/providers/types.ts";
 import type { SequenceServiceDeps } from "../src/lib/api/sequence.ts";
 import {
+  createSequenceTrack,
+  deleteSequenceTrack,
   createItemSchema,
   createSequenceItem,
   deleteSequenceItem,
@@ -80,6 +82,10 @@ function makeDeps(over: Partial<SequenceServiceDeps> = {}) {
       },
     },
     sequenceTrack: {
+      delete: async ({ where }) => {
+        tracks.delete(where.id);
+        return {};
+      },
       create: async ({ data }) => {
         const t = { id: id("t"), muted: false, locked: false, ...data };
         tracks.set(t.id, t);
@@ -395,4 +401,36 @@ test("a drop hint left of zero is taken as the start, not refused", async () => 
   const s = await getOrCreateClipSequence(deps, "c1");
   const moved = await updateSequenceItem(deps, s.items[0].id, { timelineStart: -2000 });
   assert.equal(moved.timelineStart, 0);
+});
+
+test("an empty layer can be removed, one holding pieces cannot", async () => {
+  const { deps } = makeDeps();
+  const s = await getOrCreateClipSequence(deps, "c1");
+  const withV2 = await createSequenceTrack(deps, s.id);
+  const v2 = withV2.tracks.find((t) => t.id !== s.tracks[0].id)!;
+
+  // Empty: goes.
+  const after = await deleteSequenceTrack(deps, s.id, v2.id);
+  assert.equal(after.tracks.length, 1);
+
+  // Holding a piece: refused, because tidying the panel must not delete work.
+  const again = await createSequenceTrack(deps, s.id);
+  const v2b = again.tracks.find((t) => t.id !== s.tracks[0].id)!;
+  await createSequenceItem(deps, s.id, {
+    trackId: v2b.id,
+    sourceVideoId: "v1",
+    timelineStart: 0,
+    sourceIn: 0,
+    sourceOut: 2_000,
+  });
+  await assert.rejects(() => deleteSequenceTrack(deps, s.id, v2b.id), /pieces somewhere else/);
+});
+
+test("the last video layer cannot be removed", async () => {
+  const { deps } = makeDeps();
+  const s = await getOrCreateClipSequence(deps, "c1");
+  await assert.rejects(
+    () => deleteSequenceTrack(deps, s.id, s.tracks[0].id),
+    /at least one video layer/,
+  );
 });

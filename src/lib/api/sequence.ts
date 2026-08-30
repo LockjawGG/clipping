@@ -178,6 +178,7 @@ export interface SequenceDb {
   };
   sequenceTrack: {
     create(a: { data: Record<string, unknown> }): Promise<TrackRow>;
+    delete(a: { where: { id: string } }): Promise<unknown>;
   };
   sequenceItem: {
     findUnique(a: { where: { id: string } }): Promise<ItemRow | null>;
@@ -534,6 +535,41 @@ export async function createSequenceTrack(
       name: `V${seq.tracks.filter((t) => t.kind === "VIDEO").length + 1}`,
     },
   });
+  const full = await deps.db.sequence.findUnique({
+    where: { id: sequenceId },
+    include: { tracks: true, items: true },
+  });
+  const clipLenMs = clip ? Math.max(1, clip.endMs - clip.startMs) : 1;
+  return withOverlays(deps, await toView(deps, full ?? seq), clipLenMs);
+}
+
+/**
+ * Remove an empty layer.
+ *
+ * Only an empty one, and never the last video lane. Deleting a lane that still
+ * holds pieces would throw away footage as a side effect of tidying the panel —
+ * the pieces have to be dragged somewhere first, which is a decision about the
+ * edit rather than about the layout.
+ */
+export async function deleteSequenceTrack(
+  deps: SequenceServiceDeps,
+  sequenceId: string,
+  trackId: string,
+): Promise<SequenceView> {
+  const seq = await ownedSequence(deps, sequenceId);
+  const track = seq.tracks.find((t) => t.id === trackId);
+  if (!track) throw new ApiError(404, "layer not found");
+
+  const videoTracks = seq.tracks.filter((t) => t.kind === "VIDEO");
+  if (track.kind === "VIDEO" && videoTracks.length <= 1) {
+    throw new ApiError(422, "a timeline needs at least one video layer");
+  }
+  if (seq.items.some((i) => i.trackId === trackId)) {
+    throw new ApiError(422, "move this layer's pieces somewhere else before removing it");
+  }
+
+  await deps.db.sequenceTrack.delete({ where: { id: trackId } });
+  const clip = await deps.db.clip.findUnique({ where: { id: seq.clipId } });
   const full = await deps.db.sequence.findUnique({
     where: { id: sequenceId },
     include: { tracks: true, items: true },

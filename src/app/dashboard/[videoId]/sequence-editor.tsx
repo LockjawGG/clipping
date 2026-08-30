@@ -227,6 +227,28 @@ export function SequenceEditor({
     }
   }, [seq?.id, load]);
 
+  /** Remove an empty lane, then refetch — the layout changes with it. */
+  const removeLayer = useCallback(
+    async (trackId: string) => {
+      const id = seq?.id;
+      if (!id) return;
+      setSave("saving");
+      try {
+        const r = await fetch(`/api/sequences/${id}/tracks/${trackId}`, { method: "DELETE" });
+        if (!r.ok) {
+          const body = (await r.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? "could not remove that layer");
+        }
+        setSave("saved");
+        setTimeout(() => setSave("idle"), 1500);
+        await load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "could not remove that layer");
+      }
+    },
+    [seq?.id, load],
+  );
+
   const flush = useCallback((id: string) => {
     const body = pending.current.get(id);
     pending.current.delete(id);
@@ -472,6 +494,7 @@ export function SequenceEditor({
         snap={seq.snap}
         onSnapChange={onSnapChange}
         onReorderTrack={onReorderTrack}
+        onRemoveTrack={(trackId) => void removeLayer(trackId)}
         onSplit={(id, atMs) => void onSplit(id, atMs)}
         onUndo={undo}
         onRedo={redo}
