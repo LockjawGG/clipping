@@ -740,6 +740,96 @@ export function buildCensorAudioArgs({
   ];
 }
 
+export interface VoiceoverLinePlacement {
+  /** Absolute path to this line's synthesized WAV. */
+  path: string;
+  startMs: number;
+  /** Playback rate; 1 leaves the line untouched. */
+  tempo: number;
+  /** Length after the tempo change, for the duck window. */
+  playedMs: number;
+}
+
+export interface VoiceoverMixArgs {
+  inputPath: string;
+  outputPath: string;
+  lines: VoiceoverLinePlacement[];
+  /** How far to duck the original audio while a line plays, in dB. 0 = never. */
+  duckDb?: number;
+}
+
+/**
+ * Mix synthesized voiceover lines over a clip's own audio.
+ *
+ * Each line is retimed with `atempo`, positioned with `adelay`, and mixed in.
+ * The original audio is ducked underneath rather than left at full level:
+ * narration over unducked dialogue is unusable, and doing it here means the
+ * caller never has to think about it.
+ *
+ * As with censoring, `amix` gets `normalize=0` — the default divides by the
+ * input count and would quietly drop the whole clip by several dB just because
+ * a voiceover exists.
+ */
+export function buildVoiceoverMixArgs({
+  inputPath,
+  outputPath,
+  lines,
+  duckDb = -12,
+}: VoiceoverMixArgs): string[] {
+  assertSafePath(inputPath);
+  assertSafePath(outputPath);
+  if (lines.length === 0) throw new Error("no voiceover lines");
+
+  const inputs: string[] = ["-y", "-i", inputPath];
+  const chains: string[] = [];
+  const labels: string[] = [];
+
+  lines.forEach((l, i) => {
+    assertSafePath(l.path);
+    inputs.push("-i", l.path);
+    const idx = i + 1;
+    const delay = Math.max(0, Math.round(l.startMs));
+    const steps: string[] = [];
+    // atempo accepts 0.5..100 directly in this ffmpeg, so no chaining is needed.
+    if (Math.abs(l.tempo - 1) > 0.001) steps.push(`atempo=${fgNum(l.tempo, 0.5, 100)}`);
+    // `all=1` applies the delay to every channel; without it only the first
+    // channel is delayed and a stereo line arrives smeared.
+    steps.push(`adelay=${delay}:all=1`);
+    chains.push(`[${idx}:a]${steps.join(",")}[vo${i}]`);
+    labels.push(`[vo${i}]`);
+  });
+
+  // Duck the source under every line's window.
+  const gain = Math.pow(10, Math.min(0, duckDb) / 20);
+  const spans = lines
+    .map((l) => {
+      const a = fgNum(Math.max(0, l.startMs) / 1000, 0, 1e6);
+      const b = fgNum(Math.max(0, l.startMs + l.playedMs) / 1000, 0, 1e6);
+      return `between(t,${a},${b})`;
+    })
+    .join("+");
+  chains.push(
+    duckDb < 0
+      ? `[0:a]volume='if(${spans},${gain.toFixed(4)},1)':eval=frame[bed]`
+      : `[0:a]anull[bed]`,
+  );
+
+  chains.push(
+    `[bed]${labels.join("")}amix=inputs=${lines.length + 1}:duration=first:dropout_transition=0:normalize=0[aout]`,
+  );
+
+  return [
+    ...inputs,
+    "-filter_complex", chains.join(";"),
+    "-map", "0:v?",
+    "-map", "[aout]",
+    "-c:v", "copy",
+    "-c:a", "aac",
+    "-movflags", "+faststart",
+    outputPath,
+  ];
+}
+
 export interface AudioFeatureArgs {
   /** The 16 kHz mono WAV the EXTRACT_AUDIO job already produced. */
   inputPath: string;

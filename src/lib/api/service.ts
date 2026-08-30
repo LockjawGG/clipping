@@ -17,6 +17,7 @@ import type { SequenceServiceDeps } from "./sequence.ts";
 import type { LiveServiceDeps } from "./live.ts";
 import type { WorkerServiceDeps } from "./worker.ts";
 import type { LearningServiceDeps } from "./learning.ts";
+import type { VoiceoverServiceDeps } from "./voiceover.ts";
 
 /** Throws 404 unless `projectId` belongs to `userId`. Shared by every service. */
 function ownsProject(userId: string) {
@@ -67,6 +68,15 @@ export function learningService(userId: string): LearningServiceDeps {
     db: db as unknown as LearningServiceDeps["db"],
     userId,
     assertProjectOwned: ownsProject(userId),
+  };
+}
+
+/** Voiceovers, scoped to the signed-in user. */
+export function voiceoverService(userId: string): VoiceoverServiceDeps {
+  return {
+    db: db as unknown as VoiceoverServiceDeps["db"],
+    assertProjectOwned: ownsProject(userId),
+    enqueue: (input) => enqueueJob(db, input),
   };
 }
 

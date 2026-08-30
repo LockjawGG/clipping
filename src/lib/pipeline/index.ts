@@ -10,6 +10,7 @@ import {
   thumbnailHandler,
   transcribeHandler,
   workerRunHandler,
+  voiceoverHandler,
 } from "./handlers.ts";
 import { liveFinalizeHandler, liveTranscribeHandler } from "./live-handlers.ts";
 import { translateHandler } from "./translate-handler.ts";
@@ -25,6 +26,7 @@ export {
   renderHandler,
   thumbnailHandler,
   workerRunHandler,
+  voiceoverHandler,
 } from "./handlers.ts";
 export { liveTranscribeHandler, liveFinalizeHandler } from "./live-handlers.ts";
 export { translateHandler } from "./translate-handler.ts";
@@ -43,4 +45,5 @@ export const PIPELINE_HANDLERS: JobHandlerMap<PipelineDeps> = {
   TRANSLATE: translateHandler,
   AUDIO_FEATURES: audioFeaturesHandler,
   WORKER_RUN: workerRunHandler,
+  VOICEOVER: voiceoverHandler,
 };

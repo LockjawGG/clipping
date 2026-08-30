@@ -12,6 +12,7 @@ import { RemotionCaptionRenderer } from "./remotion.ts";
 import { getStorage } from "../storage/index.ts";
 import { getTranscription } from "../transcription/index.ts";
 import { getAnalysis } from "../analysis/index.ts";
+import { getTts } from "../tts/index.ts";
 import { enqueueJob } from "../jobs/prisma-store.ts";
 import { join } from "node:path";
 
@@ -28,6 +29,7 @@ import type {
   ThumbnailRepo,
   TranscriptRepo,
   VideoRepo,
+  VoiceoverRepo,
   WorkerRepo,
   WorkerRunTarget,
 } from "./deps.ts";
@@ -317,6 +319,12 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
               censorReplacement: true,
               censorAllowList: true,
               censorDenyList: true,
+              voiceovers: {
+                where: { status: "COMPLETED" },
+                orderBy: { updatedAt: "desc" },
+                take: 1,
+                select: { linesJson: true, duckDb: true },
+              },
               focalY: true,
               videoId: true,
               subtitleConfig: {
@@ -375,6 +383,12 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
         focalX: render.clip.focalX,
         focalY: render.clip.focalY,
         focusTrackJson: render.clip.focusTrackJson,
+        voiceover: render.clip.voiceovers[0]
+          ? {
+              linesJson: render.clip.voiceovers[0].linesJson,
+              duckDb: render.clip.voiceovers[0].duckDb,
+            }
+          : null,
         censor: {
           enabled: render.clip.censorEnabled,
           sensitivity: render.clip.censorSensitivity as "LOW" | "MEDIUM" | "HIGH",
@@ -534,6 +548,55 @@ export function prismaWorkerRepo(client: PrismaClient): WorkerRepo {
   };
 }
 
+export function prismaVoiceoverRepo(client: PrismaClient): VoiceoverRepo {
+  return {
+    async load(voiceoverId) {
+      const vo = await client.voiceover.findUnique({
+        where: { id: voiceoverId },
+        select: {
+          id: true,
+          sourceKind: true,
+          script: true,
+          language: true,
+          voiceId: true,
+          speed: true,
+          linesJson: true,
+          clip: { select: { id: true, videoId: true, startMs: true, endMs: true } },
+        },
+      });
+      if (!vo) return null;
+      return {
+        voiceoverId: vo.id,
+        clipId: vo.clip.id,
+        videoId: vo.clip.videoId,
+        startMs: vo.clip.startMs,
+        endMs: vo.clip.endMs,
+        sourceKind: vo.sourceKind,
+        script: vo.script,
+        language: vo.language,
+        voiceId: vo.voiceId,
+        speed: vo.speed,
+        linesJson: vo.linesJson,
+      };
+    },
+    async begin(voiceoverId) {
+      await client.voiceover.update({ where: { id: voiceoverId }, data: { status: "PROCESSING" } });
+    },
+    async complete(voiceoverId, linesJson) {
+      await client.voiceover.update({
+        where: { id: voiceoverId },
+        data: { status: "COMPLETED", linesJson, errorMessage: null },
+      });
+    },
+    async fail(voiceoverId, message) {
+      await client.voiceover.update({
+        where: { id: voiceoverId },
+        data: { status: "FAILED", errorMessage: message.slice(0, 2000) },
+      });
+    },
+  };
+}
+
 export function prismaThumbnailRepo(client: PrismaClient): ThumbnailRepo {
   const shape = {
     startMs: true,
@@ -628,6 +691,8 @@ export function buildPipelineDeps(): PipelineDeps {
     renders: prismaRenderRepo(db),
     thumbnails: prismaThumbnailRepo(db),
     workers: prismaWorkerRepo(db),
+    voiceovers: prismaVoiceoverRepo(db),
+    tts: getTts(),
     liveChunks: prismaLiveChunkRepo(db),
     captions: new RemotionCaptionRenderer(),
     faces: new NullFaceDetector(),

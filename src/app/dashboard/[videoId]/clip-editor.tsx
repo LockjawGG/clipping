@@ -10,6 +10,7 @@ import { CaptionControls, CAPTION_DEFAULTS, type CaptionConfig } from "./caption
 import { ClipPlayer, type PreviewWord } from "./clip-player";
 import { KEYFRAME_SNAP_MS } from "./focus-window";
 import { CensorControls, type CensorSettings } from "./censor-controls";
+import { VoiceoverPanel } from "./voiceover-panel";
 import { censoredIndices } from "@/lib/censor/detect.ts";
 import { maskWords } from "@/lib/censor/mask.ts";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
@@ -1293,6 +1294,8 @@ export function ClipEditor({
           )}
         </div>
       )}
+
+      <VoiceoverPanel clipId={clip.id} />
 
       <div className="rounded-lg bg-surface-raised px-3 py-2">
         <CensorControls

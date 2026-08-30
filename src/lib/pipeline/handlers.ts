@@ -10,6 +10,13 @@ import { parseAudioFeatures, parseStoredFeatures, serializeFeatures } from "../a
 import { buildSuggestions } from "../worker-ai/suggest.ts";
 import { parseProfile } from "../learning/profile.ts";
 import { clipLengthBias } from "../learning/apply.ts";
+import {
+  parseLines,
+  placeLines,
+  serializeLines,
+  staleLines,
+  type VoiceLine,
+} from "../voiceover/sync.ts";
 import { censoredIndices, detectSpans } from "../censor/detect.ts";
 import { maskWords } from "../censor/mask.ts";
 import { ASPECT_DIMENSIONS, type CaptionBurnStyle } from "../ffmpeg/args.ts";
@@ -181,6 +188,84 @@ export const audioFeaturesHandler: JobHandler<PipelineDeps> = async ({
     silences: features.silences.length,
     durationMs: features.durationMs,
   };
+};
+
+interface VoiceoverPayload {
+  voiceoverId?: string;
+}
+
+/**
+ * VOICEOVER: synthesize the lines a clip's narration needs.
+ *
+ * Only lines that are new or whose text changed are sent to the provider —
+ * moving a clip does not re-synthesize anything, because position is resolved
+ * from the anchor at render time rather than baked in here.
+ */
+export const voiceoverHandler: JobHandler<PipelineDeps> = async ({
+  job,
+  deps,
+  signal,
+  setProgress,
+}) => {
+  const { voiceoverId } = (job.payload ?? {}) as VoiceoverPayload;
+  if (!voiceoverId) throw new Error("VOICEOVER job payload is missing voiceoverId");
+
+  const target = await deps.voiceovers.load(voiceoverId);
+  if (!target) throw new Error(`voiceover ${voiceoverId} not found`);
+
+  await deps.voiceovers.begin(voiceoverId);
+  const work = jobWorkDir(deps.tempDir, job.id);
+  try {
+    // Build the text to speak, keyed by the anchor it belongs to.
+    const wanted = new Map<string, string>();
+    if (target.sourceKind === "SCRIPT") {
+      // A script has no anchors of its own, so its lines are pinned to evenly
+      // spaced points across the clip.
+      const parts = (target.script ?? "")
+        .split(/\r?\n+/)
+        .map((t) => t.trim())
+        .filter(Boolean);
+      parts.forEach((text, i) => wanted.set(`script:${i}`, text));
+    } else {
+      const segments = await deps.transcripts.loadSegments(target.videoId);
+      segments
+        .filter((sg) => sg.endMs > target.startMs && sg.startMs < target.endMs)
+        .forEach((sg, i) => {
+          const text = sg.text.trim();
+          if (text) wanted.set(`seg:${i}`, text);
+        });
+    }
+
+    const existing = parseLines(target.linesJson);
+    const stale = new Set(staleLines(existing, wanted).map((l) => l.ref));
+    // Keep what is still valid; drop lines whose anchor no longer exists.
+    const kept = existing.filter((l) => wanted.has(l.ref) && !stale.has(l.ref));
+    const todo = [...wanted.entries()].filter(([ref]) => !kept.some((l) => l.ref === ref));
+
+    const lines: VoiceLine[] = [...kept];
+    let done = 0;
+    for (const [ref, text] of todo) {
+      const out = scratchPath(work, `vo-${ref.replace(/[^\w]/g, "_")}.wav`);
+      const result = await deps.tts.synthesize(text, out, {
+        voiceId: target.voiceId || undefined,
+        language: target.language,
+        speed: target.speed,
+        signal,
+      });
+      const key = `voiceovers/${voiceoverId}/${ref.replace(/[^\w]/g, "_")}.wav`;
+      await deps.storage.putFile(key, result.audioPath, "audio/wav");
+      lines.push({ ref, text, durationMs: result.durationMs, audioKey: key });
+      done++;
+      await setProgress(todo.length ? 0.1 + (done / todo.length) * 0.85 : 0.95);
+    }
+
+    lines.sort((a, b) => a.ref.localeCompare(b.ref, undefined, { numeric: true }));
+    await deps.voiceovers.complete(voiceoverId, serializeLines(lines));
+    return { lines: lines.length, synthesized: todo.length, reused: kept.length };
+  } catch (err) {
+    await deps.voiceovers.fail(voiceoverId, err instanceof Error ? err.message : String(err));
+    throw err;
+  }
 };
 
 interface WorkerRunPayload {
@@ -480,6 +565,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     const source = await deps.source.ensureLocal(target.videoId, target.sourceKey, signal);
     const cut = scratchPath(work, "cut.mp4");
     const censored = scratchPath(work, "censored.mp4");
+    const narrated = scratchPath(work, "narrated.mp4");
     const reframed = scratchPath(work, "reframed.mp4");
     const captioned = scratchPath(work, "captioned.mp4");
     await setProgress(0.2);
@@ -528,6 +614,53 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
           signal,
         );
         staged = censored;
+      }
+    }
+
+    // Mix the voiceover onto the same staged audio, after censoring so the
+    // narration is never bleeped and before the reframe so `-c:a copy` carries
+    // it through everything downstream.
+    if (target.voiceover) {
+      // `clipMs` is declared further down with the reframe logic; the voiceover
+      // pass runs before it, so derive the length here.
+      const voClipMs = target.endMs - target.startMs;
+      const stored = parseLines(target.voiceover.linesJson);
+      if (stored.length > 0) {
+        const segments = await deps.transcripts.loadSegments(target.videoId);
+        // Anchors are resolved *now*, from the clip's current timing — that is
+        // what lets an edit move the narration without re-synthesizing it.
+        const anchors = segments
+          .filter((sg) => sg.endMs > target.startMs && sg.startMs < target.endMs)
+          .map((sg, i) => ({
+            ref: `seg:${i}`,
+            startMs: Math.max(0, sg.startMs - target.startMs),
+            endMs: Math.max(0, sg.endMs - target.startMs),
+          }));
+        const scriptAnchors = stored
+          .filter((l) => l.ref.startsWith("script:"))
+          .map((l, i, all) => {
+            const step = voClipMs / Math.max(1, all.length);
+            return { ref: l.ref, startMs: Math.round(i * step), endMs: Math.round((i + 1) * step) };
+          });
+
+        const placed = placeLines(stored, [...anchors, ...scriptAnchors], { durationMs: voClipMs });
+        if (placed.length > 0) {
+          const files = await Promise.all(
+            placed.map(async (p, i) => {
+              const local = scratchPath(work, `voline-${i}.wav`);
+              await mkdir(dirname(local), { recursive: true });
+              await deps.storage.getToFile(p.audioKey, local);
+              return { path: local, startMs: p.startMs, tempo: p.tempo, playedMs: p.playedMs };
+            }),
+          );
+          await deps.ffmpeg.mixVoiceover(
+            staged,
+            narrated,
+            { lines: files, duckDb: target.voiceover.duckDb },
+            signal,
+          );
+          staged = narrated;
+        }
       }
     }
 

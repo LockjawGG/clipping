@@ -48,6 +48,16 @@ const schema = z.object({
    * recording so detection is reliable, and any language is transcribed.
    */
   LIVE_LANGUAGE: z.string().default(""),
+  // Text-to-speech for voiceovers. Local-first by default: Piper is a CLI
+  // binary with offline multilingual voices, the same integration shape as
+  // WHISPER_BINARY.
+  TTS_PROVIDER: z.enum(["piper-local"]).default("piper-local"),
+  PIPER_BINARY: z.string().default("piper"),
+  /** Directory of `*.onnx` Piper voice models. */
+  PIPER_VOICE_DIR: z.string().default("./.voices"),
+  /** Voice id used when a request does not name one. */
+  PIPER_VOICE: z.string().default(""),
+
   OPENAI_API_KEY: z.string().optional(),
   DEEPGRAM_API_KEY: z.string().optional(),
 

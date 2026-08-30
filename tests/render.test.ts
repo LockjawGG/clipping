@@ -63,6 +63,7 @@ interface Spy {
   }>;
   composed: OverlayCompositeOptions[];
   censors: Array<{ input: string; mode: string; spans: Array<{ startSec: number; endSec: number }> }>;
+  voMixes: Array<{ input: string; duckDb?: number; lines: Array<{ startMs: number; tempo: number }> }>;
   evicted: string[];
 }
 
@@ -82,6 +83,7 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
     captioned: [],
     composed: [],
     censors: [],
+    voMixes: [],
     evicted: [],
   };
   const deps = {
@@ -124,6 +126,13 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
         opts: { spans: Array<{ startSec: number; endSec: number }>; mode: string },
       ) => {
         spy.censors.push({ input: i, mode: opts.mode, spans: opts.spans });
+      },
+      mixVoiceover: async (
+        i: string,
+        _o: string,
+        opts: { lines: Array<{ startMs: number; tempo: number }>; duckDb?: number },
+      ) => {
+        spy.voMixes.push({ input: i, duckDb: opts.duckDb, lines: opts.lines });
       },
       thumbnail: async () => {},
       composeOverlays: async (_i: string, _o: string, opts: OverlayCompositeOptions) => {
@@ -231,6 +240,7 @@ function target(over: Partial<RenderTarget> = {}): RenderTarget {
     focalX: 0.5,
     focalY: 0.4,
     focusTrackJson: null,
+    voiceover: null,
     censor: {
       enabled: false,
       sensitivity: "MEDIUM",
@@ -436,6 +446,82 @@ test("censoring works with captions off — the words only drive the bleep", asy
   await renderHandler(ctx(deps, { renderId: "r-nocap" }));
   assert.equal(spy.censors.length, 1);
   assert.equal(spy.captioned.length, 0, "no caption pass was triggered");
+});
+
+test("a voiceover is mixed onto the cut, after censoring and before the reframe", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "render-vo-"));
+  try {
+    const { deps, spy } = makeDeps(
+      target({
+        voiceover: {
+          duckDb: -9,
+          linesJson: JSON.stringify({
+            version: 1,
+            lines: [
+              { ref: "seg:0", text: "narration", durationMs: 800, audioKey: "vo/a.wav" },
+            ],
+          }),
+        },
+      }),
+      {
+        tempDir: dir,
+        transcripts: {
+          save: async () => ({ segmentCount: 0 }),
+          loadSegments: async () => [
+            {
+              startMs: 0,
+              endMs: 40_000,
+              text: "hello",
+              words: [{ id: "w1", text: "hello", startMs: 12_000, endMs: 12_500 }],
+            },
+          ],
+        },
+      } as unknown as Partial<PipelineDeps>,
+    );
+    await renderHandler(ctx(deps, { renderId: "r-vo" }));
+
+    assert.equal(spy.voMixes.length, 1);
+    assert.equal(spy.voMixes[0].duckDb, -9, "the clip's own ducking level is used");
+    // The segment starts at 0ms absolute; the clip starts at 10s, so the line
+    // is placed at 0 on the clip's own timeline.
+    assert.equal(spy.voMixes[0].lines[0].startMs, 0);
+    // 800ms into a 28s window needs no speed-up.
+    assert.equal(spy.voMixes[0].lines[0].tempo, 1);
+    // Mixed onto the cut (nothing was censored here), and the reframe then
+    // reads the narrated file.
+    assert.match(spy.voMixes[0].input, /cut\.mp4$/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a clip with no voiceover runs no mix pass", async () => {
+  const { deps, spy } = makeDeps(target());
+  await renderHandler(ctx(deps, { renderId: "r-novo" }));
+  assert.equal(spy.voMixes.length, 0);
+});
+
+test("voiceover lines whose anchor is gone are dropped rather than misplaced", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "render-vo2-"));
+  try {
+    const { deps, spy } = makeDeps(
+      target({
+        voiceover: {
+          duckDb: -12,
+          linesJson: JSON.stringify({
+            version: 1,
+            lines: [{ ref: "seg:99", text: "orphan", durationMs: 500, audioKey: "vo/x.wav" }],
+          }),
+        },
+      }),
+      { tempDir: dir } as unknown as Partial<PipelineDeps>,
+    );
+    await renderHandler(ctx(deps, { renderId: "r-vo3" }));
+    // Nothing placed -> no mix at all, rather than narration at the wrong time.
+    assert.equal(spy.voMixes.length, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("no overlays -> no composite pass", async () => {

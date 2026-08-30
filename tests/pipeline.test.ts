@@ -97,6 +97,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       reframeTracked: async () => {},
     reframeZoom: async () => {},
     censorAudio: async () => {},
+    mixVoiceover: async () => {},
     audioFeatures: async () => {},
       thumbnail: async () => {},
       composeOverlays: async () => {},
@@ -182,6 +183,17 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       begin: async () => {},
       complete: async () => {},
       fail: async () => {},
+    },
+    voiceovers: {
+      load: async () => null,
+      begin: async () => {},
+      complete: async () => {},
+      fail: async () => {},
+    },
+    tts: {
+      name: "fake",
+      voices: async () => [],
+      synthesize: async () => ({ audioPath: "", durationMs: 0, provider: "fake", voiceId: "v" }),
     },
     workers: {
       loadRun: async () => null,

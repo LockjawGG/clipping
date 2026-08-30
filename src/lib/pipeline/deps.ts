@@ -6,6 +6,7 @@ import type { WordRule } from "../captions/word-rules.ts";
 import type { FaceDetector } from "../faces/detector.ts";
 import type { MediaFetcher } from "./fetcher.ts";
 import type { CaptionRenderer } from "./remotion.ts";
+import type { TtsProvider } from "../tts/types.ts";
 import type { JobKind } from "../jobs/types.ts";
 import type {
   AnalysisProvider,
@@ -92,6 +93,8 @@ export interface RenderTarget {
   focusTrackJson: string | null;
   /** Censor settings. Detections are derived from the transcript, not stored. */
   censor: RenderCensorConfig;
+  /** Completed voiceover lines to mix in, with the clip's own ducking level. */
+  voiceover: { linesJson: string | null; duckDb: number } | null;
   quality: "P720" | "P1080" | "ORIGINAL";
   burnCaptions: boolean;
   /** Prisma CaptionAnimation enum value; "NONE" means a static ffmpeg burn. */
@@ -209,6 +212,29 @@ export interface WorkerRepo {
   fail(runId: string, message: string): Promise<void>;
 }
 
+/** What the VOICEOVER handler needs, and where it puts the result. */
+export interface VoiceoverTarget {
+  voiceoverId: string;
+  clipId: string;
+  videoId: string;
+  startMs: number;
+  endMs: number;
+  sourceKind: string;
+  script: string | null;
+  language: string;
+  voiceId: string;
+  speed: number;
+  /** Already-synthesized lines, so unchanged text is not redone. */
+  linesJson: string | null;
+}
+
+export interface VoiceoverRepo {
+  load(voiceoverId: string): Promise<VoiceoverTarget | null>;
+  begin(voiceoverId: string): Promise<void>;
+  complete(voiceoverId: string, linesJson: string | null): Promise<void>;
+  fail(voiceoverId: string, message: string): Promise<void>;
+}
+
 export interface ThumbnailTarget {
   clipId: string;
   sourceKey: string;
@@ -298,6 +324,9 @@ export interface PipelineDeps {
   renders: RenderRepo;
   thumbnails: ThumbnailRepo;
   workers: WorkerRepo;
+  voiceovers: VoiceoverRepo;
+  /** Text-to-speech. Throws ProviderUnavailableError when unconfigured. */
+  tts: TtsProvider;
   liveChunks: LiveChunkRepo;
   captions: CaptionRenderer;
   faces: FaceDetector;

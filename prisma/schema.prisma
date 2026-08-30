@@ -374,6 +374,7 @@ model Clip {
   wordStyles     CaptionWordStyle[]
   sequence       Sequence?
   trainingExamples TrainingExample[]
+  voiceovers     Voiceover[]
 
   @@index([videoId, startMs])
   @@index([savedToProjectId])
@@ -679,6 +680,36 @@ model SuggestionFeedback {
   @@map("suggestion_feedback")
 }
 
+/// A generated voiceover for one clip.
+///
+/// Stored as *lines*, each anchored to the transcript segment or caption cue it
+/// was generated from, so editing the clip moves the narration with it instead
+/// of desynchronising it. See lib/voiceover/sync.ts.
+model Voiceover {
+  id     String @id @default(cuid())
+  clipId String
+  /// TRANSCRIPT | CAPTIONS | SCRIPT
+  sourceKind String @default("TRANSCRIPT")
+  /// Freeform text for SCRIPT; unused for the derived sources.
+  script   String?
+  language String  @default("en")
+  voiceId  String  @default("")
+  speed    Float   @default(1.0)
+  /// dB the clip's own audio is ducked by while a line plays. 0 = no ducking.
+  duckDb   Float   @default(-12)
+  /// JSON `{ version, lines }` — see lib/voiceover/sync.ts.
+  linesJson String?
+  status    JobStatus @default(QUEUED)
+  errorMessage String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clip Clip @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@index([clipId])
+  @@map("voiceovers")
+}
+
 enum SuggestionStatus {
   PENDING
   ACCEPTED
@@ -757,6 +788,8 @@ enum JobKind {
   WORKER_RUN
   // Rebuild a user's style profile from their approved training examples.
   TRAIN_PROFILE
+  // Synthesize a clip's voiceover lines.
+  VOICEOVER
 }
 
 model Job {

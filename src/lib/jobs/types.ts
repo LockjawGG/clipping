@@ -27,7 +27,8 @@ export type JobKind =
   | "TRANSLATE"
   | "AUDIO_FEATURES"
   | "WORKER_RUN"
-  | "TRAIN_PROFILE";
+  | "TRAIN_PROFILE"
+  | "VOICEOVER";
 
 export interface JobRecord {
   id: string;

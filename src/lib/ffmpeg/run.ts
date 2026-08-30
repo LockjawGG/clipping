@@ -21,6 +21,8 @@ import {
   buildZoomReframeArgs,
   buildAudioFeatureArgs,
   buildCensorAudioArgs,
+  buildVoiceoverMixArgs,
+  type VoiceoverLinePlacement,
   type AudioCensorMode,
   type CensorSpanSec,
 } from "./args.ts";
@@ -153,6 +155,12 @@ export interface CensorAudioOptions {
   mode: AudioCensorMode;
 }
 
+/** Voiceover lines to mix over a clip's own audio. */
+export interface VoiceoverMixOptions {
+  lines: VoiceoverLinePlacement[];
+  duckDb?: number;
+}
+
 export interface OverlayCompositeOptions {
   /** Frame width of `inputPath`; overlay sizes scale off it. */
   frameWidth: number;
@@ -198,6 +206,13 @@ export interface Ffmpeg {
     inputPath: string,
     metadataPath: string,
     opts?: { stepMs?: number },
+    signal?: AbortSignal,
+  ): Promise<void>;
+  /** Mix synthesized voiceover lines over the clip's audio. */
+  mixVoiceover(
+    inputPath: string,
+    outputPath: string,
+    opts: VoiceoverMixOptions,
     signal?: AbortSignal,
   ): Promise<void>;
   /** Bleep / mute the audio inside a set of windows. */
@@ -321,6 +336,20 @@ export class FfmpegRunner implements Ffmpeg {
     await this.exec(
       this.ffmpegPath,
       buildAudioFeatureArgs({ inputPath, metadataPath, stepMs: opts.stepMs }),
+      signal,
+    );
+  }
+
+  async mixVoiceover(
+    inputPath: string,
+    outputPath: string,
+    opts: VoiceoverMixOptions,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await this.exec(
+      this.ffmpegPath,
+      buildVoiceoverMixArgs({ inputPath, outputPath, lines: opts.lines, duckDb: opts.duckDb }),
       signal,
     );
   }
