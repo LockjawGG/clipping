@@ -257,6 +257,7 @@ function target(over: Partial<RenderTarget> = {}): RenderTarget {
     focalX: 0.5,
     focalY: 0.4,
     focusTrackJson: null,
+    removedWordIds: [],
     voiceover: null,
     sequence: null,
     censor: {
@@ -1365,4 +1366,111 @@ test("narration anchored to footage that was cut is not placed anyway", async ()
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+// --- Interior cuts: words struck out of the middle -------------------------
+//
+// CENSOR_WORDS on a 10s-38s clip: well 11.0-11.3, shit 12.0-12.4,
+// that 13.0-13.3, worked 14.0-14.4. Striking "shit" takes it plus 250ms of the
+// silence either side (the gaps are 700ms and 600ms, so the cap applies), i.e.
+// 11.75s-12.65s — 900ms out of a 28s clip.
+
+test("a struck word is cut out and the clip is joined back together", async () => {
+  const { deps, spy } = makeDeps(
+    target({ removedWordIds: ["c2"] }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-cut" }));
+
+  assert.deepEqual(
+    spy.cuts.map((c) => [c.startMs, c.endMs]),
+    [[10_000, 11_750], [12_650, 38_000]],
+    "the clip is cut either side of the struck word",
+  );
+  assert.equal(spy.concats.length, 1, "and the two halves are joined");
+  assert.equal(spy.concats[0].pieces.length, 2);
+  assert.equal(spy.concats[0].reencode, false, "one source, so the join streams");
+});
+
+test("striking a word shortens the render by exactly what it removed", async () => {
+  const { deps, spy } = makeDeps(
+    target({ removedWordIds: ["c2"], burnCaptions: true, captionAnimation: "POP" }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-cut-len" }));
+
+  assert.equal(spy.captioned[0].durationMs, 28_000 - 900);
+});
+
+test("the struck word leaves the captions, and the rest moves up to meet it", async () => {
+  const { deps, spy } = makeDeps(
+    target({ removedWordIds: ["c2"], burnCaptions: true, captionAnimation: "POP" }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-cut-cap" }));
+
+  const cues = JSON.parse(spy.captioned[0].cueText) as Array<{ startMs: number; lines: string[] }>;
+  const said = cues.flatMap((c) => c.lines.join(" ").split(/\s+/)).filter(Boolean);
+  assert.ok(!said.includes("shit"), `struck word still captioned: ${said.join(" ")}`);
+  assert.deepEqual(said, ["well", "that", "worked"]);
+  // "that" was spoken at 13.0s, 3.0s into the clip; it now lands 900ms earlier.
+  const that = cues.find((c) => c.lines.join(" ").includes("that"));
+  assert.equal(that?.startMs, 3_000 - 900);
+});
+
+test("a word that is both struck and censored is simply gone, not bleeped", async () => {
+  const { deps, spy } = makeDeps(
+    target({ removedWordIds: ["c2"], censor: censorOn }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-cut-censor" }));
+
+  // Bleeping a stretch that is no longer in the video would land the tone on
+  // whatever the cut spliced in after it.
+  assert.equal(spy.censors.length, 0, "nothing left to bleep");
+});
+
+test("overlay windows move back with the cut so they stay on their moment", async () => {
+  const { deps, spy } = makeDeps(
+    target({
+      removedWordIds: ["c2"],
+      overlays: [
+        // Pinned to 5s-7s into the clip, which is after the 900ms that goes.
+        { storageKey: "assets/image/a.png", animated: false, x: 0.5, y: 0.2, scale: 1, rotation: 0, opacity: 1, startMs: 5_000, endMs: 7_000, animationJson: null },
+        // No window at all: nothing to move.
+        { storageKey: "assets/gif/b.gif", animated: true, x: 0.1, y: 0.9, scale: 0.5, rotation: 0, opacity: 1, startMs: null, endMs: null, animationJson: null },
+      ],
+    }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-cut-ov" }));
+
+  assert.deepEqual(
+    spy.composed[0].items.map((i) => [i.startSec, i.endSec]),
+    [[4.1, 6.1], [null, null]],
+  );
+});
+
+test("striking every word refuses the render instead of exporting nothing", async () => {
+  const { deps } = makeDeps(
+    target({ startMs: 11_000, endMs: 11_300, removedWordIds: ["c1"] }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await assert.rejects(
+    renderHandler(ctx(deps, { renderId: "r-cut-all" })),
+    /struck out/,
+  );
+});
+
+test("ids that match nothing leave the render exactly as it was", async () => {
+  const { deps, spy } = makeDeps(
+    // A word deleted from the transcript since it was struck is not a reason
+    // to refuse to export, or to take the slow multi-piece path.
+    target({ removedWordIds: ["gone-from-the-transcript"] }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-cut-none" }));
+
+  assert.deepEqual(spy.cuts.map((c) => [c.startMs, c.endMs]), [[10_000, 38_000]]);
+  assert.equal(spy.concats.length, 0, "one piece needs no join");
 });

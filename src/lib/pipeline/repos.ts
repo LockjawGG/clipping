@@ -312,6 +312,7 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
               aspectRatio: true,
               focalX: true,
               focusTrackJson: true,
+              removedWordIds: true,
               censorEnabled: true,
               censorSensitivity: true,
               censorCaptionMode: true,
@@ -401,6 +402,7 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
         focalX: render.clip.focalX,
         focalY: render.clip.focalY,
         focusTrackJson: render.clip.focusTrackJson,
+        removedWordIds: render.clip.removedWordIds,
         voiceover: render.clip.voiceovers[0]
           ? {
               linesJson: render.clip.voiceovers[0].linesJson,

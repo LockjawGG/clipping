@@ -99,6 +99,12 @@ export interface RenderTarget {
    * single item that is exactly the clip's window, means render as before.
    */
   sequence: RenderSequence | null;
+  /**
+   * Transcript word ids struck out in the editor. The renderer cuts these
+   * stretches out of the middle and closes the clip up around them, which is a
+   * different edit from censoring: this shortens the clip, censoring does not.
+   */
+  removedWordIds: string[];
   /** Completed voiceover lines to mix in, with the clip's own ducking level. */
   voiceover: { linesJson: string | null; duckDb: number } | null;
   quality: "P720" | "P1080" | "ORIGINAL";

@@ -15,6 +15,7 @@ import { bleepedIndices, censoredIndices } from "@/lib/censor/detect.ts";
 import type { CensorWordOverride, CensorWordOverrides } from "@/lib/censor/overrides.ts";
 import { type CaptionCensorMode, maskWords } from "@/lib/censor/mask.ts";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
+import { cutDurationMs, cutSpansForWords } from "@/lib/sequence/cuts.ts";
 import type { TranscriptView } from "../editor-pane";
 import { TRANSLATE_TARGETS } from "@/lib/translation/targets";
 import { OverlayPanel, type OverlayView } from "./overlay-panel";
@@ -74,6 +75,8 @@ export interface ClipData {
   censorAudioExemptWordIds: string[];
   censorAudioForceWordIds: string[];
   censorWordOverrides: CensorWordOverrides;
+  /** Transcript word ids struck out of the middle; the render cuts them. */
+  removedWordIds: string[];
   accepted: boolean;
   savedToProjectId: string | null;
   captions: CaptionConfig | null;
@@ -96,6 +99,11 @@ export interface ClipData {
 }
 
 const s = (ms: number) => (ms / 1000).toFixed(1);
+/** m:ss.s, for a position measured from the start of the clip. */
+const at = (ms: number) => {
+  const t = Math.max(0, ms) / 1000;
+  return `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
+};
 /** Order-sensitive equality for the censor word lists. */
 const sameList = (a: string[], b: string[]) =>
   a.length === b.length && a.every((x, i) => x === b[i]);
@@ -458,6 +466,39 @@ export function ClipEditor({
   );
 
   /**
+   * Strike words out of the middle of the clip, or put them back.
+   *
+   * Stored as a plain id list rather than as timeline pieces: the cut is
+   * derived from the word's own timing at render time, so correcting a
+   * transcript timing or re-trimming the clip keeps the cut on its word.
+   */
+  const cutWordIds = useMemo(() => new Set(draft.removedWordIds), [draft.removedWordIds]);
+  /**
+   * The stretches the render will drop, for the preview to skip over.
+   *
+   * Clip-relative, because `words` is: the page hands this component word times
+   * already rebased onto the clip. Built by the same function the renderer
+   * uses, which is what makes "the preview plays what the export contains" true
+   * rather than approximately true.
+   */
+  const cutSpans = useMemo(
+    () => cutSpansForWords(words, draft.removedWordIds, "self"),
+    [words, draft.removedWordIds],
+  );
+  const setWordsCut = useCallback((wordIds: string[], cut: boolean) => {
+    if (wordIds.length === 0) return;
+    setDraft((d) => {
+      const next = new Set(d.removedWordIds);
+      for (const id of wordIds) {
+        if (cut) next.add(id);
+        else next.delete(id);
+      }
+      return { ...d, removedWordIds: [...next] };
+    });
+  }, []);
+
+
+  /**
    * Set a per-word censor setting on specific occurrences.
    *
    * `null` clears a field, which is not the same as setting it to the clip's
@@ -497,18 +538,22 @@ export function ClipEditor({
    * appeared at all.
    */
   const previewWords = useMemo(() => {
-    const flagged = censoredIndices(words, censorCfg);
-    if (flagged.size === 0) return words;
+    // A struck word is not in the export, so it is not in the preview captions
+    // either — masking or bleeping something that was cut would describe a
+    // render that will never happen.
+    const shown = cutWordIds.size === 0 ? words : words.filter((w) => !cutWordIds.has(w.id));
+    const flagged = censoredIndices(shown, censorCfg);
+    if (flagged.size === 0) return shown;
 
     const perWord = new Map<number, { mode?: CaptionCensorMode; replacement?: string | null }>();
     for (const index of flagged) {
-      const own = draft.censorWordOverrides[words[index].id];
+      const own = draft.censorWordOverrides[shown[index].id];
       if (own?.captionMode || own?.replacement != null) {
         perWord.set(index, { mode: own.captionMode, replacement: own.replacement });
       }
     }
     return maskWords(
-      words,
+      shown,
       flagged,
       draft.censorCaptionMode,
       draft.censorReplacement ?? undefined,
@@ -516,6 +561,7 @@ export function ClipEditor({
     );
   }, [
     words,
+    cutWordIds,
     censorCfg,
     draft.censorCaptionMode,
     draft.censorReplacement,
@@ -671,6 +717,45 @@ export function ClipEditor({
   // individual words; keyed by word id so text edits keep the styling). ---
   const [wordStyles, setWordStyles] = useState<Record<string, WordStyle>>(serverWordStyles);
   const [selectedWords, setSelectedWords] = useState<Set<string>>(() => new Set());
+
+  /**
+   * What the cuts take out, and what cutting the selection would take out on
+   * top of it.
+   *
+   * Measured with the same functions the renderer uses, so the seconds shown
+   * here are the seconds the export loses — including the silence either side
+   * of a struck word, which is most of the difference on a short one.
+   */
+  const cutSummary = useMemo(() => {
+    const words = transcript.flatMap((r) => r.words);
+    const inClip = (w: { startMs: number; endMs: number }) =>
+      w.endMs > draft.startMs && w.startMs < draft.endMs;
+    const struck = words.filter((w) => cutWordIds.has(w.id) && inClip(w));
+    const pending = words.filter(
+      (w) => selectedWords.has(w.id) && !cutWordIds.has(w.id) && inClip(w),
+    );
+    const clipAsOnePiece = [
+      {
+        sourceVideoId: "self",
+        sourceStorageKey: null,
+        sourceIn: draft.startMs,
+        sourceOut: draft.endMs,
+        timelineStart: 0,
+        durationMs: draft.endMs - draft.startMs,
+      },
+    ];
+    const lost = (ids: string[]) =>
+      cutDurationMs(clipAsOnePiece, cutSpansForWords(words, ids, "self"));
+    const removedMs = lost(struck.map((w) => w.id));
+    return {
+      struck,
+      pending,
+      removedMs,
+      // The extra, not the total: two cuts that merge cost less together than
+      // they do apart, and the button should promise the honest number.
+      pendingMs: lost([...struck, ...pending].map((w) => w.id)) - removedMs,
+    };
+  }, [transcript, cutWordIds, selectedWords, draft.startMs, draft.endMs]);
   const styleKeys = Object.keys(serverWordStyles).sort().join(",");
   const lastStyleKeys = useRef(styleKeys);
   if (styleKeys !== lastStyleKeys.current) {
@@ -834,6 +919,7 @@ export function ClipEditor({
     !sameList(draft.censorAudioExemptWordIds, clip.censorAudioExemptWordIds) ||
     !sameList(draft.censorAudioForceWordIds, clip.censorAudioForceWordIds) ||
     JSON.stringify(draft.censorWordOverrides) !== JSON.stringify(clip.censorWordOverrides) ||
+    !sameList(draft.removedWordIds, clip.removedWordIds) ||
     draft.accepted !== clip.accepted;
 
   async function call(kind: NonNullable<typeof busy>, req: () => Promise<Response>) {
@@ -877,6 +963,7 @@ export function ClipEditor({
         censorAudioExemptWordIds: draft.censorAudioExemptWordIds,
         censorAudioForceWordIds: draft.censorAudioForceWordIds,
         censorWordOverrides: draft.censorWordOverrides,
+        removedWordIds: draft.removedWordIds,
         accepted: draft.accepted,
       }),
     });
@@ -1292,6 +1379,7 @@ export function ClipEditor({
         captionsOn={captionsOn}
         caption={captionDraft}
         wordStyles={wordStyles}
+        cutSpans={cutSpans}
         renderUrl={clip.render?.downloadUrl ?? null}
         seekToMs={seekReq}
         togglePlayReq={playToggleReq}
@@ -1558,6 +1646,14 @@ export function ClipEditor({
             ▸
           </span>
           Timeline — split, trim &amp; rearrange this clip into pieces
+          {/* A cut is the one timeline edit whose effect is visible from
+              outside the panel — the export is shorter than the handles say —
+              so the closed header has to admit to it. */}
+          {!timelineOpen && cutSummary.struck.length > 0 && (
+            <span className="chip">
+              ✂ {cutSummary.struck.length} cut · −{s(cutSummary.removedMs)}s
+            </span>
+          )}
           <span className="ml-auto text-xs font-normal text-muted">
             {timelineOpen ? "hide" : "open editor"}
           </span>
@@ -1572,6 +1668,81 @@ export function ClipEditor({
               Pieces on a layer play one after another — trimming one shortens the
               export, and dropping media in makes it longer.
             </p>
+
+            {/* Interior cuts: the other half of trimming. The handles on a piece
+                shorten it from its ends; this takes words out of the middle and
+                closes the clip up over them. It belongs in this panel rather
+                than beside the censor controls because it changes how long the
+                export is — censoring never does. */}
+            <div className="mb-3 rounded-lg border border-border bg-surface px-2.5 py-2">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <span className="text-xs font-medium uppercase tracking-wide text-muted">
+                  Cut words
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={cutSummary.pending.length === 0}
+                  title={
+                    cutSummary.pending.length === 0
+                      ? "Select words in the transcript below, then cut them out of the middle"
+                      : "Remove these words and close the clip up over them"
+                  }
+                  onClick={() =>
+                    setWordsCut(
+                      cutSummary.pending.map((w) => w.id),
+                      true,
+                    )
+                  }
+                >
+                  ✂ Cut{" "}
+                  {cutSummary.pending.length === 0
+                    ? "selected words"
+                    : `${cutSummary.pending.length} selected`}
+                  {cutSummary.pendingMs > 0 && ` (−${s(cutSummary.pendingMs)}s)`}
+                </button>
+                <span className="min-w-0 flex-1 text-xs text-muted">
+                  {cutSummary.struck.length === 0
+                    ? "Nothing cut — the clip plays straight through."
+                    : `${cutSummary.struck.length} word${
+                        cutSummary.struck.length === 1 ? "" : "s"
+                      } cut · ${s(cutSummary.removedMs)}s shorter`}
+                </span>
+                {cutSummary.struck.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() =>
+                      setWordsCut(
+                        cutSummary.struck.map((w) => w.id),
+                        false,
+                      )
+                    }
+                  >
+                    Restore all
+                  </button>
+                )}
+              </div>
+              {cutSummary.struck.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {cutSummary.struck.map((w) => (
+                    <button
+                      key={w.id}
+                      type="button"
+                      title="Put this word back"
+                      onClick={() => setWordsCut([w.id], false)}
+                      className="chip group hover:text-danger"
+                    >
+                      <span className="tabular-nums opacity-70">{at(w.startMs - draft.startMs)}</span>
+                      <span className="line-through decoration-1">{w.text}</span>
+                      <span aria-hidden className="opacity-60 group-hover:opacity-100">
+                        ✕
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <SequenceEditor
               clipId={clip.id}
               followPlayheadMs={previewPlaying ? playheadMs : null}
@@ -1661,6 +1832,8 @@ export function ClipEditor({
           onClearSelection={clearWordSelection}
           onSeek={seekToWord}
           censoredIds={censoredWordIds}
+          cutIds={cutWordIds}
+          onSetCut={setWordsCut}
           audioCensored={draft.censorAudioEnabled}
           onSetAudioCensored={(on) => setDraft((d) => ({ ...d, censorAudioEnabled: on }))}
           bleepedIds={bleepedWordIds}

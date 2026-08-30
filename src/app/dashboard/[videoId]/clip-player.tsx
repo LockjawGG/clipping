@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { buildCues, toVtt } from "@/lib/captions/layout.ts";
 import {
@@ -30,6 +30,13 @@ interface Props {
   sourceUrl: string;
   startMs: number;
   endMs: number;
+  /**
+   * Stretches the render cuts out, measured from the start of the clip — the
+   * same clip-relative milliseconds `words` uses. Playback jumps over them, so
+   * the preview is the length the export will be and the seams can be heard
+   * before committing to a render.
+   */
+  cutSpans?: ReadonlyArray<{ startMs: number; endMs: number }>;
   words: PreviewWord[];
   captionsOn: boolean;
   caption: CaptionConfig;
@@ -89,6 +96,7 @@ export const ClipPlayer = memo(function ClipPlayer({
   sourceUrl,
   startMs,
   endMs,
+  cutSpans,
   words,
   captionsOn,
   caption,
@@ -178,9 +186,29 @@ export const ClipPlayer = memo(function ClipPlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceUrl, renderUrl, mode, startMs, endMs]);
 
+  /**
+   * Jump the playhead out of a cut stretch.
+   *
+   * Only in source mode: a finished render already has the cuts in it, and
+   * skipping again there would drop real footage. The tolerance keeps a seek
+   * that lands exactly on the far edge from bouncing forward again.
+   */
+  const skipCuts = useCallback(() => {
+    const v = videoRef.current;
+    if (!v || mode !== "source" || !cutSpans || cutSpans.length === 0) return false;
+    // The element plays the whole source, so its clock has to come back to the
+    // clip's before it can be compared with a span.
+    const ms = v.currentTime * 1000 - baseMs;
+    const inside = cutSpans.find((c) => ms >= c.startMs && ms < c.endMs - 40);
+    if (!inside) return false;
+    v.currentTime = (baseMs + inside.endMs) / 1000;
+    return true;
+  }, [cutSpans, mode, baseMs]);
+
   function onTimeUpdate() {
     const v = videoRef.current;
     if (!v) return;
+    if (skipCuts()) return;
     if (mode === "source" && v.currentTime >= endMs / 1000) {
       v.pause();
       v.currentTime = startMs / 1000;
@@ -209,13 +237,14 @@ export const ClipPlayer = memo(function ClipPlayer({
       last = t;
       const v = videoRef.current;
       if (!v) return;
+      if (skipCuts()) return;
       const bounded = Math.min(Math.max(0, v.currentTime * 1000 - baseMs), spanMs);
       setPosMs(bounded);
       onPlayhead(bounded);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, baseMs, spanMs, onPlayhead]);
+  }, [playing, baseMs, spanMs, onPlayhead, skipCuts]);
 
   useEffect(() => {
     onPlayingChange?.(playing);

@@ -72,6 +72,12 @@ export const updateClipSchema = z
           .strict(),
       )
       .refine((r) => Object.keys(r).length <= 5000, "too many word overrides"),
+    /**
+     * Transcript word ids struck out of the middle of the clip. The renderer
+     * cuts these stretches and closes the clip up around them, so this makes
+     * the clip shorter — unlike censoring, which covers a word and does not.
+     */
+    removedWordIds: z.array(z.string().min(1).max(64)).max(5000),
     muted: z.boolean(),
     volume: z.number().min(0).max(2),
     playbackRate: z.number().min(0.25).max(4),
@@ -146,6 +152,7 @@ interface ClipListRow {
   censorAudioExemptWordIds: string[];
   censorAudioForceWordIds: string[];
   censorWordOverridesJson: string | null;
+  removedWordIds: string[];
   accepted: boolean;
   savedToProjectId: string | null;
   caption: string | null;
@@ -547,6 +554,7 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
         censorAudioExemptWordIds: c.censorAudioExemptWordIds,
         censorAudioForceWordIds: c.censorAudioForceWordIds,
         censorWordOverrides: parseWordOverrides(c.censorWordOverridesJson),
+        removedWordIds: c.removedWordIds,
         accepted: c.accepted,
         savedToProjectId: c.savedToProjectId,
         caption: c.caption,

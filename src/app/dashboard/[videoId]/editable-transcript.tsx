@@ -97,6 +97,7 @@ const Word = memo(function Word({
   bleeped,
   audioMode,
   outsideClip,
+  cut,
   word,
   style,
   selected,
@@ -105,6 +106,8 @@ const Word = memo(function Word({
   onToggleSelect,
   onSeek,
 }: {
+  /** This word is struck out: the render cuts it and closes the clip up. */
+  cut?: boolean;
   /** This word will be masked in the captions. */
   censored?: boolean;
   /** This word will be bleeped in the audio. Independent of the mask. */
@@ -174,7 +177,7 @@ const Word = memo(function Word({
       onDoubleClick={() => setEditing(true)}
       aria-pressed={selected}
       style={
-        bleeped
+        bleeped && !cut
           ? {
               ...wordSpanCss(style),
               borderBottom: `2px dotted ${AUDIO_MODE_COLOR[audioMode ?? "BEEP"]}`,
@@ -192,16 +195,26 @@ const Word = memo(function Word({
               ? "bg-amber-400/25"
               : "hover:bg-accent/15"
       } ${
-        // The strike means masked in the captions. The bleep marker below is a
-        // border rather than an underline because the two must be able to show
-        // at once in different colours, and text-decoration-color is a single
-        // value shared by every line on the element.
-        censored ? "line-through decoration-2 decoration-danger" : ""
+        // A cut word is not in the export at all, so it outranks the censor
+        // marks: bleeping or masking something that was removed says nothing
+        // true about the render. Faded and struck in the muted colour, which is
+        // how deleted text reads everywhere; the censor strike is red.
+        cut
+          ? "opacity-45 line-through decoration-2 decoration-muted"
+          : // The strike means masked in the captions. The bleep marker below is
+            // a border rather than an underline because the two must be able to
+            // show at once in different colours, and text-decoration-color is a
+            // single value shared by every line on the element.
+            censored
+            ? "line-through decoration-2 decoration-danger"
+            : ""
       }`}
       title={
         outsideClip
           ? "Outside this clip - it will not appear in the render"
-          : censored && bleeped
+          : cut
+            ? "Cut out - the clip closes up over this word. Click Restore to put it back."
+            : censored && bleeped
             ? `Masked in the captions and ${soundName(audioMode)} in the audio`
             : censored
               ? "Masked in the captions, but left audible"
@@ -229,6 +242,14 @@ interface Props {
   onClipFromSelection?: (startMs: number, endMs: number) => void;
   /** Word ids the render will mask — drives both the tick and the strike. */
   censoredIds?: ReadonlySet<string>;
+  /**
+   * Word ids struck out of the middle of the clip. These are cut from the
+   * render and the clip closes up over them, which is why they read as deleted
+   * rather than censored: the word is not in the export at all.
+   */
+  cutIds?: ReadonlySet<string>;
+  /** Strike these words out, or put them back. */
+  onSetCut?: (wordIds: string[], cut: boolean) => void;
   /**
    * The clip's own range. Rows are selected by segment overlap, so the edges of
    * the transcript show words that fall outside the clip and will never reach
@@ -283,6 +304,8 @@ export const EditableTranscript = memo(function EditableTranscript({
   onSeek,
   onClipFromSelection,
   censoredIds,
+  cutIds,
+  onSetCut,
   clipStartMs,
   clipEndMs,
   onSetCensored,
@@ -341,6 +364,22 @@ export const EditableTranscript = memo(function EditableTranscript({
       }
     return { censored: on, clean: off };
   }, [rows, selectedIds, censoredIds, inClip]);
+
+  /**
+   * The selected words split by whether they are already cut. No word-shape
+   * filter here, unlike censoring: any word can be struck out, including the
+   * "um" that is not in anyone's lexicon.
+   */
+  const selectedByCut = useMemo(() => {
+    const on: string[] = [];
+    const off: string[] = [];
+    for (const row of rows)
+      for (const w of row.words) {
+        if (!selectedIds.has(w.id) || !inClip(w)) continue;
+        (cutIds?.has(w.id) ? on : off).push(w.id);
+      }
+    return { cut: on, kept: off };
+  }, [rows, selectedIds, cutIds, inClip]);
 
   /** How many of the selected words the render can actually censor. The plain
    *  selection count would overstate it whenever the selection reaches past the
@@ -635,6 +674,26 @@ export const EditableTranscript = memo(function EditableTranscript({
           <button type="button" onClick={onReset} className="btn btn-ghost btn-sm text-muted hover:text-danger">
             Reset
           </button>
+          {onSetCut && selectedByCut.kept.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm text-muted hover:text-danger"
+              title="Cut these words out. The clip closes up over them and gets shorter."
+              onClick={() => onSetCut(selectedByCut.kept, true)}
+            >
+              Cut out
+            </button>
+          )}
+          {onSetCut && selectedByCut.cut.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              title="Put these words back into the clip"
+              onClick={() => onSetCut(selectedByCut.cut, false)}
+            >
+              Restore
+            </button>
+          )}
           {onClipFromSelection && selectedSpan && (
             <button
               type="button"
@@ -837,6 +896,7 @@ export const EditableTranscript = memo(function EditableTranscript({
                       word={w}
                       style={styles[w.id]}
                       selected={selectedIds.has(w.id)}
+                      cut={cutIds?.has(w.id) && inClip(w)}
                       censored={censoredIds?.has(w.id) && inClip(w)}
                       bleeped={bleepedIds?.has(w.id) && inClip(w)}
                       audioMode={wordOverrides?.[w.id]?.audioMode ?? clipAudioMode}

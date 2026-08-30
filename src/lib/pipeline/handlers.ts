@@ -22,9 +22,16 @@ import {
   buildLayerPlan,
   isPlainCut,
   mapSourceToTimeline,
+  type ComposePiece,
   planDurationMs,
   remapWordsToTimeline,
 } from "../sequence/compose.ts";
+import {
+  applyInteriorCuts,
+  cutSpansForWords,
+  remapAcrossCuts,
+  type CutSpan,
+} from "../sequence/cuts.ts";
 import { splitCensoredRuns } from "../censor/detect.ts";
 import {
   audioSpans,
@@ -652,13 +659,63 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     // The timeline, if the clip has one that says anything. A single item
     // covering the clip's own window is the untouched default and takes the
     // original path, so opening the panel cannot change what a render produces.
-    const plan = target.sequence
+    const basePlan = target.sequence
       ? buildComposePlan(target.sequence.items, target.sequence.trackId)
       : [];
     // Upper lanes only mean something once there is a base to lay them over.
-    const layerPlan = target.sequence
+    let layerPlan = target.sequence
       ? buildLayerPlan(target.sequence.items, target.sequence.trackId, target.sequence.trackOrder)
       : [];
+
+    // Words struck out in the transcript come out of the middle and the clip
+    // closes up around them. It is expressed as a transform on the plan, before
+    // anything is encoded, which is what lets captions, censor spans and
+    // voiceover anchors follow the cut without knowing it happened: they were
+    // already routed through the plan's source-to-output mapping.
+    let plan = basePlan;
+    // How a position in the uncut output moves once the cuts are taken out.
+    // Identity until there is something to cut.
+    let afterCuts = (ms: number) => ms;
+    if (target.removedWordIds.length > 0) {
+      // A clip with no timeline still has exactly one piece: itself.
+      const uncut: ComposePiece[] =
+        basePlan.length > 0
+          ? basePlan
+          : [
+              {
+                sourceVideoId: target.videoId,
+                sourceStorageKey: target.sourceKey,
+                sourceIn: target.startMs,
+                sourceOut: target.endMs,
+                timelineStart: 0,
+                durationMs: target.endMs - target.startMs,
+              },
+            ];
+      const spans: CutSpan[] = [];
+      for (const sourceVideoId of new Set(uncut.map((p) => p.sourceVideoId))) {
+        const segments = await deps.transcripts.loadSegments(sourceVideoId);
+        spans.push(
+          ...cutSpansForWords(
+            segments.flatMap((sg) => sg.words),
+            target.removedWordIds,
+            sourceVideoId,
+          ),
+        );
+      }
+      // Ids that match nothing in the transcript leave the render alone rather
+      // than failing it — a word deleted from the transcript since is not a
+      // reason to refuse to export.
+      if (spans.length > 0) {
+        const cutPlan = applyInteriorCuts(uncut, spans);
+        if (cutPlan.length === 0) {
+          throw new Error("every word in this clip is struck out - nothing would be left to render");
+        }
+        afterCuts = (ms) => remapAcrossCuts(uncut, cutPlan, ms);
+        // Upper lanes are positioned against the base, so they move with it.
+        layerPlan = layerPlan.map((p) => ({ ...p, timelineStart: afterCuts(p.timelineStart) }));
+        plan = cutPlan;
+      }
+    }
     const composing = plan.length > 0 && (!isPlainCut(plan, target) || layerPlan.length > 0);
 
     if (composing) {
@@ -932,8 +989,18 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     // anything it cannot express is composited by Remotion and the rest stay on
     // the cheap path.
     const overlayNeedsRemotion = (o: RenderOverlay) => o.animationJson !== null || o.rotation !== 0;
-    const movingOverlays = target.overlays.filter(overlayNeedsRemotion);
-    const staticOverlays = target.overlays.filter((o) => !overlayNeedsRemotion(o));
+    // An overlay window is a position in the output, so a cut earlier in the
+    // clip moves it: left alone, a badge pinned to a moment would drift off it,
+    // and one pinned past the new end would never appear at all.
+    const placed = <T extends { startMs: number | null; endMs: number | null }>(o: T): T => ({
+      ...o,
+      startMs: o.startMs === null ? null : afterCuts(o.startMs),
+      endMs: o.endMs === null ? null : afterCuts(o.endMs),
+    });
+    const overlays = target.overlays.map(placed);
+    const textOverlays = target.textOverlays.map(placed);
+    const movingOverlays = overlays.filter(overlayNeedsRemotion);
+    const staticOverlays = overlays.filter((o) => !overlayNeedsRemotion(o));
 
     // Static captions burn during the reframe; animated ones are composited by
     // Remotion afterwards, so the reframe gets no subtitle path.
@@ -1064,7 +1131,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
         style: target.captionStyle ?? DEFAULT_CAPTION_STYLE,
         textStyle: target.textStyle,
         wordRules: target.wordRules,
-        textOverlays: target.textOverlays,
+        textOverlays,
         imageOverlays: movingLayers,
         width: pre.width ?? width,
         height: pre.height ?? height,

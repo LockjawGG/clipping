@@ -31,14 +31,15 @@ clip itself cut into pieces on a timeline whose layers can be rearranged.
 | `src/lib/faces/` | `FaceDetector` interface + `NullFaceDetector` (the default — no detection); `track.ts` smooths / resamples / interpolates a focal-point track. Plug a real detector into `buildPipelineDeps` |
 | `src/lib/ffmpeg/track-crop.ts` | `focalTrackToCropExpr` — turns a focal track into piecewise-`lerp` ffmpeg `crop` x/y expressions so the crop window pans to follow the subject |
 | `src/lib/pipeline/` | The job handlers. Ingest is `[FETCH →] PROBE → EXTRACT_AUDIO → TRANSCRIBE → AUDIO_FEATURES → ANALYZE → THUMBNAIL`, each step enqueueing the next. Alongside it: `RENDER` (compose the clip's timeline → censor audio → mix voiceover → reframe → captions: static presets burn an SRT with ffmpeg, animated ones composite via Remotion → upload), `TRANSLATE`, `WORKER_RUN` (suggest clips from audio + transcript), `VOICEOVER` (synthesise narration), and `LIVE_TRANSCRIBE` / `LIVE_FINALIZE` for browser recordings. `FsSourceCache` (`source-cache.ts`) keeps one `<TEMP_DIR>/videos/<id>/source` copy that every step reuses; per-job scratch lives under `<TEMP_DIR>/work/<jobId>/` and the worker deletes it when the job ends. Narrow repo interfaces in `deps.ts`; Prisma impls + `buildPipelineDeps()` in `repos.ts` |
+| `src/lib/sequence/cuts.ts` | Interior cuts — words struck out of the middle of a clip. `cutSpansForWords` turns word ids into stretches of source to drop (taking half the silence either side, capped, so the seam sounds like an ordinary word gap); `applyInteriorCuts` splits a compose plan around them and repacks; `remapAcrossCuts` moves anything positioned against the old timeline. Expressing it as a plan transform is what makes captions, censor spans and voiceover anchors follow it for free |
 | `src/lib/captions/presets.ts` | `CaptionAnimation` presets — `isAnimatedPreset` decides ffmpeg-burn vs Remotion; `remotionPreset` maps to the composition string |
 | `remotion/` | Remotion project (`CaptionedClip` composition) — word-timed caption presets (word-by-word / pop / scale / bounce / fade / karaoke) over the reframed clip. `src/lib/pipeline/remotion.ts` drives it via `@remotion/{bundler,renderer}` (dynamic `import()`, so it never enters the Next bundle) |
 | `scripts/worker.ts` | `npm run worker` — the long-running ingest worker |
 | `src/lib/api/` | Upload flow (`createVideoUpload` → presigned PUT, `confirmUpload` → enqueue `PROBE`, `getVideoStatus`), clip actions (`requestRender`, `listVideoClips`, `updateClip`, `deleteClip`, `createManualClip` — snapped via `snapToSentences`, `upsertCaptionConfig` / `deleteCaptionConfig`), an `ApiError`/Zod → JSON `route()` wrapper, and the token-guarded local-storage file route |
 | `src/app/api/` | `videos` + `/videos/from-url` + `/videos/:id/{ingest,clips}`, `PATCH`/`DELETE /api/clips/:id`, `PUT`/`DELETE /api/clips/:id/captions`, `POST /api/clips/:id/{render,thumbnail}`, `GET`/`PUT /api/storage/local/[...key]`, `/api/auth/{register,[...nextauth]}` — thin shells over `src/lib` |
 | `src/lib/auth/` | NextAuth v5, Credentials + JWT sessions. `config.edge.ts` (db-free, for `middleware.ts`) is spread into the full config in `index.ts`. `password.ts` (bcrypt), `session.ts` (`requireUserId`, `getOrCreateProject`) |
-| `src/app/` | App Router — landing, `/login`, `/register`, and a single `/dashboard` workspace: projects and saved clips on the left, the active video's clips in the centre, uploads on the right. Per clip: boundaries, aspect, focal point / capture window, caption style and animation, overlays and text elements, an editable transcript (double-click a word to fix it), censoring, voiceover, and a non-linear timeline. `middleware.ts` gates `/dashboard` |
-| `tests/*.test.ts` | 618 unit tests across 40 suites, run with no build step. The largest: `render.test.ts` (52), `core.test.ts` (51), `censor.test.ts` (42), `overlays.test.ts` (30), `element-anim.test.ts` (27), `live.test.ts` (27). Everything is exercised against fake deps — the pipeline handlers, the ffmpeg argv builders, caption layout and styling, censoring, the timeline, learning, voiceover, storage, auth, and each API service with its ownership 404s |
+| `src/app/` | App Router — landing, `/login`, `/register`, and a single `/dashboard` workspace: projects and saved clips on the left, the active video's clips in the centre, uploads on the right. Per clip: boundaries, aspect, focal point / capture window, caption style and animation, overlays and text elements, an editable transcript (double-click a word to fix it, or strike words out to cut them from the middle and close the clip up), censoring, voiceover, and a non-linear timeline. `middleware.ts` gates `/dashboard` |
+| `tests/*.test.ts` | 639 unit tests across 41 suites, run with no build step. The largest: `render.test.ts` (59), `core.test.ts` (51), `censor.test.ts` (44), `overlays.test.ts` (30), `element-anim.test.ts` (27), `live.test.ts` (27). Everything is exercised against fake deps — the pipeline handlers, the ffmpeg argv builders, caption layout and styling, censoring, the timeline, learning, voiceover, storage, auth, and each API service with its ownership 404s |
 | `tests/ffmpeg.integration.ts` | 10 checks against the real ffmpeg binary, on a fixture it synthesises itself (colour bars + a 440 Hz tone) so a drift or a level is the code's doing |
 | `.env.example` | Provider configuration |
 
@@ -176,13 +177,9 @@ the static presets; it's an order of magnitude faster.
   `NullFaceDetector` returns nothing, so it falls back to a static centre crop.
   A real detector (MediaPipe, a face-api model, an OpenCV pass) drops into
   `buildPipelineDeps`.
-- `Clip.removedWordIds` is modelled but no renderer consumes it. Cutting interior
-  spans by *word* still has no path, though the machinery now exists: a clip's
-  timeline (`Sequence`) splits it into pieces that the renderer cuts and
-  concatenates, so removing a span is a matter of driving that from word ids
-  rather than from the timeline UI.
-- Overlay windows are positions in the finished export, so they do not move when
-  timeline pieces are reordered — unlike captions and censoring, which follow
-  their footage. That is the usual convention for a graphics layer, but the two
-  behaviours differ and nothing in the UI says so.
+- Overlay windows are positions in the finished export. They are moved back by
+  an interior cut, so a badge stays on its moment, but they do not follow a
+  *reorder* of timeline pieces the way captions and censoring do. That is the
+  usual convention for a graphics layer, but the two behaviours differ and
+  nothing in the UI says so.
 - Transcription confidence is stored but not yet enforced as a render gate.

@@ -105,6 +105,7 @@ function makeDeps(
             censorDenyList: [],
             censorExemptWordIds: [],
             censorForceWordIds: [],
+            removedWordIds: [],
             censorAudioExemptWordIds: [],
             censorAudioForceWordIds: [],
             censorWordOverridesJson: null,
@@ -251,6 +252,17 @@ test("updateClip rejects a range where end is not after start (merged with curre
     () => updateClip(deps, "clip1", { endMs: 4_000 }),
     (e: unknown) => e instanceof ApiError && e.status === 400,
   );
+});
+
+test("updateClip stores struck words as a plain id list", async () => {
+  const { deps, updates } = makeDeps();
+  await updateClip(deps, "clip1", { removedWordIds: ["w7", "w8"] });
+  assert.deepEqual(updates, [{ id: "clip1", data: { removedWordIds: ["w7", "w8"] } }]);
+
+  // Clearing them is an empty list, not a null: the column is an array.
+  updates.length = 0;
+  await updateClip(deps, "clip1", { removedWordIds: [] });
+  assert.deepEqual(updates, [{ id: "clip1", data: { removedWordIds: [] } }]);
 });
 
 test("updateClip rejects unknown fields and out-of-range focal points", async () => {
