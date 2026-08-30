@@ -337,6 +337,19 @@ export function ClipEditor({
   }, [transcript, censorCfg]);
 
   /**
+   * What the render will *actually* mask, which is not the same set.
+   *
+   * With detection switched off the lexicon and term lists go quiet, but words
+   * ticked by hand still apply — so the strike-through follows this rather than
+   * the toggle, and always means "this will be bleeped".
+   */
+  const struckWordIds = useMemo(() => {
+    const flat = transcript.flatMap((r) => r.words);
+    if (flat.length === 0) return new Set<string>();
+    return new Set([...censoredIndices(flat, censorCfg)].map((i) => flat[i].id));
+  }, [transcript, censorCfg]);
+
+  /**
    * Would this occurrence be censored by everything *except* the per-occurrence
    * overrides? Needed to keep the toggle reversible: ticking a word the rules
    * already catch means clearing an exemption, not adding a force-censor, so
@@ -1531,7 +1544,7 @@ export function ClipEditor({
           onClearSelection={clearWordSelection}
           onSeek={seekToWord}
           censoredIds={censoredWordIds}
-          censoringOn={draft.censorEnabled}
+          struckIds={struckWordIds}
           clipStartMs={draft.startMs}
           clipEndMs={draft.endMs}
           onSetCensored={setWordsCensored}

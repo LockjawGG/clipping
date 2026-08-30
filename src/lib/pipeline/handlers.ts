@@ -17,7 +17,7 @@ import {
   staleLines,
   type VoiceLine,
 } from "../voiceover/sync.ts";
-import { censoredIndices, detectSpans } from "../censor/detect.ts";
+import { censoredIndices, censorHasWork, detectSpans } from "../censor/detect.ts";
 import { maskWords } from "../censor/mask.ts";
 import { ASPECT_DIMENSIONS, type CaptionBurnStyle } from "../ffmpeg/args.ts";
 import { type FocalPoint, resampleTrack } from "../faces/track.ts";
@@ -583,7 +583,19 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     // `id` is carried so per-occurrence censor overrides can match; masking
     // preserves it, and buildCues ignores it.
     let words: Array<{ id?: string; text: string; startMs: number; endMs: number }> = [];
-    if (target.burnCaptions || target.censor.enabled) {
+    // Words are needed whenever the censor pass has anything to do — which
+    // includes a clip with detection off but occurrences ticked by hand.
+    const censorCfg = {
+      enabled: target.censor.enabled,
+      sensitivity: target.censor.sensitivity,
+      allowList: target.censor.allowList,
+      denyList: target.censor.denyList,
+      exemptWordIds: target.censor.exemptWordIds,
+      censorWordIds: target.censor.forceWordIds,
+    };
+    const censoring = censorHasWork(censorCfg);
+
+    if (target.burnCaptions || censoring) {
       const segments = await deps.transcripts.loadSegments(target.videoId);
       words = segments
         .flatMap((s) => s.words)
@@ -594,15 +606,8 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     // later pass carries audio through with `-c:a copy`, so doing it here means
     // the bleep survives reframing, captioning and compositing untouched.
     let staged = cut;
-    if (target.censor.enabled && words.length > 0) {
-      const spans = detectSpans(words, {
-        enabled: true,
-        sensitivity: target.censor.sensitivity,
-        allowList: target.censor.allowList,
-        denyList: target.censor.denyList,
-        exemptWordIds: target.censor.exemptWordIds,
-        censorWordIds: target.censor.forceWordIds,
-      });
+    if (censoring && words.length > 0) {
+      const spans = detectSpans(words, censorCfg);
       if (spans.length > 0) {
         await deps.ffmpeg.censorAudio(
           cut,
@@ -669,15 +674,8 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     }
 
     // Mask the caption text for the same words the audio bleeped.
-    if (target.censor.enabled && words.length > 0) {
-      const flagged = censoredIndices(words, {
-        enabled: true,
-        sensitivity: target.censor.sensitivity,
-        allowList: target.censor.allowList,
-        denyList: target.censor.denyList,
-        exemptWordIds: target.censor.exemptWordIds,
-        censorWordIds: target.censor.forceWordIds,
-      });
+    if (censoring && words.length > 0) {
+      const flagged = censoredIndices(words, censorCfg);
       words = maskWords(
         words,
         flagged,

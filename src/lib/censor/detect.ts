@@ -54,8 +54,11 @@ export interface CensorSpan {
  * *this occurrence* is never overridden by a rule about the word in general:
  *
  *   1. this word id was ticked / unticked by hand
- *   2. this term is on the clip's allow / deny list
- *   3. the built-in lexicon
+ *   2. this term is on the clip's allow / deny list   (automatic detection)
+ *   3. the built-in lexicon                           (automatic detection)
+ *
+ * Levels 2 and 3 are what the clip's censoring toggle switches off; level 1 is
+ * an explicit instruction and always applies.
  *
  * Returning the tier rather than a boolean is what lets the review panel say
  * which of those three decided it.
@@ -69,13 +72,19 @@ function classify(
     deny: Set<string>;
     exemptIds: Set<string>;
     censorIds: Set<string>;
+    /** Whether automatic detection is switched on for this clip. */
+    auto: boolean;
   },
 ): CensorTier | "custom" | "manual" | null {
   const id = word.id;
   if (id) {
     if (ctx.exemptIds.has(id)) return null;
+    // A hand-picked occurrence is an explicit instruction, so it applies even
+    // with automatic detection switched off. The toggle governs *finding*
+    // words, not overriding ones the user pointed at.
     if (ctx.censorIds.has(id)) return "manual";
   }
+  if (!ctx.auto) return null;
 
   const token = normalizeToken(word.text);
   if (!token) return null;
@@ -100,7 +109,18 @@ function context(config: CensorConfigInput) {
     deny: new Set((config.denyList ?? []).map(normalizeToken).filter(Boolean)),
     exemptIds: new Set(config.exemptWordIds ?? []),
     censorIds: new Set(config.censorWordIds ?? []),
+    auto: config.enabled,
   };
+}
+
+/**
+ * Is there anything for the censor pass to do?
+ *
+ * Not the same as `enabled`: a clip with automatic detection off but words
+ * ticked by hand still has to run, or those marks would be silently dropped.
+ */
+export function censorHasWork(config: CensorConfigInput): boolean {
+  return config.enabled || (config.censorWordIds?.length ?? 0) > 0;
 }
 
 /**
@@ -168,7 +188,7 @@ export function detectSpans(
   config: CensorConfigInput,
   padMs = 60,
 ): CensorSpan[] {
-  if (!config.enabled) return [];
+  if (!censorHasWork(config)) return [];
 
   const ctx = context(config);
   const out: CensorSpan[] = [];
@@ -221,7 +241,7 @@ export function censoredIndices(
   // Same classification as `detectSpans`, but without padding or merging so
   // indices stay exact — padding exists for audio, and merging would lose the
   // per-word identity this function is for.
-  if (!config.enabled) return new Set();
+  if (!censorHasWork(config)) return new Set();
   const ctx = context(config);
   const out = new Set<number>();
   words.forEach((w, index) => {

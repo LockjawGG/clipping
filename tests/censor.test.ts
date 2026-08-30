@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { censoredIndices, detectSpans, normalizeToken } from "../src/lib/censor/detect.ts";
+import {
+  censoredIndices,
+  censorHasWork,
+  detectSpans,
+  normalizeToken,
+} from "../src/lib/censor/detect.ts";
 import { maskWord, maskWords } from "../src/lib/censor/mask.ts";
 import { lexiconFor, TIERS_BY_SENSITIVITY } from "../src/lib/censor/lexicon.ts";
 import { buildCensorAudioArgs } from "../src/lib/ffmpeg/args.ts";
@@ -100,6 +105,33 @@ test("the lexicon ships profanity only — no slurs list", () => {
   });
   assert.equal(spans.length, 1);
   assert.equal(spans[0].tier, "custom");
+});
+
+test("a hand-picked word is censored even with detection switched off", () => {
+  // The toggle governs *finding* words. A word the user pointed at is an
+  // explicit instruction and must survive turning detection off, or the mark
+  // would silently do nothing.
+  const words = line("hello shit world");
+  const off = { enabled: false, sensitivity: "HIGH" as const };
+
+  assert.deepEqual(detectSpans(words, off), [], "nothing is auto-detected");
+
+  const manual = detectSpans(words, { ...off, censorWordIds: ["w0"] });
+  assert.equal(manual.length, 1);
+  assert.equal(manual[0].text, "hello");
+  assert.equal(manual[0].tier, "manual");
+  // The profanity is still not caught: detection really is off.
+  assert.ok(!manual.some((s) => s.text === "shit"));
+  assert.deepEqual([...censoredIndices(words, { ...off, censorWordIds: ["w0"] })], [0]);
+});
+
+test("censorHasWork distinguishes idle from off-but-marked", () => {
+  const base = { enabled: false, sensitivity: "HIGH" as const };
+  assert.equal(censorHasWork(base), false, "nothing to do");
+  assert.equal(censorHasWork({ ...base, censorWordIds: ["w1"] }), true, "a hand-picked word");
+  assert.equal(censorHasWork({ ...base, enabled: true }), true);
+  // Term lists alone do nothing while detection is off.
+  assert.equal(censorHasWork({ ...base, denyList: ["banana"] }), false);
 });
 
 test("a single occurrence can be exempted without touching the others", () => {

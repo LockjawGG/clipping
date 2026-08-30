@@ -559,6 +559,45 @@ test("a per-occurrence exemption reaches the bleep, not just the UI", async () =
   }
 });
 
+test("a hand-picked word is bleeped even with detection switched off", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "render-cen4-"));
+  try {
+    const segs: Segment[] = [
+      {
+        startMs: 0,
+        endMs: 40_000,
+        text: "shit happens here",
+        words: [
+          { id: "q1", text: "shit", startMs: 12_000, endMs: 12_400 },
+          { id: "q2", text: "happens", startMs: 13_000, endMs: 13_400 },
+        ],
+      },
+    ];
+    const { deps, spy } = makeDeps(
+      // Detection off, but one word ticked by hand.
+      target({ censor: { ...censorOn, enabled: false, forceWordIds: ["q2"] } }),
+      { tempDir: dir, ...withTranscript(segs) } as unknown as Partial<PipelineDeps>,
+    );
+    await renderHandler(ctx(deps, { renderId: "r-cen4" }));
+
+    assert.equal(spy.censors.length, 1, "the pass still runs");
+    assert.equal(spy.censors[0].spans.length, 1, "only the hand-picked word");
+    // "happens" starts at 13s; the clip starts at 10s, minus 60ms padding.
+    assert.ok(Math.abs(spy.censors[0].spans[0].startSec - 2.94) < 1e-9);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("detection off with nothing marked runs no censor pass at all", async () => {
+  const { deps, spy } = makeDeps(
+    target({ censor: { ...censorOn, enabled: false } }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-cen5" }));
+  assert.equal(spy.censors.length, 0);
+});
+
 test("a per-occurrence force-censor bleeps a word the lexicon ignores", async () => {
   const dir = await mkdtemp(join(tmpdir(), "render-cen3-"));
   try {
