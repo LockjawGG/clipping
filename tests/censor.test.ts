@@ -12,7 +12,11 @@ import {
 } from "../src/lib/censor/detect.ts";
 import { maskWord, maskWords } from "../src/lib/censor/mask.ts";
 import { lexiconFor, TIERS_BY_SENSITIVITY } from "../src/lib/censor/lexicon.ts";
-import { buildCensorAudioArgs } from "../src/lib/ffmpeg/args.ts";
+import {
+  buildCensorAudioArgs,
+  buildToneWavArgs,
+  buildTrimSilenceArgs,
+} from "../src/lib/ffmpeg/args.ts";
 import { parseWordOverrides, serializeWordOverrides } from "../src/lib/censor/overrides.ts";
 
 const w = (text: string, i: number) => ({
@@ -603,4 +607,46 @@ test("written text splits into clean runs and censored ones", () => {
     splitCensoredRuns("says shit", { ...on, allowList: ["shit"] }),
     [{ text: "says shit", censored: false }],
   );
+});
+
+test("a narration bleep is written at the voice's own rate", () => {
+  const args = buildToneWavArgs({
+    outputPath: "/tmp/bleep.wav",
+    durationMs: 340,
+    sampleRate: 22_050,
+  });
+  // The rate has to match the speech it is spliced between, or the join
+  // resamples and the line's pitch shifts at the seam.
+  assert.ok(args.some((a) => a.includes("sample_rate=22050")));
+  assert.ok(args.some((a) => a.includes("frequency=1000")));
+  assert.deepEqual(args.slice(args.indexOf("-t"), args.indexOf("-t") + 2), ["-t", "0.340"]);
+  // Mono 16-bit PCM, the same shape Piper writes.
+  assert.ok(args.includes("-ac") && args.includes("1"));
+  assert.ok(args.includes("pcm_s16le"));
+
+  // The softer tone and silence are the same call with different numbers.
+  const soft = buildToneWavArgs({ outputPath: "/tmp/b.wav", durationMs: 100, sampleRate: 22_050, hz: 400 });
+  assert.ok(soft.some((a) => a.includes("frequency=400")));
+  const mute = buildToneWavArgs({ outputPath: "/tmp/b.wav", durationMs: 100, sampleRate: 22_050, gain: 0 });
+  assert.ok(mute.some((a) => a === "volume=0"));
+
+  // A zero-length or rate-less tone is a caller bug, not something to emit.
+  assert.throws(() => buildToneWavArgs({ outputPath: "/tmp/b.wav", durationMs: 0, sampleRate: 22_050 }));
+  assert.throws(() => buildToneWavArgs({ outputPath: "/tmp/b.wav", durationMs: 100, sampleRate: 0 }));
+});
+
+test("trimming silence takes the edges only, never the pauses inside", () => {
+  const args = buildTrimSilenceArgs({ inputPath: "/tmp/in.wav", outputPath: "/tmp/out.wav" });
+  const af = args[args.indexOf("-af") + 1];
+
+  // Leading edge, then the same again through a reverse for the trailing one:
+  // silenceremove only looks forward.
+  assert.equal((af.match(/silenceremove/g) ?? []).length, 2);
+  assert.equal((af.match(/areverse/g) ?? []).length, 2);
+  // start_periods=1 stops after the first run of silence, which is what keeps
+  // a deliberate pause mid-sentence intact.
+  assert.ok(!af.includes("stop_periods"));
+  assert.match(af, /start_periods=1/);
+  assert.match(af, /start_threshold=-45dB/);
+  assert.ok(args.includes("pcm_s16le"));
 });
