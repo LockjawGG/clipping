@@ -548,3 +548,24 @@ test("an audio-only occurrence is still discoverable, not just audible", () => {
     "but both are silenced, so both must be listed somewhere",
   );
 });
+
+test("keeping an occurrence takes it out of both halves at once", () => {
+  // What the review panel's "Keep it" writes: cleared from both force lists,
+  // added to both exempt lists. The occurrence must then be untouched no
+  // matter which half had been marking it.
+  const words = [{ id: "k1", text: "shit", startMs: 0, endMs: 400 }];
+  const kept = {
+    enabled: true,
+    sensitivity: "MEDIUM" as const,
+    exemptWordIds: ["k1"],
+    audioExemptWordIds: ["k1"],
+    censorWordIds: [],
+    audioForceWordIds: [],
+  };
+  assert.deepEqual(detectSpans(words, kept), [], "not masked");
+  assert.deepEqual(audioSpans(words, kept), [], "and not bleeped");
+
+  // The exemptions have to beat the clip-wide default too, or "keep it" would
+  // come undone the moment the audio switch was turned on.
+  assert.deepEqual(audioSpans(words, { ...kept, audioEnabled: true }), []);
+});

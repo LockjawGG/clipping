@@ -115,19 +115,29 @@ export const CensorControls = memo(function CensorControls({ value, words, onCha
   const soundOf = (wordId: string | undefined): AudioCensorMode =>
     (wordId ? value.censorWordOverrides[wordId]?.audioMode : undefined) ?? value.censorAudioMode;
 
+  /**
+   * Stop censoring one occurrence, in every sense.
+   *
+   * It has to act on both halves at once. A hand-picked word can be marked in
+   * the caption list, the audio list, or only one of them, and clearing just
+   * the caption list left an audio-only occurrence still bleeping while the
+   * button appeared to do nothing — the worst possible outcome for a control
+   * whose entire promise is "this one is fine, leave it alone".
+   *
+   * Everything is dropped from the force lists and added to the exempt lists:
+   * exempting an occurrence the rules would not catch anyway costs nothing,
+   * and it keeps the decision durable if the sensitivity is raised later.
+   */
   const keep = (span: { text: string; wordId?: string; tier: string }) => {
-    // A hand-picked occurrence is undone by dropping it, not by exempting the
-    // whole term — otherwise "keep it" would silently un-censor every other
-    // instance the user had ticked.
-    if (span.tier === "manual" && span.wordId) {
-      onChange({
-        censorForceWordIds: value.censorForceWordIds.filter((id) => id !== span.wordId),
-      });
-      return;
-    }
-    if (span.wordId && !value.censorExemptWordIds.includes(span.wordId)) {
-      onChange({ censorExemptWordIds: [...value.censorExemptWordIds, span.wordId] });
-    }
+    const id = span.wordId;
+    if (!id) return;
+    const add = (list: string[]) => (list.includes(id) ? list : [...list, id]);
+    onChange({
+      censorForceWordIds: value.censorForceWordIds.filter((x) => x !== id),
+      censorAudioForceWordIds: value.censorAudioForceWordIds.filter((x) => x !== id),
+      censorExemptWordIds: add(value.censorExemptWordIds),
+      censorAudioExemptWordIds: add(value.censorAudioExemptWordIds),
+    });
   };
 
   const addDeny = () => {
@@ -285,7 +295,7 @@ export const CensorControls = memo(function CensorControls({ value, words, onCha
                     type="button"
                     className="btn btn-ghost btn-sm ml-auto"
                     onClick={() => keep(s)}
-                    title="Stop censoring this occurrence"
+                    title="Stop censoring this occurrence — no mask, no bleep"
                   >
                     Keep it
                   </button>
