@@ -15,7 +15,7 @@ clip itself cut into pieces on a timeline whose layers can be rearranged.
 
 | Path | Status |
 | --- | --- |
-| `.github/workflows/ci.yml` | GitHub Actions — `build → typecheck → lint → test`, plus a job running `test:integration` against apt-installed ffmpeg on a synthesised source |
+| `.github/workflows/ci.yml` | GitHub Actions — `build → typecheck → lint → test`, plus a job running `test:integration` against apt-installed ffmpeg, on the fixture that suite builds for itself |
 | `prisma/schema.prisma` | Complete schema — users, projects, videos, transcripts, segments, words, clips, subtitle configs, overlays, renders, jobs |
 | `src/lib/providers/types.ts` | Provider interfaces for transcription, storage, and clip analysis |
 | `src/lib/captions/layout.ts` | Word timings → non-overlapping cues, line breaking, SRT output |
