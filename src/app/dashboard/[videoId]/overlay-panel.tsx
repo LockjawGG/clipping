@@ -168,6 +168,7 @@ export const OverlayPanel = memo(function OverlayPanel({
                       role={o.role}
                       styleJson={o.styleJson}
                       animationJson={o.animationJson}
+                      hasEnd={o.endMs !== null}
                       onEdit={(patch, opts) =>
                         onEdit(
                           o.id,

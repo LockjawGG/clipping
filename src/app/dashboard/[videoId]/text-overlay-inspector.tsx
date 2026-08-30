@@ -4,14 +4,10 @@ import { memo, useEffect, useMemo, useState } from "react";
 
 import type { TextStyle } from "@/lib/captions/text-style.ts";
 import { parseStylePartial, serializeStylePartial } from "@/lib/captions/text-style.ts";
-import {
-  parseElementAnim,
-  serializeElementAnim,
-  ELEMENT_INTRO_OPTIONS,
-  ELEMENT_OUTRO_OPTIONS,
-  ELEMENT_LOOP_OPTIONS,
-} from "@/lib/captions/element-anim.ts";
+import type { ElementAnimSpec } from "@/lib/captions/element-anim.ts";
+import { parseElementAnim, serializeElementAnim } from "@/lib/captions/element-anim.ts";
 import { TEXT_OVERLAY_ROLES } from "@/lib/overlays/roles.ts";
+import { MotionControls } from "./motion-controls";
 import { StyleControls } from "./style-controls";
 
 interface Props {
@@ -19,28 +15,31 @@ interface Props {
   role: string;
   styleJson: string | null;
   animationJson: string | null;
+  /** False when the layer has no end time, so an outro can never fire. */
+  hasEnd?: boolean;
   onEdit: (patch: Record<string, unknown>, opts?: { coalesceMs?: number }) => void;
 }
 
 /**
  * The inspector for an inserted text caption. Shares the whole style panel
- * (`StyleControls`) with transcribed subtitles — only the content field, the
- * role, and the element in / loop / out animations are specific to a
- * freestanding text layer.
+ * (`StyleControls`) with transcribed subtitles and the whole motion panel
+ * (`MotionControls`) with every other animatable element — only the content
+ * field and the role are specific to a freestanding text layer.
  */
 export const TextOverlayInspector = memo(function TextOverlayInspector({
   text,
   role,
   styleJson,
   animationJson,
+  hasEnd = true,
   onEdit,
 }: Props) {
   const [draft, setDraft] = useState(text);
   useEffect(() => setDraft(text), [text]);
 
   const anim = useMemo(() => parseElementAnim(animationJson), [animationJson]);
-  const setAnim = (p: { intro?: string; outro?: string; loop?: string }) =>
-    onEdit({ animationJson: serializeElementAnim({ ...anim, ...p }) });
+  const setAnim = (p: Partial<ElementAnimSpec>, opts?: { coalesceMs?: number }) =>
+    onEdit({ animationJson: serializeElementAnim({ ...anim, ...p }) }, opts);
 
   const style = useMemo(() => parseStylePartial(styleJson), [styleJson]);
   const setStyle = (p: Partial<TextStyle>, opts?: { coalesceMs?: number }) =>
@@ -120,50 +119,9 @@ export const TextOverlayInspector = memo(function TextOverlayInspector({
             ))}
           </select>
         </label>
-        <label className="flex items-center gap-1">
-          in
-          <select
-            value={anim.intro ?? "none"}
-            onChange={(e) => setAnim({ intro: e.target.value })}
-            className="field py-0.5"
-          >
-            {ELEMENT_INTRO_OPTIONS.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-1">
-          loop
-          <select
-            value={anim.loop ?? "none"}
-            onChange={(e) => setAnim({ loop: e.target.value })}
-            className="field py-0.5"
-          >
-            {ELEMENT_LOOP_OPTIONS.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-1">
-          out
-          <select
-            value={anim.outro ?? "none"}
-            onChange={(e) => setAnim({ outro: e.target.value })}
-            className="field py-0.5"
-          >
-            {ELEMENT_OUTRO_OPTIONS.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <span className="text-[10px] text-muted">an out animation needs a set end time</span>
       </div>
+
+      <MotionControls anim={anim} onAnim={setAnim} canOutro={hasEnd} />
 
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" onClick={saveAsPreset} className="btn btn-ghost btn-sm">
