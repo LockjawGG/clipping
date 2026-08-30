@@ -6,10 +6,14 @@ import { ApiError } from "./http.ts";
 /**
  * Non-linear timeline for a single clip.
  *
- * A `Sequence` is optional and additive: a clip without one renders as it always
- * has (its plain [startMs,endMs] cut). With one, the render composes the items.
- * Items are non-destructive — each references a slice `[sourceIn,sourceOut]` of a
- * source `Video` or library `Asset`; source bytes are never touched.
+ * A `Sequence` is optional and additive. Items are non-destructive — each
+ * references a slice `[sourceIn,sourceOut]` of a source `Video` or library
+ * `Asset`; source bytes are never touched.
+ *
+ * NOTE: the renderer does not read sequences yet. Every clip renders from its
+ * own [startMs,endMs], so edits made here persist but do not change the export.
+ * This comment used to claim the render composed the items, which made a
+ * silent no-op look like intended behaviour to anyone reading the code.
  */
 
 export type SequenceTrackKind = "VIDEO" | "AUDIO" | "OVERLAY" | "TEXT";
