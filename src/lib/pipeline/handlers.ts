@@ -17,7 +17,12 @@ import {
   staleLines,
   type VoiceLine,
 } from "../voiceover/sync.ts";
-import { censoredIndices, censorHasWork, detectSpans } from "../censor/detect.ts";
+import {
+  audioSpans,
+  censoredIndices,
+  censorHasAudioWork,
+  censorHasWork,
+} from "../censor/detect.ts";
 import { maskWords } from "../censor/mask.ts";
 import { ASPECT_DIMENSIONS, type CaptionBurnStyle } from "../ffmpeg/args.ts";
 import { type FocalPoint, resampleTrack } from "../faces/track.ts";
@@ -592,6 +597,9 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
       denyList: target.censor.denyList,
       exemptWordIds: target.censor.exemptWordIds,
       censorWordIds: target.censor.forceWordIds,
+      audioEnabled: target.censor.audioEnabled,
+      audioExemptWordIds: target.censor.audioExemptWordIds,
+      audioForceWordIds: target.censor.audioForceWordIds,
     };
     const censoring = censorHasWork(censorCfg);
 
@@ -606,8 +614,11 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     // later pass carries audio through with `-c:a copy`, so doing it here means
     // the bleep survives reframing, captioning and compositing untouched.
     let staged = cut;
-    if (censoring && words.length > 0) {
-      const spans = detectSpans(words, censorCfg);
+    // The audio half is separately switchable, clip-wide and per occurrence:
+    // a word left out here is still masked in the captions below, its speech is
+    // simply left audible.
+    if (censorHasAudioWork(censorCfg) && words.length > 0) {
+      const spans = audioSpans(words, censorCfg);
       if (spans.length > 0) {
         await deps.ffmpeg.censorAudio(
           cut,

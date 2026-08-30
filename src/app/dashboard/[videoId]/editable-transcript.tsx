@@ -190,6 +190,17 @@ interface Props {
    * the override is per-clip and never edits the shared lexicon.
    */
   onSetCensored?: (wordIds: string[], censored: boolean) => void;
+  /**
+   * Whether the censored words are bleeped in the audio. Independent of which
+   * words are censored: with this off the caption text is still masked, the
+   * speech is just left audible.
+   */
+  audioCensored?: boolean;
+  onSetAudioCensored?: (on: boolean) => void;
+  /** Of the censored words, the ones that will actually be bleeped. */
+  bleepedIds?: ReadonlySet<string>;
+  /** Turn the bleep on or off for these occurrences, on this clip only. */
+  onSetBleeped?: (wordIds: string[], bleeped: boolean) => void;
 }
 
 /**
@@ -212,6 +223,10 @@ export const EditableTranscript = memo(function EditableTranscript({
   clipStartMs,
   clipEndMs,
   onSetCensored,
+  audioCensored,
+  onSetAudioCensored,
+  bleepedIds,
+  onSetBleeped,
 }: Props) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
@@ -265,6 +280,56 @@ export const EditableTranscript = memo(function EditableTranscript({
   const censorableCount =
     selectedByCensored.censored.length + selectedByCensored.clean.length;
 
+  /**
+   * The selected occurrences that are censored, split by whether each is
+   * bleeped. Only censored words appear: the audio is a subset of the mask, so
+   * offering a bleep for an uncensored word would promise something the render
+   * would not do.
+   */
+  const selectedByBleeped = useMemo(() => {
+    const on: string[] = [];
+    const off: string[] = [];
+    for (const row of rows) {
+      for (const w of row.words) {
+        if (!selectedIds.has(w.id) || !inClip(w) || !censoredIds?.has(w.id)) continue;
+        (bleepedIds?.has(w.id) ? on : off).push(w.id);
+      }
+    }
+    return { bleeped: on, silent: off };
+  }, [rows, selectedIds, censoredIds, bleepedIds, inClip]);
+
+  const bleepableCount = selectedByBleeped.bleeped.length + selectedByBleeped.silent.length;
+
+  /** true = all bleeped, false = none, null = mixed. */
+  const allBleeped =
+    selectedByBleeped.bleeped.length > 0 && selectedByBleeped.silent.length > 0
+      ? null
+      : selectedByBleeped.bleeped.length > 0;
+
+  /**
+   * How many in-clip words the render will mask. Drives the audio toggle: a
+   * switch for bleeping nothing would be a control with no effect, so it only
+   * appears once there is something to bleep.
+   */
+  const censoredCount = useMemo(() => {
+    if (!censoredIds || censoredIds.size === 0) return 0;
+    let n = 0;
+    for (const row of rows) {
+      for (const w of row.words) if (censoredIds.has(w.id) && inClip(w)) n++;
+    }
+    return n;
+  }, [rows, censoredIds, inClip]);
+
+  /** Of those, how many are actually bleeped. */
+  const bleepedCount = useMemo(() => {
+    if (!bleepedIds || bleepedIds.size === 0) return 0;
+    let n = 0;
+    for (const row of rows) {
+      for (const w of row.words) if (bleepedIds.has(w.id) && inClip(w)) n++;
+    }
+    return n;
+  }, [rows, bleepedIds, inClip]);
+
   /** true = all selected words censored, false = none, null = mixed. */
   const allCensored =
     selectedByCensored.censored.length > 0 && selectedByCensored.clean.length > 0
@@ -317,6 +382,27 @@ export const EditableTranscript = memo(function EditableTranscript({
           placeholder="Search the transcript…"
           className="field h-7 min-w-0 flex-1 py-0 text-xs"
         />
+        {onSetAudioCensored && censoredCount > 0 && (
+          <button
+            type="button"
+            onClick={() => onSetAudioCensored(!audioCensored)}
+            aria-pressed={audioCensored ?? false}
+            title={
+              `${bleepedCount} of ${censoredCount} censored word${censoredCount === 1 ? " is" : "s are"} bleeped. ` +
+              `Click to ${audioCensored ? "stop bleeping by default" : "bleep by default"} — ` +
+              "individual words can still be overridden, and the caption text stays masked either way."
+            }
+            className={`pill shrink-0 ${bleepedCount > 0 ? "border-danger/50 text-danger" : "text-muted"}`}
+          >
+            {/* The count, not just the switch: with per-word overrides in play
+                a plain on/off label would misstate what the render does. */}
+            {bleepedCount === 0
+              ? "🔊 audio uncensored"
+              : bleepedCount === censoredCount
+                ? "🔇 audio bleeped"
+                : `🔇 ${bleepedCount}/${censoredCount} bleeped`}
+          </button>
+        )}
         {q.length > 0 && (
           <>
             <span className="shrink-0 tabular-nums text-muted">
@@ -427,6 +513,28 @@ export const EditableTranscript = memo(function EditableTranscript({
             </label>
           )}
 
+          {onSetBleeped && bleepableCount > 0 && (
+            <label
+              className="flex items-center gap-1.5 text-danger"
+              title="Bleep these words in the audio. Untick to leave the speech audible — the caption text stays masked either way."
+            >
+              <input
+                type="checkbox"
+                ref={(el) => {
+                  if (el) el.indeterminate = allBleeped === null;
+                }}
+                checked={allBleeped === true}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  const ids = on ? selectedByBleeped.silent : selectedByBleeped.bleeped;
+                  if (ids.length > 0) onSetBleeped(ids, on);
+                }}
+                className="h-3 w-3 cursor-pointer accent-[rgb(var(--c-danger))]"
+              />
+              Bleep {bleepableCount === 1 ? "this one" : `these ${bleepableCount}`}
+            </label>
+          )}
+
           <button type="button" onClick={onClearSelection} className="btn btn-ghost btn-sm ml-auto">
             Done
           </button>
@@ -466,6 +574,19 @@ export const EditableTranscript = memo(function EditableTranscript({
                         aria-label={`Censor "${w.text}"`}
                         title={`Censor this "${w.text}" only`}
                         className="mr-0.5 h-2.5 w-2.5 translate-y-px cursor-pointer accent-[rgb(var(--c-danger))] align-middle"
+                      />
+                    )}
+                    {/* The audio half, offered only once the word is censored
+                        — a bleep for an unmasked word is not a thing the
+                        render can do. */}
+                    {selectedIds.has(w.id) && onSetBleeped && inClip(w) && censoredIds?.has(w.id) && (
+                      <input
+                        type="checkbox"
+                        checked={bleepedIds?.has(w.id) ?? false}
+                        onChange={(e) => onSetBleeped([w.id], e.target.checked)}
+                        aria-label={`Bleep "${w.text}" in the audio`}
+                        title={`Bleep this "${w.text}" in the audio`}
+                        className="mr-0.5 h-2.5 w-2.5 translate-y-px cursor-pointer accent-[rgb(var(--c-accent))] align-middle"
                       />
                     )}
                     <Word

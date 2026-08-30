@@ -245,6 +245,9 @@ function target(over: Partial<RenderTarget> = {}): RenderTarget {
       enabled: false,
       sensitivity: "MEDIUM",
       captionMode: "FULL",
+      audioEnabled: true,
+      audioExemptWordIds: [],
+      audioForceWordIds: [],
       audioMode: "BEEP",
       replacement: null,
       allowList: [],
@@ -374,6 +377,9 @@ const censorOn = {
   enabled: true,
   sensitivity: "MEDIUM" as const,
   captionMode: "FULL" as const,
+  audioEnabled: true,
+  audioExemptWordIds: [],
+  audioForceWordIds: [],
   audioMode: "BEEP" as const,
   replacement: null,
   allowList: [],
@@ -440,6 +446,113 @@ test("captions are masked for the same words the audio bleeped", async () => {
   assert.ok(text.includes("****"), `expected a masked word, got ${text}`);
   assert.ok(!text.includes("shit"), "the raw word must never reach the renderer");
   assert.ok(text.includes("worked"), "innocent words are untouched");
+});
+
+test("audio censoring off still masks the captions, but plays the speech", async () => {
+  const { deps, spy } = makeDeps(
+    target({
+      censor: { ...censorOn, audioEnabled: false },
+      burnCaptions: true,
+      captionAnimation: "POP",
+    }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-noaudio" }));
+
+  // The two halves of censoring are independent: this is the "show s*** over
+  // audible speech" case, which is a normal editorial choice rather than a
+  // half-configured clip.
+  assert.equal(spy.censors.length, 0, "no bleep pass runs");
+  const text = spy.captioned[0].cueText;
+  assert.ok(text.includes("****"), `caption still masked, got ${text}`);
+  assert.ok(!text.includes("shit"), "the raw word must never reach the renderer");
+});
+
+test("audio censoring off does not suppress a hand-picked word's mask", async () => {
+  const { deps, spy } = makeDeps(
+    target({
+      censor: { ...censorOn, enabled: false, audioEnabled: false, forceWordIds: ["c2"] },
+      burnCaptions: true,
+      captionAnimation: "POP",
+    }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-noaudio2" }));
+
+  assert.equal(spy.censors.length, 0);
+  assert.ok(spy.captioned[0].cueText.includes("*"), "the hand-picked word is still masked");
+});
+
+test("one occurrence can be bleeped while another is only masked", async () => {
+  const segs: Segment[] = [
+    {
+      startMs: 0,
+      endMs: 40_000,
+      text: "shit and shit",
+      words: [
+        { id: "b1", text: "shit", startMs: 12_000, endMs: 12_400 },
+        { id: "b2", text: "and", startMs: 13_000, endMs: 13_300 },
+        { id: "b3", text: "shit", startMs: 14_000, endMs: 14_400 },
+      ],
+    },
+  ];
+  const { deps, spy } = makeDeps(
+    target({
+      censor: { ...censorOn, audioExemptWordIds: ["b1"] },
+      burnCaptions: true,
+      captionAnimation: "POP",
+    }),
+    withTranscript(segs),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-peraudio" }));
+
+  assert.equal(spy.censors[0].spans.length, 1, "only the un-exempted one is bleeped");
+  // Clip starts at 10s: the second "shit" lands at 4.0s, padded to 3.94.
+  assert.ok(Math.abs(spy.censors[0].spans[0].startSec - 3.94) < 1e-9);
+  // Both are still masked — the audio override does not touch the captions.
+  const text = spy.captioned[0].cueText;
+  assert.ok(!text.includes("shit"), `no raw word may survive, got ${text}`);
+});
+
+test("a word can be bleeped while the clip-wide audio switch is off", async () => {
+  const { deps, spy } = makeDeps(
+    target({
+      censor: { ...censorOn, audioEnabled: false, audioForceWordIds: ["c2"] },
+    }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-forceaudio" }));
+
+  assert.equal(spy.censors.length, 1, "the forced word still runs a bleep pass");
+  assert.equal(spy.censors[0].spans.length, 1);
+});
+
+test("adjacent spans are not merged across a bleep exemption", async () => {
+  // Two censored words back to back, one kept audible. Merging happens after
+  // filtering, so the bleep must not swallow the neighbour.
+  const segs: Segment[] = [
+    {
+      startMs: 0,
+      endMs: 40_000,
+      text: "shit shit",
+      words: [
+        { id: "m1", text: "shit", startMs: 12_000, endMs: 12_400 },
+        { id: "m2", text: "shit", startMs: 12_420, endMs: 12_800 },
+      ],
+    },
+  ];
+  const { deps, spy } = makeDeps(
+    target({ censor: { ...censorOn, audioExemptWordIds: ["m1"] } }),
+    withTranscript(segs),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-nomerge" }));
+
+  assert.equal(spy.censors[0].spans.length, 1);
+  // Starts at the *second* word (2.42s - 60ms pad), not the first.
+  assert.ok(
+    Math.abs(spy.censors[0].spans[0].startSec - 2.36) < 1e-9,
+    `expected the kept word to stay audible, got ${spy.censors[0].spans[0].startSec}`,
+  );
 });
 
 test("censoring works with captions off — the words only drive the bleep", async () => {

@@ -32,6 +32,18 @@ export interface CensorConfigInput {
   exemptWordIds?: readonly string[];
   /** Transcript word ids always censored, whatever the term lists say. */
   censorWordIds?: readonly string[];
+  /**
+   * Whether censored words are bleeped in the audio. This is only the clip-wide
+   * default — the two id lists below override it per occurrence.
+   *
+   * Undefined means true, so a caller that predates the audio split (and every
+   * test that does not care) keeps the old behaviour of bleeping what it masks.
+   */
+  audioEnabled?: boolean;
+  /** Censored words left audible: masked in the captions, not bleeped. */
+  audioExemptWordIds?: readonly string[];
+  /** Censored words bleeped even when `audioEnabled` is false. */
+  audioForceWordIds?: readonly string[];
 }
 
 export interface CensorSpan {
@@ -110,7 +122,37 @@ function context(config: CensorConfigInput) {
     exemptIds: new Set(config.exemptWordIds ?? []),
     censorIds: new Set(config.censorWordIds ?? []),
     auto: config.enabled,
+    audio: config.audioEnabled ?? true,
+    audioExemptIds: new Set(config.audioExemptWordIds ?? []),
+    audioForceIds: new Set(config.audioForceWordIds ?? []),
   };
+}
+
+/**
+ * Is a *already-censored* word bleeped in the audio?
+ *
+ * Same precedence shape as `classify`: the decision made about this occurrence
+ * beats the clip-wide default. Deliberately not folded into `classify` — being
+ * censored and being bleeped are separate questions, and a word can be the
+ * first without the second (masked caption over audible speech).
+ */
+function bleeped(
+  word: CensorWord,
+  ctx: { audio: boolean; audioExemptIds: Set<string>; audioForceIds: Set<string> },
+): boolean {
+  const id = word.id;
+  if (id) {
+    if (ctx.audioForceIds.has(id)) return true;
+    if (ctx.audioExemptIds.has(id)) return false;
+  }
+  return ctx.audio;
+}
+
+/** Whether this word is bleeped, for a caller that has only the id and config. */
+export function isBleeped(config: CensorConfigInput, wordId: string): boolean {
+  if (config.audioForceWordIds?.includes(wordId)) return true;
+  if (config.audioExemptWordIds?.includes(wordId)) return false;
+  return config.audioEnabled ?? true;
 }
 
 /**
@@ -121,6 +163,17 @@ function context(config: CensorConfigInput) {
  */
 export function censorHasWork(config: CensorConfigInput): boolean {
   return config.enabled || (config.censorWordIds?.length ?? 0) > 0;
+}
+
+/**
+ * Is there anything for the *audio* pass to do?
+ *
+ * With the clip-wide switch off there can still be individually forced words,
+ * which is exactly the case a plain `audioEnabled` check would drop.
+ */
+export function censorHasAudioWork(config: CensorConfigInput): boolean {
+  if (!censorHasWork(config)) return false;
+  return (config.audioEnabled ?? true) || (config.audioForceWordIds?.length ?? 0) > 0;
 }
 
 /**
@@ -188,6 +241,30 @@ export function detectSpans(
   config: CensorConfigInput,
   padMs = 60,
 ): CensorSpan[] {
+  return collect(words, config, padMs, false);
+}
+
+/**
+ * The subset of `detectSpans` that is actually bleeped.
+ *
+ * Filtering happens *before* merging, because merging two adjacent spans of
+ * which only one is bleeped would silence a word the user chose to keep
+ * audible — the filter has to decide membership, not trim the result.
+ */
+export function audioSpans(
+  words: readonly CensorWord[],
+  config: CensorConfigInput,
+  padMs = 60,
+): CensorSpan[] {
+  return collect(words, config, padMs, true);
+}
+
+function collect(
+  words: readonly CensorWord[],
+  config: CensorConfigInput,
+  padMs: number,
+  audioOnly: boolean,
+): CensorSpan[] {
   if (!censorHasWork(config)) return [];
 
   const ctx = context(config);
@@ -195,6 +272,7 @@ export function detectSpans(
   words.forEach((w, index) => {
     const tier = classify(w, index, ctx);
     if (!tier) return;
+    if (audioOnly && !bleeped(w, ctx)) return;
 
     out.push({
       ...(w.id ? { wordId: w.id } : {}),

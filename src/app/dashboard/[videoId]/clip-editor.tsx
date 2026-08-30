@@ -11,7 +11,7 @@ import { ClipPlayer, type PreviewWord } from "./clip-player";
 import { KEYFRAME_SNAP_MS } from "./focus-window";
 import { CensorControls, type CensorSettings } from "./censor-controls";
 import { VoiceoverPanel } from "./voiceover-panel";
-import { censoredIndices } from "@/lib/censor/detect.ts";
+import { censoredIndices, isBleeped } from "@/lib/censor/detect.ts";
 import { maskWords } from "@/lib/censor/mask.ts";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
 import type { TranscriptView } from "../editor-pane";
@@ -63,12 +63,15 @@ export interface ClipData {
   censorEnabled: boolean;
   censorSensitivity: "LOW" | "MEDIUM" | "HIGH";
   censorCaptionMode: "FULL" | "PARTIAL" | "FIRST" | "CUSTOM";
+  censorAudioEnabled: boolean;
   censorAudioMode: "MUTE" | "BEEP" | "TONE";
   censorReplacement: string | null;
   censorAllowList: string[];
   censorDenyList: string[];
   censorExemptWordIds: string[];
   censorForceWordIds: string[];
+  censorAudioExemptWordIds: string[];
+  censorAudioForceWordIds: string[];
   accepted: boolean;
   savedToProjectId: string | null;
   captions: CaptionConfig | null;
@@ -312,6 +315,9 @@ export function ClipEditor({
       denyList: draft.censorDenyList,
       exemptWordIds: draft.censorExemptWordIds,
       censorWordIds: draft.censorForceWordIds,
+      audioEnabled: draft.censorAudioEnabled,
+      audioExemptWordIds: draft.censorAudioExemptWordIds,
+      audioForceWordIds: draft.censorAudioForceWordIds,
     }),
     [
       draft.censorEnabled,
@@ -320,6 +326,9 @@ export function ClipEditor({
       draft.censorDenyList,
       draft.censorExemptWordIds,
       draft.censorForceWordIds,
+      draft.censorAudioEnabled,
+      draft.censorAudioExemptWordIds,
+      draft.censorAudioForceWordIds,
     ],
   );
 
@@ -395,6 +404,50 @@ export function ClipEditor({
       });
     },
     [censoredByRules],
+  );
+
+  /**
+   * Of the censored words, the ones the render will actually bleep. Same
+   * relationship to `censoredWordIds` as the audio has to the mask: a subset,
+   * never a superset — a word that is not censored is never bleeped.
+   */
+  const bleepedWordIds = useMemo(() => {
+    const out = new Set<string>();
+    for (const id of censoredWordIds) if (isBleeped(censorCfg, id)) out.add(id);
+    return out;
+  }, [censoredWordIds, censorCfg]);
+
+  /**
+   * Turn the bleep on or off for specific occurrences.
+   *
+   * Mirrors `setWordsCensored`, with the clip-wide `censorAudioEnabled` playing
+   * the part the lexicon rules play there: an id is only recorded when it
+   * differs from that default, so flipping the clip toggle back leaves no
+   * stale overrides behind.
+   */
+  const setWordsBleeped = useCallback(
+    (wordIds: string[], bleeped: boolean) => {
+      if (wordIds.length === 0) return;
+      setDraft((d) => {
+        const exempt = new Set(d.censorAudioExemptWordIds);
+        const force = new Set(d.censorAudioForceWordIds);
+        for (const id of wordIds) {
+          if (bleeped) {
+            exempt.delete(id);
+            if (!d.censorAudioEnabled) force.add(id);
+          } else {
+            force.delete(id);
+            if (d.censorAudioEnabled) exempt.add(id);
+          }
+        }
+        return {
+          ...d,
+          censorAudioExemptWordIds: [...exempt],
+          censorAudioForceWordIds: [...force],
+        };
+      });
+    },
+    [],
   );
 
   const previewWords = useMemo(() => {
@@ -723,12 +776,15 @@ export function ClipEditor({
     draft.censorEnabled !== clip.censorEnabled ||
     draft.censorSensitivity !== clip.censorSensitivity ||
     draft.censorCaptionMode !== clip.censorCaptionMode ||
+    draft.censorAudioEnabled !== clip.censorAudioEnabled ||
     draft.censorAudioMode !== clip.censorAudioMode ||
     draft.censorReplacement !== clip.censorReplacement ||
     !sameList(draft.censorAllowList, clip.censorAllowList) ||
     !sameList(draft.censorDenyList, clip.censorDenyList) ||
     !sameList(draft.censorExemptWordIds, clip.censorExemptWordIds) ||
     !sameList(draft.censorForceWordIds, clip.censorForceWordIds) ||
+    !sameList(draft.censorAudioExemptWordIds, clip.censorAudioExemptWordIds) ||
+    !sameList(draft.censorAudioForceWordIds, clip.censorAudioForceWordIds) ||
     draft.accepted !== clip.accepted;
 
   async function call(kind: NonNullable<typeof busy>, req: () => Promise<Response>) {
@@ -762,12 +818,15 @@ export function ClipEditor({
         censorEnabled: draft.censorEnabled,
         censorSensitivity: draft.censorSensitivity,
         censorCaptionMode: draft.censorCaptionMode,
+        censorAudioEnabled: draft.censorAudioEnabled,
         censorAudioMode: draft.censorAudioMode,
         censorReplacement: draft.censorReplacement,
         censorAllowList: draft.censorAllowList,
         censorDenyList: draft.censorDenyList,
         censorExemptWordIds: draft.censorExemptWordIds,
         censorForceWordIds: draft.censorForceWordIds,
+        censorAudioExemptWordIds: draft.censorAudioExemptWordIds,
+        censorAudioForceWordIds: draft.censorAudioForceWordIds,
         accepted: draft.accepted,
       }),
     });
@@ -1544,7 +1603,10 @@ export function ClipEditor({
           onClearSelection={clearWordSelection}
           onSeek={seekToWord}
           censoredIds={censoredWordIds}
-
+          audioCensored={draft.censorAudioEnabled}
+          onSetAudioCensored={(on) => setDraft((d) => ({ ...d, censorAudioEnabled: on }))}
+          bleepedIds={bleepedWordIds}
+          onSetBleeped={setWordsBleeped}
           clipStartMs={draft.startMs}
           clipEndMs={draft.endMs}
           onSetCensored={setWordsCensored}

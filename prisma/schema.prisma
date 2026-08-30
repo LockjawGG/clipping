@@ -335,7 +335,12 @@ model Clip {
   censorSensitivity String  @default("MEDIUM")
   /// FULL | PARTIAL | FIRST | CUSTOM
   censorCaptionMode String  @default("FULL")
-  /// MUTE | BEEP | TONE
+  /// Whether the flagged words are bleeped in the audio. Separate from
+  /// `censorEnabled` on purpose: masking the caption text and silencing the
+  /// spoken word are different editorial decisions, and a clip that shows
+  /// "s***" over audible speech is a normal thing to want.
+  censorAudioEnabled Boolean @default(true)
+  /// MUTE | BEEP | TONE — how the audio is censored when the above is on.
   censorAudioMode   String  @default("BEEP")
   /// Replacement text for the CUSTOM caption mode, e.g. "[BLEEP]".
   censorReplacement String?
@@ -348,6 +353,11 @@ model Clip {
   /// lists above, so "censor this damn but not that one" is expressible.
   censorExemptWordIds String[] @default([])
   censorForceWordIds  String[] @default([])
+  /// The same per-occurrence overrides for the *audio* half, so one "shit" can
+  /// be bleeped while another is only masked in the captions. These apply on
+  /// top of `censorAudioEnabled`, which is merely the clip-wide default.
+  censorAudioExemptWordIds String[] @default([])
+  censorAudioForceWordIds  String[] @default([])
 
   /// An authored capture window: JSON `FocusKeyframe[]` of { atMs, x, y, scale,
   /// ease } that pans and zooms the crop over the clip. Takes precedence over

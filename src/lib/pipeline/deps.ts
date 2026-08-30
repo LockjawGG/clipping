@@ -119,6 +119,12 @@ export interface RenderCensorConfig {
   enabled: boolean;
   sensitivity: "LOW" | "MEDIUM" | "HIGH";
   captionMode: "FULL" | "PARTIAL" | "FIRST" | "CUSTOM";
+  /** Whether flagged words are bleeped. Off still masks the caption text —
+   *  the two halves of censoring are independently switchable. */
+  audioEnabled: boolean;
+  /** Per-occurrence audio overrides, mirroring exempt/force for the mask. */
+  audioExemptWordIds: string[];
+  audioForceWordIds: string[];
   audioMode: "MUTE" | "BEEP" | "TONE";
   replacement: string | null;
   allowList: string[];

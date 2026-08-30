@@ -47,6 +47,7 @@ export const updateClipSchema = z
     censorEnabled: z.boolean(),
     censorSensitivity: z.enum(["LOW", "MEDIUM", "HIGH"]),
     censorCaptionMode: z.enum(["FULL", "PARTIAL", "FIRST", "CUSTOM"]),
+    censorAudioEnabled: z.boolean(),
     censorAudioMode: z.enum(["MUTE", "BEEP", "TONE"]),
     censorReplacement: z.string().max(40).nullable(),
     censorAllowList: z.array(z.string().min(1).max(60)).max(500),
@@ -54,6 +55,9 @@ export const updateClipSchema = z
     /** Per-occurrence overrides, as transcript word ids. */
     censorExemptWordIds: z.array(z.string().min(1).max(64)).max(5000),
     censorForceWordIds: z.array(z.string().min(1).max(64)).max(5000),
+    /** The same overrides for the audio half of censoring. */
+    censorAudioExemptWordIds: z.array(z.string().min(1).max(64)).max(5000),
+    censorAudioForceWordIds: z.array(z.string().min(1).max(64)).max(5000),
     muted: z.boolean(),
     volume: z.number().min(0).max(2),
     playbackRate: z.number().min(0.25).max(4),
@@ -118,12 +122,15 @@ interface ClipListRow {
   censorEnabled: boolean;
   censorSensitivity: "LOW" | "MEDIUM" | "HIGH";
   censorCaptionMode: "FULL" | "PARTIAL" | "FIRST" | "CUSTOM";
+  censorAudioEnabled: boolean;
   censorAudioMode: "MUTE" | "BEEP" | "TONE";
   censorReplacement: string | null;
   censorAllowList: string[];
   censorDenyList: string[];
   censorExemptWordIds: string[];
   censorForceWordIds: string[];
+  censorAudioExemptWordIds: string[];
+  censorAudioForceWordIds: string[];
   accepted: boolean;
   savedToProjectId: string | null;
   caption: string | null;
@@ -485,12 +492,15 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
         // Stored as plain columns; the schema constrains the values on write.
         censorSensitivity: c.censorSensitivity as "LOW" | "MEDIUM" | "HIGH",
         censorCaptionMode: c.censorCaptionMode as "FULL" | "PARTIAL" | "FIRST" | "CUSTOM",
+        censorAudioEnabled: c.censorAudioEnabled,
         censorAudioMode: c.censorAudioMode as "MUTE" | "BEEP" | "TONE",
         censorReplacement: c.censorReplacement,
         censorAllowList: c.censorAllowList,
         censorDenyList: c.censorDenyList,
         censorExemptWordIds: c.censorExemptWordIds,
         censorForceWordIds: c.censorForceWordIds,
+        censorAudioExemptWordIds: c.censorAudioExemptWordIds,
+        censorAudioForceWordIds: c.censorAudioForceWordIds,
         accepted: c.accepted,
         savedToProjectId: c.savedToProjectId,
         caption: c.caption,

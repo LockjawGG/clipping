@@ -19,6 +19,7 @@ export interface CensorSettings {
   censorEnabled: boolean;
   censorSensitivity: "LOW" | "MEDIUM" | "HIGH";
   censorCaptionMode: "FULL" | "PARTIAL" | "FIRST" | "CUSTOM";
+  censorAudioEnabled: boolean;
   censorAudioMode: "MUTE" | "BEEP" | "TONE";
   censorReplacement: string | null;
   censorAllowList: string[];
@@ -26,6 +27,8 @@ export interface CensorSettings {
   /** Per-occurrence overrides, as transcript word ids. */
   censorExemptWordIds: string[];
   censorForceWordIds: string[];
+  censorAudioExemptWordIds: string[];
+  censorAudioForceWordIds: string[];
 }
 
 const SENSITIVITIES: { id: CensorSettings["censorSensitivity"]; label: string; hint: string }[] = [
@@ -138,14 +141,29 @@ export const CensorControls = memo(function CensorControls({ value, words, onCha
             ))}
           </select>
         </label>
-        <label className="flex items-center gap-1.5">
+        <label
+          className="flex items-center gap-1.5"
+          title={
+            value.censorAudioEnabled
+              ? undefined
+              : "Audio censoring is switched off for this clip — the captions are masked but the speech is left audible."
+          }
+        >
+          <input
+            type="checkbox"
+            checked={value.censorAudioEnabled}
+            onChange={(e) => onChange({ censorAudioEnabled: e.target.checked })}
+            aria-label="Bleep censored words in the audio"
+            className="h-3 w-3 cursor-pointer accent-[rgb(var(--c-danger))]"
+          />
           audio
           <select
+            disabled={!value.censorAudioEnabled}
             value={value.censorAudioMode}
             onChange={(e) =>
               onChange({ censorAudioMode: e.target.value as CensorSettings["censorAudioMode"] })
             }
-            className="field py-0.5"
+            className="field py-0.5 disabled:opacity-50"
           >
             {AUDIO_MODES.map((m) => (
               <option key={m.id} value={m.id}>

@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 
 import {
   censoredIndices,
+  audioSpans,
+  censorHasAudioWork,
   censorHasWork,
   detectSpans,
+  isBleeped,
   normalizeToken,
 } from "../src/lib/censor/detect.ts";
 import { maskWord, maskWords } from "../src/lib/censor/mask.ts";
@@ -362,4 +365,60 @@ test("buildCensorAudioArgs refuses a no-op pass", () => {
       }),
     /no censor spans/,
   );
+});
+
+test("the audio half is a subset of the mask, decided per occurrence", () => {
+  const words = [
+    { id: "w1", text: "shit", startMs: 0, endMs: 400 },
+    { id: "w2", text: "fine", startMs: 500, endMs: 800 },
+    { id: "w3", text: "shit", startMs: 900, endMs: 1200 },
+  ];
+  const on = { enabled: true, sensitivity: "MEDIUM" as const };
+
+  assert.equal(detectSpans(words, on).length, 2, "both are masked");
+  assert.equal(audioSpans(words, on).length, 2, "and both bleeped by default");
+
+  // One kept audible: still masked, no longer bleeped.
+  const split = { ...on, audioExemptWordIds: ["w1"] };
+  assert.equal(detectSpans(words, split).length, 2, "the mask is unchanged");
+  const heard = audioSpans(words, split);
+  assert.equal(heard.length, 1);
+  assert.equal(heard[0].wordId, "w3");
+
+  // The clip-wide switch is only a default; a forced word beats it.
+  const off = { ...on, audioEnabled: false };
+  assert.equal(audioSpans(words, off).length, 0);
+  assert.equal(detectSpans(words, off).length, 2, "captions are still masked");
+  assert.equal(audioSpans(words, { ...off, audioForceWordIds: ["w1"] }).length, 1);
+});
+
+test("censorHasAudioWork separates 'nothing to bleep' from 'bleep is off'", () => {
+  const base = { enabled: true, sensitivity: "MEDIUM" as const };
+  assert.equal(censorHasAudioWork(base), true);
+  assert.equal(censorHasAudioWork({ ...base, audioEnabled: false }), false);
+  assert.equal(
+    censorHasAudioWork({ ...base, audioEnabled: false, audioForceWordIds: ["w1"] }),
+    true,
+    "a single forced word is still work",
+  );
+  assert.equal(
+    censorHasAudioWork({ enabled: false, sensitivity: "MEDIUM", audioForceWordIds: ["w1"] }),
+    false,
+    "nothing is censored, so nothing can be bleeped",
+  );
+});
+
+test("isBleeped follows the same precedence as the spans", () => {
+  const cfg = {
+    enabled: true,
+    sensitivity: "MEDIUM" as const,
+    audioEnabled: true,
+    audioExemptWordIds: ["a"],
+    audioForceWordIds: ["b"],
+  };
+  assert.equal(isBleeped(cfg, "a"), false, "exempt wins over the default");
+  assert.equal(isBleeped(cfg, "b"), true);
+  assert.equal(isBleeped(cfg, "c"), true, "falls back to the clip default");
+  assert.equal(isBleeped({ ...cfg, audioEnabled: false }, "c"), false);
+  assert.equal(isBleeped({ ...cfg, audioEnabled: false }, "b"), true, "force beats the default");
 });
