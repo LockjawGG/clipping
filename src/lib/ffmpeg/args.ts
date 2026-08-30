@@ -469,6 +469,79 @@ export function buildTrackedReframeArgs({
   ];
 }
 
+export interface ZoomReframeArgs {
+  inputPath: string;
+  outputPath: string;
+  aspect: AspectRatio;
+  /** `zoompan` expressions from `focusToZoompanExpr`. */
+  zoomZ: string;
+  zoomX: string;
+  zoomY: string;
+  /** Output frame rate; the expressions read `on/fps` to get elapsed time. */
+  fps: number;
+  subtitlePath?: string;
+  subtitleStyle?: CaptionBurnStyle;
+}
+
+/**
+ * A reframe whose capture window also zooms.
+ *
+ * `crop` cannot do this — a video stream's frame size is constant and `crop`'s
+ * w/h are evaluated once at configuration time — so a zooming window goes
+ * through `zoompan`, which crops a shrinking region and scales it back to a
+ * fixed output size. Pure panning stays on `buildTrackedReframeArgs`, which is
+ * cheaper and already proven.
+ */
+export function buildZoomReframeArgs({
+  inputPath,
+  outputPath,
+  aspect,
+  zoomZ,
+  zoomX,
+  zoomY,
+  fps,
+  subtitlePath,
+  subtitleStyle,
+}: ZoomReframeArgs): string[] {
+  assertSafePath(inputPath);
+  assertSafePath(outputPath);
+
+  const { width, height } = ASPECT_DIMENSIONS[aspect];
+  if (!width) throw new Error(`unknown aspect ratio: ${aspect}`);
+  if (!zoomZ || !zoomX || !zoomY) throw new Error("zoom z/x/y expressions are required");
+  if (!Number.isFinite(fps) || fps <= 0) throw new Error(`bad fps: ${fps}`);
+
+  const esc = (e: string) => e.replace(/,/g, "\\,");
+  const rate = Math.round(fps);
+
+  const filters = [
+    // Cover the target box first, so the window's normalised coordinates mean
+    // the same thing here as they do on the crop path.
+    `scale=${width}:${height}:force_original_aspect_ratio=increase`,
+    `crop=${width}:${height}`,
+    // d=1 keeps it to one output frame per input frame; the default holds each
+    // input frame for 90 frames and the clip would run long.
+    `zoompan=z='${esc(zoomZ)}':x='${esc(zoomX)}':y='${esc(zoomY)}':d=1:s=${width}x${height}:fps=${rate}`,
+    "setsar=1",
+  ];
+  if (subtitlePath) {
+    filters.push(subtitlesFilter(subtitlePath, { width, height }, subtitleStyle));
+  }
+
+  return [
+    "-y",
+    "-i", inputPath,
+    "-filter_complex", filters.join(","),
+    "-c:v", "libx264",
+    "-preset", "fast",
+    "-crf", "20",
+    "-pix_fmt", "yuv420p",
+    "-c:a", "copy",
+    "-movflags", "+faststart",
+    outputPath,
+  ];
+}
+
 export interface OverlayCompositeItem {
   /** Absolute local path to the image/GIF. */
   path: string;
