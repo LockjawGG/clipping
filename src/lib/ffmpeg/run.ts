@@ -18,9 +18,11 @@ import {
   buildVideoPacketDtsArgs,
   buildThumbnailArgs,
   buildTrackedReframeArgs,
+  buildZoomReframeArgs,
 } from "./args.ts";
 import type { FocalPoint } from "../faces/track.ts";
-import { focalTrackToCropExpr } from "./track-crop.ts";
+import type { FocusSample } from "../focus/keyframes.ts";
+import { focalTrackToCropExpr, focusToZoompanExpr } from "./track-crop.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -130,6 +132,17 @@ export interface TrackedReframeOptions {
   subtitleStyle?: CaptionBurnStyle;
 }
 
+/** A reframe whose capture window also zooms — `crop` cannot change size. */
+export interface ZoomReframeOptions {
+  aspect: AspectRatio;
+  /** Dense window samples (position + zoom) from `focusToSamples`. */
+  samples: (FocusSample & { atMs: number })[];
+  /** Output frame rate; zoompan expressions read `on/fps` for elapsed time. */
+  fps: number;
+  subtitlePath?: string;
+  subtitleStyle?: CaptionBurnStyle;
+}
+
 export interface OverlayCompositeOptions {
   /** Frame width of `inputPath`; overlay sizes scale off it. */
   frameWidth: number;
@@ -161,6 +174,13 @@ export interface Ffmpeg {
     inputPath: string,
     outputPath: string,
     opts: TrackedReframeOptions,
+    signal?: AbortSignal,
+  ): Promise<void>;
+  /** Reframe with a capture window that pans *and* zooms. */
+  reframeZoom(
+    inputPath: string,
+    outputPath: string,
+    opts: ZoomReframeOptions,
     signal?: AbortSignal,
   ): Promise<void>;
   /** Grab a single frame as a JPEG. */
@@ -265,6 +285,32 @@ export class FfmpegRunner implements Ffmpeg {
   ): Promise<void> {
     await mkdir(dirname(outputPath), { recursive: true });
     await this.exec(this.ffmpegPath, buildReframeArgs({ inputPath, outputPath, ...opts }), signal);
+  }
+
+  async reframeZoom(
+    inputPath: string,
+    outputPath: string,
+    opts: ZoomReframeOptions,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await mkdir(dirname(outputPath), { recursive: true });
+    const { width, height } = ASPECT_DIMENSIONS[opts.aspect];
+    const { z, x, y } = focusToZoompanExpr(opts.samples, { width, height, fps: opts.fps });
+    await this.exec(
+      this.ffmpegPath,
+      buildZoomReframeArgs({
+        inputPath,
+        outputPath,
+        aspect: opts.aspect,
+        zoomZ: z,
+        zoomX: x,
+        zoomY: y,
+        fps: opts.fps,
+        subtitlePath: opts.subtitlePath,
+        subtitleStyle: opts.subtitleStyle,
+      }),
+      signal,
+    );
   }
 
   async reframeTracked(

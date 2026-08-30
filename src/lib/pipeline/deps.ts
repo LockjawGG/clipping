@@ -85,6 +85,9 @@ export interface RenderTarget {
   aspectRatio: DbAspectRatio;
   focalX: number | null;
   focalY: number | null;
+  /** Authored capture window (JSON `FocusKeyframe[]`); beats focalX/Y and the
+   *  detected face track. Null = no window. */
+  focusTrackJson: string | null;
   quality: "P720" | "P1080" | "ORIGINAL";
   burnCaptions: boolean;
   /** Prisma CaptionAnimation enum value; "NONE" means a static ffmpeg burn. */

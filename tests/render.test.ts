@@ -49,6 +49,8 @@ interface Spy {
   cuts: CutOptions[];
   reframes: ReframeOptions[];
   trackedReframes: number;
+  trackedTracks: Array<Array<{ atMs: number; x: number; y: number }>>;
+  zoomReframes: Array<{ aspect: string; fps: number; sampleCount: number; maxScale: number }>;
   probed: string[];
   puts: string[];
   captioned: Array<{
@@ -71,6 +73,8 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
     cuts: [],
     reframes: [],
     trackedReframes: 0,
+    trackedTracks: [],
+    zoomReframes: [],
     probed: [],
     puts: [],
     captioned: [],
@@ -91,8 +95,25 @@ function makeDeps(target: RenderTarget | null, over: Partial<PipelineDeps> = {})
       reframe: async (_i: string, _o: string, opts: ReframeOptions) => {
         spy.reframes.push(opts);
       },
-      reframeTracked: async () => {
+      reframeTracked: async (
+        _i: string,
+        _o: string,
+        opts: { track: Array<{ atMs: number; x: number; y: number }> },
+      ) => {
         spy.trackedReframes++;
+        spy.trackedTracks.push(opts.track);
+      },
+      reframeZoom: async (
+        _i: string,
+        _o: string,
+        opts: { aspect: string; fps: number; samples: Array<{ scale: number }> },
+      ) => {
+        spy.zoomReframes.push({
+          aspect: opts.aspect,
+          fps: opts.fps,
+          sampleCount: opts.samples.length,
+          maxScale: Math.max(...opts.samples.map((s) => s.scale)),
+        });
       },
       thumbnail: async () => {},
       composeOverlays: async (_i: string, _o: string, opts: OverlayCompositeOptions) => {
@@ -198,6 +219,7 @@ function target(over: Partial<RenderTarget> = {}): RenderTarget {
     aspectRatio: "VERTICAL_9_16",
     focalX: 0.5,
     focalY: 0.4,
+    focusTrackJson: null,
     quality: "P1080",
     burnCaptions: false,
     captionAnimation: "NONE",
@@ -445,6 +467,91 @@ test("auto focal point + a detected track uses the panning reframe", async () =>
   assert.equal(spy.trackedReframes, 1);
   assert.equal(spy.reframes.length, 0);
   assert.equal(spy.puts[0], "renders/r8/output.mp4");
+});
+
+test("a pan-only capture window reuses the cheap crop path", async () => {
+  const { deps, spy } = makeDeps(
+    target({
+      focusTrackJson: JSON.stringify([
+        { atMs: 0, x: 0.2, y: 0.5, scale: 1 },
+        { atMs: 28_000, x: 0.8, y: 0.5, scale: 1 },
+      ]),
+    }),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-win" }));
+
+  assert.equal(spy.zoomReframes.length, 0, "no zoom -> no zoompan");
+  assert.equal(spy.trackedReframes, 1);
+  const track = spy.trackedTracks[0];
+  assert.ok(track.length > 2, "the window is flattened to a dense focal track");
+  assert.equal(track[0].x, 0.2, "starts where the window starts");
+  assert.equal(track[track.length - 1].atMs, 28_000, "and is pinned to the clip end");
+  assert.ok(Math.abs(track[track.length - 1].x - 0.8) < 1e-9);
+});
+
+test("a capture window that zooms uses zoompan instead", async () => {
+  const { deps, spy } = makeDeps(
+    target({
+      focusTrackJson: JSON.stringify([
+        { atMs: 0, x: 0.5, y: 0.5, scale: 1 },
+        { atMs: 28_000, x: 0.3, y: 0.3, scale: 2.5 },
+      ]),
+    }),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-zoom" }));
+
+  assert.equal(spy.trackedReframes, 0, "crop cannot change size");
+  assert.equal(spy.zoomReframes.length, 1);
+  assert.equal(spy.zoomReframes[0].aspect, "9:16");
+  assert.equal(spy.zoomReframes[0].fps, 30, "fps comes from the probe, for on/fps");
+  assert.equal(spy.zoomReframes[0].maxScale, 2.5);
+});
+
+test("an authored window beats a manual focal point and the face detector", async () => {
+  const { deps, spy } = makeDeps(
+    target({
+      focalX: 0.9,
+      focalY: 0.9,
+      focusTrackJson: JSON.stringify([{ atMs: 0, x: 0.1, y: 0.1, scale: 1 }]),
+    }),
+    {
+      faces: {
+        name: "fake",
+        detectTrack: async () => {
+          throw new Error("the detector must not run when a window exists");
+        },
+      },
+    } as unknown as Partial<PipelineDeps>,
+  );
+  await renderHandler(ctx(deps, { renderId: "r-prec" }));
+
+  assert.equal(spy.reframes.length, 0, "the static focal point is not used");
+  assert.equal(spy.trackedReframes, 1);
+  assert.equal(spy.trackedTracks[0][0].x, 0.1, "the window won");
+});
+
+test("a corrupt capture window falls through rather than failing the render", async () => {
+  const { deps, spy } = makeDeps(target({ focusTrackJson: "{ not json" }));
+  await renderHandler(ctx(deps, { renderId: "r-bad" }));
+  // Falls back to the clip's static focal point.
+  assert.equal(spy.trackedReframes, 0);
+  assert.equal(spy.zoomReframes.length, 0);
+  assert.equal(spy.reframes.length, 1);
+  assert.equal(spy.puts[0], "renders/r-bad/output.mp4");
+});
+
+test("a capture window reframes a 16:9 clip that would otherwise pass through", async () => {
+  const { deps, spy } = makeDeps(
+    target({
+      aspectRatio: "LANDSCAPE_16_9",
+      focusTrackJson: JSON.stringify([{ atMs: 0, x: 0.5, y: 0.5, scale: 2 }]),
+    }),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-16" }));
+  // Without a window this clip skips the reframe entirely; a punch-in is still
+  // a reframe even when the aspect is unchanged.
+  assert.equal(spy.zoomReframes.length, 1);
+  assert.equal(spy.zoomReframes[0].aspect, "16:9");
 });
 
 test("auto focal point but no detections falls back to the static centre reframe", async () => {

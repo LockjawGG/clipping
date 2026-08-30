@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Segment, StorageProvider } from "../providers/types.ts";
 import { DEFAULT_SNAP_CONFIG, snapToSentences } from "../clips/boundaries.ts";
 import { CAPTION_ANIMATIONS } from "../captions/presets.ts";
+import { serializeFocusTrack } from "../focus/keyframes.ts";
 import { ApiError } from "./http.ts";
 
 /**
@@ -27,6 +28,20 @@ export const updateClipSchema = z
     aspectRatio: z.enum(ASPECTS),
     focalX: z.number().min(0).max(1).nullable(),
     focalY: z.number().min(0).max(1).nullable(),
+    /** An authored capture window. Accepted as keyframes and stored as JSON;
+     *  re-parsed defensively by `parseFocusTrack` at render time. Null clears. */
+    focusTrack: z
+      .array(
+        z.object({
+          atMs: z.number().nonnegative(),
+          x: z.number().min(0).max(1),
+          y: z.number().min(0).max(1),
+          scale: z.number().min(1).max(4).optional(),
+          ease: z.enum(["linear", "in", "out", "inOut", "spring"]).optional(),
+        }),
+      )
+      .max(400)
+      .nullable(),
     muted: z.boolean(),
     volume: z.number().min(0).max(2),
     playbackRate: z.number().min(0.25).max(4),
@@ -87,6 +102,7 @@ interface ClipListRow {
   aspectRatio: string;
   focalX: number | null;
   focalY: number | null;
+  focusTrackJson: string | null;
   accepted: boolean;
   savedToProjectId: string | null;
   caption: string | null;
@@ -238,7 +254,16 @@ export async function updateClip(deps: ClipServiceDeps, clipId: string, input: u
 
   if (patch.savedToProjectId) await deps.assertProjectOwned(patch.savedToProjectId);
 
-  await deps.db.clip.update({ where: { id: clipId }, data: patch });
+  // The capture window arrives as keyframes and is stored as JSON. Normalising
+  // through the same parser the renderer uses means what is saved is exactly
+  // what will be rendered — sorted, clamped, and with defaults filled in.
+  const { focusTrack, ...rest } = patch;
+  const data: Record<string, unknown> = { ...rest };
+  if (focusTrack !== undefined) {
+    data.focusTrackJson = focusTrack === null ? null : serializeFocusTrack(focusTrack);
+  }
+
+  await deps.db.clip.update({ where: { id: clipId }, data });
   return { id: clipId, ...patch, startMs, endMs };
 }
 
@@ -344,6 +369,7 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
         aspectRatio: c.aspectRatio,
         focalX: c.focalX,
         focalY: c.focalY,
+        focusTrackJson: c.focusTrackJson,
         accepted: c.accepted,
         savedToProjectId: c.savedToProjectId,
         caption: c.caption,

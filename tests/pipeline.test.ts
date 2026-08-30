@@ -95,6 +95,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       cut: async () => {},
       reframe: async () => {},
       reframeTracked: async () => {},
+    reframeZoom: async () => {},
       thumbnail: async () => {},
       composeOverlays: async () => {},
     },

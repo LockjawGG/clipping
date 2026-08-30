@@ -90,6 +90,7 @@ function makeDeps(
             aspectRatio: "VERTICAL_9_16",
             focalX: 0.5,
             focalY: 0.4,
+            focusTrackJson: null,
             accepted: false,
             savedToProjectId: null,
             caption: "A punchy one-liner for socials",

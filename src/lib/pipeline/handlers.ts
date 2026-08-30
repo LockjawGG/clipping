@@ -8,6 +8,12 @@ import { DEFAULT_CAPTION_STYLE, remotionPreset } from "../captions/presets.ts";
 import { captionNeedsRemotion } from "../captions/text-style.ts";
 import { ASPECT_DIMENSIONS, type CaptionBurnStyle } from "../ffmpeg/args.ts";
 import { type FocalPoint, resampleTrack } from "../faces/track.ts";
+import {
+  focusNeedsZoom,
+  focusToFocalTrack,
+  focusToSamples,
+  parseFocusTrack,
+} from "../focus/keyframes.ts";
 import type { JobHandler } from "../jobs/types.ts";
 import {
   jobWorkDir,
@@ -390,23 +396,60 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     }
 
     const aspect = toAspectPreset(target.aspectRatio);
-    const needsReframe = aspect !== "16:9" || subtitlePath !== undefined || animated;
+    const clipMs = target.endMs - target.startMs;
+    // An authored capture window reframes even a 16:9 clip — the user asked for
+    // a punch-in, not an aspect change.
+    const focusWindow = parseFocusTrack(target.focusTrackJson);
+    const hasWindow = focusWindow.length > 0;
+    const needsReframe =
+      aspect !== "16:9" || subtitlePath !== undefined || animated || hasWindow;
 
-    // No manual focal point + a real aspect change -> try to follow a face.
+    // Crop strategy, widest to narrowest: an authored window, then a manual
+    // focal point, then a detected face. Only the last one costs a detection
+    // pass, so it runs only when nothing more specific exists.
     let focalTrack: FocalPoint[] = [];
-    if (needsReframe && target.focalX === null && target.focalY === null && aspect !== "16:9") {
+    if (
+      needsReframe &&
+      !hasWindow &&
+      target.focalX === null &&
+      target.focalY === null &&
+      aspect !== "16:9"
+    ) {
       const pre = await deps.ffmpeg.probe(cut, signal);
       const raw = await deps.faces.detectTrack(cut, {
-        durationMs: target.endMs - target.startMs,
+        durationMs: clipMs,
         width: pre.width ?? undefined,
         height: pre.height ?? undefined,
         signal,
       });
-      focalTrack = resampleTrack(raw, target.endMs - target.startMs);
+      focalTrack = resampleTrack(raw, clipMs);
     }
     const tracked = focalTrack.length >= 2;
 
-    if (needsReframe && tracked) {
+    if (needsReframe && hasWindow && focusNeedsZoom(focusWindow)) {
+      // Zoom means the window changes size, which `crop` cannot express.
+      const pre = await deps.ffmpeg.probe(cut, signal);
+      await deps.ffmpeg.reframeZoom(
+        cut,
+        reframed,
+        {
+          aspect,
+          samples: focusToSamples(focusWindow, clipMs),
+          fps: pre.fps ?? 30,
+          subtitlePath,
+          subtitleStyle,
+        },
+        signal,
+      );
+    } else if (needsReframe && hasWindow) {
+      // Pan-only: flatten to a focal track and reuse the cheaper crop path.
+      await deps.ffmpeg.reframeTracked(
+        cut,
+        reframed,
+        { aspect, track: focusToFocalTrack(focusWindow, clipMs), subtitlePath, subtitleStyle },
+        signal,
+      );
+    } else if (needsReframe && tracked) {
       await deps.ffmpeg.reframeTracked(
         cut,
         reframed,

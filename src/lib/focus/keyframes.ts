@@ -108,8 +108,16 @@ export function parseFocusTrack(json: string | null | undefined): FocusKeyframe[
   return out;
 }
 
-/** Serialise, dropping an empty track so an untouched clip stores null. */
-export function serializeFocusTrack(keyframes: FocusKeyframe[]): string | null {
+/**
+ * Serialise, dropping an empty track so an untouched clip stores null.
+ *
+ * Input goes through `parseFocusTrack`, so what is stored is already sorted,
+ * clamped and defaulted — the API can accept a looser shape (an omitted
+ * `scale` means "no zoom") and the DB still holds exactly what will render.
+ */
+export function serializeFocusTrack(
+  keyframes: readonly (Omit<FocusKeyframe, "scale"> & { scale?: number })[],
+): string | null {
   const clean = parseFocusTrack(JSON.stringify(keyframes));
   return clean.length ? JSON.stringify(clean) : null;
 }

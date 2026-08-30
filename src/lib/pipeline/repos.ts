@@ -304,6 +304,7 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
               endMs: true,
               aspectRatio: true,
               focalX: true,
+              focusTrackJson: true,
               focalY: true,
               videoId: true,
               subtitleConfig: {
@@ -361,6 +362,7 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
         aspectRatio: render.clip.aspectRatio as DbAspectRatio,
         focalX: render.clip.focalX,
         focalY: render.clip.focalY,
+        focusTrackJson: render.clip.focusTrackJson,
         quality: render.quality as "P720" | "P1080" | "ORIGINAL",
         burnCaptions: sc !== null,
         overlays: render.clip.overlays
