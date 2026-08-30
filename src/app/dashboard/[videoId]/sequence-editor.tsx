@@ -89,13 +89,18 @@ export function SequenceEditor({
   onOverlayTiming,
   onOverlayDeleted,
   onOverlayReorder,
+  onScrub,
   onChanged,
 }: {
   clipId: string;
   /**
-   * When the main preview is playing, its position (ms from clip start) is
-   * pushed here so the timeline playhead tracks playback. `null` when paused —
-   * the timeline then keeps its own playhead and can be scrubbed freely.
+   * The preview's position (ms from the start of the clip).
+   *
+   * There is one playhead, and this is it: the timeline mirrors the preview
+   * whether it is playing or parked. It used to be pushed only during playback,
+   * which left the timeline with a second playhead of its own sitting at zero —
+   * so scrubbing the preview and pressing Split cut at the start of the clip
+   * instead of where you were looking.
    */
   followPlayheadMs?: number | null;
   /**
@@ -114,6 +119,12 @@ export function SequenceEditor({
   onOverlayDeleted?: (overlayId: string) => void;
   /** Reorder an overlay's layer (its stacking / lane position). */
   onOverlayReorder?: (overlayId: string, direction: "up" | "down") => void;
+  /**
+   * Dragging the timeline's playhead moves the preview, which then reports the
+   * position back through `followPlayheadMs`. That round trip is what keeps the
+   * two from disagreeing.
+   */
+  onScrub?: (ms: number) => void;
   /** Called after any change lands server-side, so the editor can soft-refresh. */
   onChanged?: () => void;
 }) {
@@ -140,8 +151,9 @@ export function SequenceEditor({
    *  whatever happened to be selected is invisible and easy to get wrong. */
   const [addToTrackId, setAddToTrackId] = useState<string | null>(null);
 
-  // Follow the main preview while it plays. Cheap: one state set per frame the
-  // player emits (~30fps), and only while playing.
+  // Mirror the preview. Cheap: one state set per frame the player emits
+  // (~30fps while playing, one per scrub otherwise), and the value coming back
+  // from a drag is the one this component just sent, so it lands unchanged.
   useEffect(() => {
     if (followPlayheadMs == null) return;
     setPlayhead(followPlayheadMs);
@@ -626,7 +638,12 @@ export function SequenceEditor({
         clips={clips}
         onClipsChange={onClipsChange}
         playheadMs={playhead}
-        onSeek={setPlayhead}
+        onSeek={(ms) => {
+          // Move locally at once so the drag feels direct, and tell the preview,
+          // which echoes the same number straight back.
+          setPlayhead(ms);
+          onScrub?.(ms);
+        }}
         durationMs={Math.max(contentEnd + 4000, 12000)}
         selectedClipId={selected}
         onSelectClip={setSelected}

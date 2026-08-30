@@ -714,7 +714,6 @@ export function ClipEditor({
     },
     [clip.startMs, clip.endMs],
   );
-  const [previewPlaying, setPreviewPlaying] = useState(false);
   const [playToggleReq, setPlayToggleReq] = useState<{ n: number } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const [dropActive, setDropActive] = useState(false);
@@ -1500,7 +1499,6 @@ export function ClipEditor({
         onSelectOverlay={setSelectedOverlayId}
         onOverlayChange={editOverlay}
         onPlayhead={setPlayheadMs}
-        onPlayingChange={setPreviewPlaying}
         onSourceError={softReset}
         onCaptionLayout={onCaptionLayout}
         focusTrack={focusTrack}
@@ -1857,7 +1855,8 @@ export function ClipEditor({
             </div>
             <SequenceEditor
               clipId={clip.id}
-              followPlayheadMs={previewPlaying ? playheadMs : null}
+              followPlayheadMs={playheadMs}
+              onScrub={(ms) => setSeekReq({ ms, n: Date.now() })}
               seekToMs={seekReq}
               overlayWindows={overlayWindows}
               onOverlayTiming={applyOverlayTiming}
