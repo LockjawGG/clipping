@@ -25,6 +25,12 @@ export interface SynthesizeOptions {
   speed?: number;
   /** -1..1, provider-dependent. Ignored where unsupported. */
   pitch?: number;
+  /**
+   * Seconds of silence a provider appends after each sentence. Set to 0 when
+   * the result will be spliced into a longer line, or every join inherits a
+   * pause the original reading never had.
+   */
+  sentenceSilenceSec?: number;
   signal?: AbortSignal;
 }
 

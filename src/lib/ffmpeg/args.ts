@@ -1159,3 +1159,41 @@ export function buildToneWavArgs({
     outputPath,
   ];
 }
+
+export interface TrimSilenceArgs {
+  inputPath: string;
+  outputPath: string;
+  /** Anything quieter than this counts as silence at the edges. */
+  thresholdDb?: number;
+}
+
+/**
+ * Strip silence from both ends of an audio file, leaving the middle alone.
+ *
+ * For speech that will be spliced into a longer line. A synthesiser pads each
+ * utterance at its boundaries, so parts read separately and joined run audibly
+ * longer than the same words read in one go — the pauses land at every seam.
+ * Interior pauses are deliberate and must survive, which is why this trims the
+ * edges rather than removing silence generally.
+ *
+ * The trailing end is done by reversing, trimming the (now leading) edge, and
+ * reversing back: `silenceremove` only looks forward.
+ */
+export function buildTrimSilenceArgs({
+  inputPath,
+  outputPath,
+  thresholdDb = -45,
+}: TrimSilenceArgs): string[] {
+  assertSafePath(inputPath);
+  assertSafePath(outputPath);
+  const edge =
+    `silenceremove=start_periods=1:start_silence=0:` +
+    `start_threshold=${fgNum(thresholdDb, -120, 0)}dB:detection=peak`;
+  return [
+    "-y",
+    "-i", inputPath,
+    "-af", `${edge},areverse,${edge},areverse`,
+    "-c:a", "pcm_s16le",
+    outputPath,
+  ];
+}

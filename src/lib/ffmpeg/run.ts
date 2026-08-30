@@ -10,6 +10,7 @@ import {
   type OverlayCompositeItem,
   buildConcatArgs,
   buildToneWavArgs,
+  buildTrimSilenceArgs,
   buildVideoLayerArgs,
   buildCutArgs,
   concatListLine,
@@ -198,6 +199,8 @@ export interface Ffmpeg {
     opts: { layers: Array<{ path: string; startSec: number }>; width: number; height: number; crf?: number },
     signal?: AbortSignal,
   ): Promise<void>;
+  /** Strip silence from both ends, so spliced speech keeps its pacing. */
+  trimSilence(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void>;
   /** Write a bleep tone as a standalone WAV, for splicing into speech. */
   toneWav(
     outputPath: string,
@@ -341,6 +344,11 @@ export class FfmpegRunner implements Ffmpeg {
   ): Promise<void> {
     await mkdir(dirname(outputPath), { recursive: true });
     await this.exec(this.ffmpegPath, buildVideoLayerArgs({ inputPath, outputPath, ...opts }), signal);
+  }
+
+  async trimSilence(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void> {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await this.exec(this.ffmpegPath, buildTrimSilenceArgs({ inputPath, outputPath }), signal);
   }
 
   async toneWav(

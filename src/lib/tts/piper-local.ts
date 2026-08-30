@@ -143,6 +143,12 @@ export class PiperTtsProvider implements TtsProvider {
     if (options.speed && options.speed !== 1) {
       args.push("--length_scale", String(1 / Math.max(0.5, Math.min(2, options.speed))));
     }
+    // Piper pads every utterance with a sentence-final pause. Harmless for a
+    // whole line, but a line assembled from parts would inherit one at each
+    // join and run visibly longer than the same words read in one go.
+    if (options.sentenceSilenceSec !== undefined) {
+      args.push("--sentence_silence", String(Math.max(0, options.sentenceSilenceSec)));
+    }
 
     await this.run(args, clean, options.signal);
 

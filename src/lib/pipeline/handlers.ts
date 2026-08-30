@@ -261,11 +261,15 @@ export const voiceoverHandler: JobHandler<PipelineDeps> = async ({
     let done = 0;
     for (const [ref, text] of todo) {
       const slug = ref.replace(/[^\w]/g, "_");
-      const speak = async (part: string, name: string) =>
+      const speak = async (part: string, name: string, seamless = false) =>
         deps.tts.synthesize(part, scratchPath(work, name), {
           voiceId: target.voiceId || undefined,
           language: target.language,
           speed: target.speed,
+          // Parts of a split line are joined back together, so they must not
+          // each carry a sentence-final pause — that is what made a censored
+          // line run longer than the same words read in one piece.
+          ...(seamless ? { sentenceSilenceSec: 0 } : {}),
           signal,
         });
 
@@ -289,10 +293,19 @@ export const voiceoverHandler: JobHandler<PipelineDeps> = async ({
         const parts: string[] = [];
         let totalMs = 0;
         for (const [i, run] of runs.entries()) {
-          const spoken = await speak(run.text, `vo-${slug}-${i}.wav`);
+          const spoken = await speak(run.text, `vo-${slug}-${i}.wav`, true);
+          // Each part is padded with silence at its own boundaries, which would
+          // land at every seam and make the line run longer than the same words
+          // read in one go. Trimmed to its speech, a part contributes only what
+          // it says — including the censored word, whose trimmed length is what
+          // the bleep replacing it should last.
+          const tight = scratchPath(work, `vo-${slug}-${i}-tight.wav`);
+          await deps.ffmpeg.trimSilence(spoken.audioPath, tight, signal);
+          const spokenMs = (await deps.ffmpeg.probe(tight, signal)).durationMs || spoken.durationMs;
+
           if (!run.censored) {
-            parts.push(spoken.audioPath);
-            totalMs += spoken.durationMs;
+            parts.push(tight);
+            totalMs += spokenMs;
             continue;
           }
           // Silence keeps the gap; a tone fills it. Either way the word is gone.
@@ -300,7 +313,7 @@ export const voiceoverHandler: JobHandler<PipelineDeps> = async ({
           await deps.ffmpeg.toneWav(
             tone,
             {
-              durationMs: spoken.durationMs,
+              durationMs: spokenMs,
               sampleRate: spoken.sampleRate,
               ...(target.censor.audioMode === "TONE" ? { hz: 400 } : {}),
               ...(target.censor.audioMode === "MUTE" ? { gain: 0 } : {}),
@@ -308,7 +321,7 @@ export const voiceoverHandler: JobHandler<PipelineDeps> = async ({
             signal,
           );
           parts.push(tone);
-          totalMs += spoken.durationMs;
+          totalMs += spokenMs;
         }
         const joined = scratchPath(work, `vo-${slug}.wav`);
         await deps.ffmpeg.concat(parts, joined, {}, signal);
