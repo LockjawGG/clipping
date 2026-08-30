@@ -17,5 +17,8 @@ next-env.d.ts
 # local storage / scratch / build artifacts
 .storage/
 .tmp/
+# Piper voice models: tens of megabytes of downloaded weights, reproducible
+# from huggingface.co/rhasspy/piper-voices rather than worth versioning.
+.voices/
 dist/
 *.log
