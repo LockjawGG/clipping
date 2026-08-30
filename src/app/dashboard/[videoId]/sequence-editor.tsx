@@ -136,6 +136,9 @@ export function SequenceEditor({
     }> | null
   >(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  /** Which lane "+ Add media" drops onto. Explicit, because inferring it from
+   *  whatever happened to be selected is invisible and easy to get wrong. */
+  const [addToTrackId, setAddToTrackId] = useState<string | null>(null);
 
   // Follow the main preview while it plays. Cheap: one state set per frame the
   // player emits (~30fps), and only while playing.
@@ -516,6 +519,14 @@ export function SequenceEditor({
 
   const contentEnd = clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0);
   const sel = clips.find((c) => c.id === selected) ?? null;
+  const videoLanes = seq.tracks.filter((t) => t.kind === "VIDEO");
+  // The chosen lane, or the one holding the selected piece, or the first —
+  // resolved here so the picker can *show* it rather than decide it silently.
+  const targetLane =
+    videoLanes.find((t) => t.id === addToTrackId) ??
+    videoLanes.find((t) => t.id === sel?.trackId) ??
+    videoLanes[0] ??
+    null;
   // Grow with the track count (video + one lane per overlay) so every overlay
   // lane stays visible; cap it so a clip with many overlays still fits.
   const tlHeight = Math.min(620, 150 + seq.tracks.length * 84);
@@ -553,6 +564,24 @@ export function SequenceEditor({
           </button>
           {pickerOpen && (
             <div className="absolute left-0 top-full z-20 mt-1 w-64 rounded-lg border border-border bg-surface-raised p-1 shadow-lg">
+              {videoLanes.length > 1 && (
+                <div className="mb-1 flex items-center gap-1 border-b border-border px-2 pb-1.5">
+                  <span className="text-muted">Add to</span>
+                  {videoLanes.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setAddToTrackId(t.id)}
+                      aria-pressed={t.id === targetLane?.id}
+                      className={`rounded px-1.5 py-0.5 ${
+                        t.id === targetLane?.id ? "bg-accent/20 text-accent" : "text-muted"
+                      }`}
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              )}
               {media === null ? (
                 <p className="px-2 py-1.5 text-muted">Loading…</p>
               ) : media.length === 0 ? (
@@ -565,10 +594,7 @@ export function SequenceEditor({
                     className="flex w-full items-baseline gap-2 rounded px-2 py-1.5 text-left hover:bg-accent/10"
                     onClick={() => {
                       setPickerOpen(false);
-                      const lane =
-                        seq.tracks.find((t) => t.id === sel?.trackId) ??
-                        seq.tracks.find((t) => t.kind === "VIDEO");
-                      if (lane) void insertMedia(m, lane.id);
+                      if (targetLane) void insertMedia(m, targetLane.id);
                     }}
                   >
                     <span
