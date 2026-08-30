@@ -18,6 +18,7 @@ import { remotionPreset } from "@/lib/captions/presets.ts";
 import type { CaptionConfig } from "./caption-controls";
 import type { OverlayView } from "./overlay-panel";
 import { wordSpanCss, type WordStyle } from "./editable-transcript";
+import { TONES } from "@/lib/ffmpeg/args.ts";
 
 export interface PreviewWord {
   id: string;
@@ -37,6 +38,22 @@ interface Props {
    * before committing to a render.
    */
   cutSpans?: ReadonlyArray<{ startMs: number; endMs: number }>;
+  /**
+   * Narration to play over the clip, placed exactly where the render will put
+   * it. Times are clip-relative. Without this the preview is silent about a
+   * voiceover that the export would contain.
+   */
+  voiceover?: {
+    duckDb: number;
+    lines: ReadonlyArray<{ ref: string; startMs: number; playedMs: number; tempo: number; url: string }>;
+  } | null;
+  /**
+   * Stretches the render replaces with a bleep, clip-relative. The preview
+   * silences the clip across them and makes the same sound, so a censor pass
+   * can be checked by ear before committing to a render — the captions were
+   * always masked here, but the speech underneath used to play in the clear.
+   */
+  bleeps?: ReadonlyArray<{ startMs: number; endMs: number; mode: "MUTE" | "BEEP" | "TONE" }>;
   words: PreviewWord[];
   captionsOn: boolean;
   caption: CaptionConfig;
@@ -97,6 +114,8 @@ export const ClipPlayer = memo(function ClipPlayer({
   startMs,
   endMs,
   cutSpans,
+  voiceover,
+  bleeps,
   words,
   captionsOn,
   caption,
@@ -215,6 +234,137 @@ export const ClipPlayer = memo(function ClipPlayer({
     return true;
   }, [cutSpans, mode, baseMs]);
 
+  /**
+   * Keep the narration lined up with the playhead.
+   *
+   * One audio element per line, seeked rather than restarted, so scrubbing
+   * lands mid-line the way it does in the finished video. While a line plays
+   * the clip's own audio is ducked by the same dB the render will duck it by —
+   * at 0 dB that is deliberately nothing, and the narration sits on top of the
+   * original at full volume.
+   */
+  const voRefs = useRef(new Map<string, HTMLAudioElement>());
+  const activeVo = useRef<string | null>(null);
+  const syncVoiceover = useCallback(
+    (posMs: number, running: boolean) => {
+      const v = videoRef.current;
+      const lines = mode === "source" ? (voiceover?.lines ?? []) : [];
+      if (!v) return false;
+      if (lines.length === 0) {
+        activeVo.current = null;
+        return false;
+      }
+      const active = lines.find((l) => posMs >= l.startMs && posMs < l.startMs + l.playedMs) ?? null;
+
+      if (activeVo.current && activeVo.current !== active?.ref) {
+        voRefs.current.get(activeVo.current)?.pause();
+        activeVo.current = null;
+      }
+      if (!active) return false;
+      const el = voRefs.current.get(active.ref);
+      if (!el) return;
+      // Tempo compresses the line, so a millisecond of the clip is `tempo`
+      // milliseconds of the audio file.
+      const want = ((posMs - active.startMs) * active.tempo) / 1000;
+      if (Math.abs(el.currentTime - want) > 0.25) el.currentTime = want;
+      el.playbackRate = active.tempo;
+      if (running && el.paused) void el.play().catch(() => {});
+      if (!running && !el.paused) el.pause();
+      activeVo.current = active.ref;
+      return true;
+    },
+    [voiceover, mode],
+  );
+
+  /**
+   * The bleep, made with an oscillator rather than a file.
+   *
+   * The tone table is the render's own, so what you hear is the frequency and
+   * level ffmpeg will mix in. The clip's audio is silenced across the span in
+   * every mode — that is what censoring the audio means; the tone is only what
+   * replaces it.
+   */
+  const toneRef = useRef<{ ctx: AudioContext; osc: OscillatorNode; gain: GainNode } | null>(null);
+  const stopTone = useCallback(() => {
+    const t = toneRef.current;
+    if (!t) return;
+    t.gain.gain.value = 0;
+  }, []);
+  const playTone = useCallback((mode: "BEEP" | "TONE") => {
+    const spec = TONES[mode];
+    let t = toneRef.current;
+    if (!t) {
+      const Ctor: typeof AudioContext =
+        window.AudioContext ??
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!Ctor) return;
+      const ctx = new Ctor();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      osc.type = "sine";
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      t = { ctx, osc, gain };
+      toneRef.current = t;
+    }
+    if (t.ctx.state === "suspended") void t.ctx.resume();
+    t.osc.frequency.value = spec.hz;
+    t.gain.gain.value = spec.gain;
+  }, []);
+
+  useEffect(
+    () => () => {
+      const t = toneRef.current;
+      toneRef.current = null;
+      if (t) {
+        try {
+          t.osc.stop();
+          void t.ctx.close();
+        } catch {
+          /* already gone */
+        }
+      }
+    },
+    [],
+  );
+
+  /**
+   * What the clip's own audio should be doing at this instant.
+   *
+   * One place, because two features both want a say: a bleep silences it
+   * outright, and narration ducks it. A bleep wins — the point of censoring is
+   * that the speech does not come through.
+   */
+  const syncAudio = useCallback(
+    (posMs: number, running: boolean) => {
+      const v = videoRef.current;
+      if (!v) return;
+      const narrating = syncVoiceover(posMs, running);
+      const bleep =
+        mode === "source"
+          ? (bleeps ?? []).find((b) => posMs >= b.startMs && posMs < b.endMs)
+          : undefined;
+
+      if (bleep) {
+        v.volume = 0;
+        if (running && bleep.mode !== "MUTE") playTone(bleep.mode);
+        else stopTone();
+        return;
+      }
+      stopTone();
+      v.volume = narrating ? Math.pow(10, (voiceover?.duckDb ?? 0) / 20) : 1;
+    },
+    [bleeps, mode, playTone, stopTone, syncVoiceover, voiceover],
+  );
+
+  // Nothing should keep talking once the video stops.
+  useEffect(() => {
+    if (playing) return;
+    for (const el of voRefs.current.values()) el.pause();
+    stopTone();
+  }, [playing, stopTone]);
+
   function onTimeUpdate() {
     const v = videoRef.current;
     if (!v) return;
@@ -233,6 +383,7 @@ export const ClipPlayer = memo(function ClipPlayer({
     const bounded = Math.min(Math.max(0, v.currentTime * 1000 - baseMs), spanMs);
     setPosMs(bounded);
     onPlayhead(bounded);
+    syncAudio(bounded, false);
   }
 
   // Smooth playhead: sample currentTime on animation frames (throttled to ~30fps)
@@ -251,10 +402,11 @@ export const ClipPlayer = memo(function ClipPlayer({
       const bounded = Math.min(Math.max(0, v.currentTime * 1000 - baseMs), spanMs);
       setPosMs(bounded);
       onPlayhead(bounded);
+      syncAudio(bounded, true);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, baseMs, spanMs, onPlayhead, skipCuts]);
+  }, [playing, baseMs, spanMs, onPlayhead, skipCuts, syncAudio]);
 
   useEffect(() => {
     onPlayingChange?.(playing);
@@ -421,6 +573,21 @@ export const ClipPlayer = memo(function ClipPlayer({
         >
           {vttUrl && <track kind="subtitles" src={vttUrl} label="Captions" />}
         </video>
+        {/* Narration, one element per line. Hidden: the video element
+            stays the only thing on screen, these only make sound. */}
+        {mode === "source" &&
+          (voiceover?.lines ?? []).map((l) => (
+            <audio
+              key={l.ref}
+              ref={(el) => {
+                if (el) voRefs.current.set(l.ref, el);
+                else voRefs.current.delete(l.ref);
+              }}
+              src={l.url}
+              preload="auto"
+              hidden
+            />
+          ))}
 
         {dragging && (
           <div className="pointer-events-none absolute inset-x-0 border-t border-dashed border-white/70" />

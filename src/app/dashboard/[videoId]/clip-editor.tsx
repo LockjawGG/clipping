@@ -10,8 +10,8 @@ import { CaptionControls, CAPTION_DEFAULTS, type CaptionConfig } from "./caption
 import { ClipPlayer, type PreviewWord } from "./clip-player";
 import { KEYFRAME_SNAP_MS } from "./focus-window";
 import { CensorControls, type CensorSettings } from "./censor-controls";
-import { VoiceoverPanel } from "./voiceover-panel";
-import { bleepedIndices, censoredIndices } from "@/lib/censor/detect.ts";
+import { VoiceoverPanel, type PreviewLine } from "./voiceover-panel";
+import { audioSpans, bleepedIndices, censoredIndices } from "@/lib/censor/detect.ts";
 import type { CensorWordOverride, CensorWordOverrides } from "@/lib/censor/overrides.ts";
 import { type CaptionCensorMode, maskWords } from "@/lib/censor/mask.ts";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
@@ -472,6 +472,37 @@ export function ClipEditor({
    * derived from the word's own timing at render time, so correcting a
    * transcript timing or re-trimming the clip keeps the cut on its word.
    */
+  /**
+   * The narration the preview should play, reported by the voiceover panel as
+   * it loads. Held here because the panel and the player are siblings, and the
+   * panel is the one that already knows.
+   */
+  const [narration, setNarration] = useState<{ lines: PreviewLine[]; duckDb: number }>({
+    lines: [],
+    duckDb: 0,
+  });
+  const onNarrationLines = useCallback(
+    (lines: PreviewLine[], duckDb: number) => setNarration({ lines, duckDb }),
+    [],
+  );
+
+  /**
+   * Exactly the stretches the render will bleep, for the preview to bleep too.
+   *
+   * Built from the same `audioSpans` the renderer calls, on the same config, so
+   * toggling a word or changing the sound is audible immediately instead of
+   * being a promise the export keeps later. Clip-relative, like `words`.
+   */
+  const bleepSpans = useMemo(
+    () =>
+      audioSpans(words, censorCfg).map((sp) => ({
+        startMs: sp.startMs,
+        endMs: sp.endMs,
+        mode: sp.audioMode ?? draft.censorAudioMode,
+      })),
+    [words, censorCfg, draft.censorAudioMode],
+  );
+
   const cutWordIds = useMemo(() => new Set(draft.removedWordIds), [draft.removedWordIds]);
   /**
    * The stretches the render will drop, for the preview to skip over.
@@ -1380,6 +1411,8 @@ export function ClipEditor({
         caption={captionDraft}
         wordStyles={wordStyles}
         cutSpans={cutSpans}
+        voiceover={narration.lines.length > 0 ? narration : null}
+        bleeps={bleepSpans}
         renderUrl={clip.render?.downloadUrl ?? null}
         seekToMs={seekReq}
         togglePlayReq={playToggleReq}
@@ -1598,7 +1631,7 @@ export function ClipEditor({
         </div>
       )}
 
-      <VoiceoverPanel clipId={clip.id} />
+      <VoiceoverPanel clipId={clip.id} onLines={onNarrationLines} />
 
       <div className="rounded-lg bg-surface-raised px-3 py-2">
         <CensorControls

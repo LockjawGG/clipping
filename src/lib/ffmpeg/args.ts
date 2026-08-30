@@ -719,7 +719,11 @@ function spanPredicate(spans: CensorSpanSec[]): string {
  * that the censoring reads as a glitch. Clipping is not a risk because the
  * voice is fully ducked inside the span, so nothing sums against it.
  */
-const TONES: Record<"BEEP" | "TONE", { hz: number; gain: number }> = {
+/**
+ * Exported so the preview can make the same sound the render will. A second
+ * copy of these numbers in the browser is a copy that can drift.
+ */
+export const TONES: Record<"BEEP" | "TONE", { hz: number; gain: number }> = {
   BEEP: { hz: 1000, gain: 0.8 },
   TONE: { hz: 400, gain: 0.5 },
 };

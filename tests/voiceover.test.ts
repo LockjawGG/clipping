@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { executableExists } from "../src/lib/providers/executable.ts";
+import { getVoiceover, type VoiceoverServiceDeps } from "../src/lib/api/voiceover.ts";
 
 import {
   missingLines,
@@ -223,4 +224,87 @@ test("a value that looks like a path is checked as a path", () => {
   // fall back to a PATH lookup of the same name.
   assert.equal(executableExists("./package.json"), true);
   assert.equal(executableExists("./no-such-file-here.txt"), false);
+});
+
+// --- getVoiceover places the lines the preview will play -------------------
+
+function previewDeps(over: Partial<Record<string, unknown>> = {}) {
+  const clip = { id: "c1", videoId: "v1", startMs: 10_000, endMs: 26_000, video: { projectId: "p1" } };
+  const lines = [
+    { ref: "seg:0", text: "one", durationMs: 2_000, audioKey: "vo/a.wav" },
+    { ref: "seg:1", text: "two", durationMs: 9_000, audioKey: "vo/b.wav" },
+  ];
+  const deps = {
+    db: {
+      clip: { findUnique: async () => clip },
+      transcriptSegment: {
+        findMany: async () => [
+          { startMs: 2_000, endMs: 9_000 },   // before the clip - not an anchor
+          { startMs: 11_000, endMs: 14_000 }, // seg:0
+          { startMs: 18_000, endMs: 22_000 }, // seg:1
+        ],
+      },
+      voiceover: {
+        findFirst: async () => ({
+          id: "vo1", clipId: "c1", sourceKind: "TRANSCRIPT", script: null, language: "en",
+          voiceId: "", speed: 1, duckDb: -12, status: "COMPLETED", errorMessage: null,
+          linesJson: JSON.stringify({ version: 1, lines }),
+        }),
+        create: async () => { throw new Error("unused"); },
+        update: async () => { throw new Error("unused"); },
+        delete: async () => { throw new Error("unused"); },
+      },
+      ...over,
+    },
+    storage: { createDownloadUrl: async (k: string) => `https://files/${k}` },
+    assertProjectOwned: async () => {},
+    enqueue: async () => "j1",
+  } as unknown as VoiceoverServiceDeps;
+  return deps;
+}
+
+test("the preview gets each line placed where the render will put it", async () => {
+  const vo = await getVoiceover(previewDeps(), "c1");
+  assert.ok(vo);
+
+  // Anchors are segments that overlap the clip, indexed in order and rebased
+  // onto it - the renderer's rule. The segment before the clip is not one, so
+  // seg:0 is the segment at 11s, i.e. 1s in.
+  assert.deepEqual(
+    vo.lines.map((l) => [l.ref, l.startMs]),
+    [["seg:0", 1_000], ["seg:1", 8_000]],
+  );
+  assert.deepEqual(vo.lines.map((l) => l.url), ["https://files/vo/a.wav", "https://files/vo/b.wav"]);
+  assert.equal(vo.lineCount, 2);
+});
+
+test("a line too long for its window is sped up, and says by how much", async () => {
+  const vo = await getVoiceover(previewDeps(), "c1");
+
+  // seg:0 fits its window untouched.
+  assert.equal(vo!.lines[0].tempo, 1);
+  assert.equal(vo!.lines[0].playedMs, 2_000);
+
+  // seg:1 is 9s of speech; the preview has to play it at the same rate the
+  // render will, or the narration drifts out of sync as it goes.
+  const second = vo!.lines[1];
+  assert.ok(second.tempo > 1, `expected a speed-up, got ${second.tempo}`);
+  assert.equal(second.playedMs, Math.round(9_000 / second.tempo));
+});
+
+test("no synthesized audio means nothing for the preview to play", async () => {
+  const deps = previewDeps({
+    voiceover: {
+      findFirst: async () => ({
+        id: "vo1", clipId: "c1", sourceKind: "TRANSCRIPT", script: null, language: "en",
+        voiceId: "", speed: 1, duckDb: 0, status: "QUEUED", errorMessage: null, linesJson: null,
+      }),
+      create: async () => { throw new Error("unused"); },
+      update: async () => { throw new Error("unused"); },
+      delete: async () => { throw new Error("unused"); },
+    },
+  });
+  const vo = await getVoiceover(deps, "c1");
+  assert.deepEqual(vo!.lines, []);
+  assert.equal(vo!.lineCount, 0);
 });

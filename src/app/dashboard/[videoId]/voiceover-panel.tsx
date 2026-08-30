@@ -16,6 +16,15 @@ interface Voice {
   language: string;
 }
 
+/** One line of narration, placed on the clip and playable in the preview. */
+export interface PreviewLine {
+  ref: string;
+  startMs: number;
+  playedMs: number;
+  tempo: number;
+  url: string;
+}
+
 interface Voiceover {
   id: string;
   sourceKind: string;
@@ -27,6 +36,7 @@ interface Voiceover {
   status: string;
   errorMessage: string | null;
   lineCount: number;
+  lines: PreviewLine[];
 }
 
 const SOURCES: Array<{ id: string; label: string; hint: string }> = [
@@ -34,7 +44,14 @@ const SOURCES: Array<{ id: string; label: string; hint: string }> = [
   { id: "SCRIPT", label: "Script", hint: "read text you write" },
 ];
 
-export const VoiceoverPanel = memo(function VoiceoverPanel({ clipId }: { clipId: string }) {
+export const VoiceoverPanel = memo(function VoiceoverPanel({
+  clipId,
+  onLines,
+}: {
+  clipId: string;
+  /** Hand the placed lines up so the preview can play them. */
+  onLines?: (lines: PreviewLine[], duckDb: number) => void;
+}) {
   const [vo, setVo] = useState<Voiceover | null>(null);
   const [voices, setVoices] = useState<Voice[]>([]);
   const [hint, setHint] = useState<string | null>(null);
@@ -50,11 +67,12 @@ export const VoiceoverPanel = memo(function VoiceoverPanel({ clipId }: { clipId:
       if (!res.ok) return;
       const body = (await res.json()) as Voiceover | null;
       setVo(body);
+      onLines?.(body?.lines ?? [], body?.duckDb ?? 0);
       if (body?.script != null) setScript((s) => (s === "" ? body.script! : s));
     } catch {
       /* the next poll retries */
     }
-  }, [clipId]);
+  }, [clipId, onLines]);
 
   useEffect(() => {
     void load();
@@ -101,6 +119,8 @@ export const VoiceoverPanel = memo(function VoiceoverPanel({ clipId }: { clipId:
   const remove = async () => {
     await fetch(`/api/clips/${clipId}/voiceover`, { method: "DELETE" }).catch(() => {});
     setVo(null);
+    // The preview has to stop playing narration that no longer exists.
+    onLines?.([], 0);
   };
 
   const sourceKind = vo?.sourceKind ?? "TRANSCRIPT";

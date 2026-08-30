@@ -95,6 +95,7 @@ export function learningService(userId: string): LearningServiceDeps {
 export function voiceoverService(userId: string): VoiceoverServiceDeps {
   return {
     db: db as unknown as VoiceoverServiceDeps["db"],
+    storage: getStorage(),
     assertProjectOwned: ownsProject(userId),
     enqueue: (input) => enqueueJob(db, input),
   };
