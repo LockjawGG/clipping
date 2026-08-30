@@ -13,7 +13,7 @@ import { CensorControls, type CensorSettings } from "./censor-controls";
 import { VoiceoverPanel } from "./voiceover-panel";
 import { bleepedIndices, censoredIndices } from "@/lib/censor/detect.ts";
 import type { CensorWordOverride, CensorWordOverrides } from "@/lib/censor/overrides.ts";
-import { maskWords } from "@/lib/censor/mask.ts";
+import { type CaptionCensorMode, maskWords } from "@/lib/censor/mask.ts";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
 import type { TranscriptView } from "../editor-pane";
 import { TRANSLATE_TARGETS } from "@/lib/translation/targets";
@@ -485,28 +485,41 @@ export function ClipEditor({
     [],
   );
 
+  /**
+   * The caption text as the player should show it — masked exactly the way the
+   * render will mask it.
+   *
+   * This runs on the real config rather than a simplified one. It used to be
+   * built from sensitivity and the term lists alone, gated on the detection
+   * toggle, which made the video preview the least truthful surface in the
+   * editor: a hand-marked word showed clean while the render masked it, a word
+   * rescued with "Keep it" still showed masked, and per-word masks never
+   * appeared at all.
+   */
   const previewWords = useMemo(() => {
-    if (!draft.censorEnabled) return words;
-    const cfg = {
-      enabled: true,
-      sensitivity: draft.censorSensitivity,
-      allowList: draft.censorAllowList,
-      denyList: draft.censorDenyList,
-    };
+    const flagged = censoredIndices(words, censorCfg);
+    if (flagged.size === 0) return words;
+
+    const perWord = new Map<number, { mode?: CaptionCensorMode; replacement?: string | null }>();
+    for (const index of flagged) {
+      const own = draft.censorWordOverrides[words[index].id];
+      if (own?.captionMode || own?.replacement != null) {
+        perWord.set(index, { mode: own.captionMode, replacement: own.replacement });
+      }
+    }
     return maskWords(
       words,
-      censoredIndices(words, cfg),
+      flagged,
       draft.censorCaptionMode,
       draft.censorReplacement ?? undefined,
+      perWord,
     );
   }, [
     words,
-    draft.censorEnabled,
-    draft.censorSensitivity,
-    draft.censorAllowList,
-    draft.censorDenyList,
+    censorCfg,
     draft.censorCaptionMode,
     draft.censorReplacement,
+    draft.censorWordOverrides,
   ]);
   const focusTrack = useMemo(
     () => parseFocusTrack(draft.focusTrackJson),
