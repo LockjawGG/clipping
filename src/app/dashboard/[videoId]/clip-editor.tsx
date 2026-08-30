@@ -558,6 +558,29 @@ export function ClipEditor({
   }, [plan, videoId, clip.startMs, clip.endMs, draft.startMs, draft.endMs, draft.removedWordIds, words]);
 
 
+  /**
+   * The preview and the timeline measure time in different spaces once a word
+   * is struck out.
+   *
+   * The preview plays the cut clip, so its playhead skips the removed
+   * stretches. The timeline panel still shows the sequence's own pieces, which
+   * know nothing about struck words — a cut is not a timeline edit. With a
+   * second struck out, position 8000 in the preview was 9010 on the timeline,
+   * and Split cut a second away from what was on screen.
+   *
+   * `remapAcrossCuts` converts either way depending on which plan you walk
+   * first, so these are the same function with the arguments swapped. Both are
+   * the identity while nothing is cut.
+   */
+  const toTimeline = useCallback(
+    (ms: number) => remapAcrossCuts(previewPlan.base, previewPlan.uncut, ms),
+    [previewPlan],
+  );
+  const toPreview = useCallback(
+    (ms: number) => remapAcrossCuts(previewPlan.uncut, previewPlan.base, ms),
+    [previewPlan],
+  );
+
   /** A playable URL for every source the plan touches. */
   const planSourceUrls = useMemo(
     () => ({ [videoId]: sourceUrl, ...(plan?.sourceUrls ?? {}) }),
@@ -1924,9 +1947,9 @@ export function ClipEditor({
             </div>
             <SequenceEditor
               clipId={clip.id}
-              followPlayheadMs={playheadMs}
-              onScrub={(ms) => setSeekReq({ ms, n: Date.now() })}
-              seekToMs={seekReq}
+              followPlayheadMs={toTimeline(playheadMs)}
+              onScrub={(ms) => setSeekReq({ ms: toPreview(ms), n: Date.now() })}
+              seekToMs={seekReq ? { ...seekReq, ms: toTimeline(seekReq.ms) } : seekReq}
               overlayWindows={overlayWindows}
               onOverlayTiming={applyOverlayTiming}
               onOverlayDeleted={removeOverlayLocal}
