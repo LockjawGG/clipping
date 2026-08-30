@@ -161,6 +161,12 @@ export interface SequenceDb {
   };
   video: {
     findUnique(a: { where: { id: string } }): Promise<VideoLite | null>;
+    findMany(a: {
+      where: Record<string, unknown>;
+      select: Record<string, unknown>;
+      orderBy?: unknown;
+      take?: number;
+    }): Promise<Array<{ id: string; originalFilename: string | null; durationMs: number | null }>>;
   };
   asset: {
     findUnique(a: { where: { id: string } }): Promise<AssetLite | null>;
@@ -576,6 +582,40 @@ export async function deleteSequenceTrack(
   });
   const clipLenMs = clip ? Math.max(1, clip.endMs - clip.startMs) : 1;
   return withOverlays(deps, await toView(deps, full ?? seq), clipLenMs);
+}
+
+export interface InsertableMedia {
+  id: string;
+  name: string;
+  durationMs: number;
+}
+
+/**
+ * What can be dropped onto this clip's timeline.
+ *
+ * The project's own finished videos, longest-lived first. Scoped to the clip
+ * rather than taking a project id from the caller: the timeline only ever
+ * belongs to one clip, and letting the client name the project would be a
+ * second place to get ownership wrong.
+ */
+export async function listInsertableMedia(
+  deps: SequenceServiceDeps,
+  clipId: string,
+): Promise<InsertableMedia[]> {
+  const clip = await ownedClip(deps, clipId);
+  const rows = await deps.db.video.findMany({
+    where: { projectId: clip.video.projectId, status: "READY" },
+    select: { id: true, originalFilename: true, durationMs: true },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+  return rows
+    .filter((v) => (v.durationMs ?? 0) > 0)
+    .map((v) => ({
+      id: v.id,
+      name: v.originalFilename?.trim() || "Untitled",
+      durationMs: v.durationMs ?? 0,
+    }));
 }
 
 export async function updateSequence(

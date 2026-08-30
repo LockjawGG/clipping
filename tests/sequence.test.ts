@@ -6,6 +6,7 @@ import type { SequenceServiceDeps } from "../src/lib/api/sequence.ts";
 import {
   createSequenceTrack,
   deleteSequenceTrack,
+  listInsertableMedia,
   createItemSchema,
   createSequenceItem,
   deleteSequenceItem,
@@ -58,7 +59,15 @@ function makeDeps(over: Partial<SequenceServiceDeps> = {}) {
 
   const db: SequenceServiceDeps["db"] = {
     clip: { findUnique: async ({ where }) => (clips[where.id] ?? null) as never },
-    video: { findUnique: async ({ where }) => (videos[where.id] ?? null) as never },
+    video: {
+      findUnique: async ({ where }) => (videos[where.id] ?? null) as never,
+      findMany: async () =>
+        Object.entries(videos).map(([id, v]) => ({
+          id,
+          originalFilename: (v as { name?: string }).name ?? `video ${id}`,
+          durationMs: (v as { durationMs?: number }).durationMs ?? 60_000,
+        })) as never,
+    },
     asset: { findUnique: async ({ where }) => (assets[where.id] ?? null) as never },
     overlay: {
       findMany: async ({ where }) =>
@@ -433,4 +442,39 @@ test("the last video layer cannot be removed", async () => {
     () => deleteSequenceTrack(deps, s.id, s.tracks[0].id),
     /at least one video layer/,
   );
+});
+
+test("insertable media is the project's finished videos, longest-lived first", async () => {
+  const { deps } = makeDeps();
+  const media = await listInsertableMedia(deps, "c1");
+  assert.ok(media.length > 0, "the project's own videos can be added");
+  assert.ok(media.every((m) => m.durationMs > 0), "a source with no duration cannot be placed");
+  assert.ok(media.every((m) => m.name.length > 0), "and every one is nameable in a menu");
+});
+
+test("adding media appends it, so the lane grows by exactly its length", async () => {
+  const { deps } = makeDeps();
+  const s = await getOrCreateClipSequence(deps, "c1");
+  const lane = s.tracks[0].id;
+  const before = s.items
+    .filter((i) => i.trackId === lane)
+    .reduce((n, i) => n + (i.sourceOut - i.sourceIn), 0);
+
+  // A drop position past the end of any lane reads as "put it last".
+  await createSequenceItem(deps, s.id, {
+    trackId: lane,
+    sourceVideoId: "v1",
+    timelineStart: 86_400_000,
+    sourceIn: 0,
+    sourceOut: 6_000,
+  });
+
+  const after = await getOrCreateClipSequence(deps, "c1");
+  const items = after.items
+    .filter((i) => i.trackId === lane)
+    .sort((a, b) => a.timelineStart - b.timelineStart);
+  const total = items.reduce((n, i) => n + (i.sourceOut - i.sourceIn), 0);
+
+  assert.equal(total, before + 6_000, "the lane is longer by the media's own length");
+  assert.equal(items[items.length - 1].timelineStart, before, "and the new piece sits on the end");
 });

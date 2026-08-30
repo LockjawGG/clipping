@@ -1152,10 +1152,22 @@ test("a piece from another video is fetched and forces a re-encode on the join",
   await renderHandler(ctx(deps, { renderId: "r-mixed" }));
 
   assert.equal(spy.cuts.length, 2);
-  assert.equal(
-    spy.concats[0].reencode,
-    true,
-    "two sources can disagree on resolution, which a stream copy cannot reconcile",
+  // Every piece is cut to one shape first, so the join itself stays a copy.
+  assert.equal(spy.concats[0].reencode, false);
+  assert.ok(
+    spy.cuts.every((c) => c.normalizeTo),
+    "a mixed-source timeline normalises every piece — the demuxer cannot switch mid-stream",
+  );
+});
+
+test("a single-source timeline is cut without any normalising", async () => {
+  const { deps, spy } = makeDeps(
+    target({ sequence: timeline([[10_000, 14_000], [30_000, 38_000]]) }),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-onesource" }));
+  assert.ok(
+    spy.cuts.every((c) => !c.normalizeTo),
+    "re-scaling footage that already matches would cost a pass and soften it",
   );
 });
 

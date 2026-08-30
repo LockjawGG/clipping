@@ -278,12 +278,21 @@ export function buildRemuxArgs({ inputPath, outputPath }: RemuxArgs): string[] {
   return ["-y", "-fflags", "+genpts", "-i", inputPath, "-c", "copy", outputPath];
 }
 
+export interface NormalizeTarget {
+  width: number;
+  height: number;
+  fps: number;
+}
+
 export interface CutArgs {
   inputPath: string;
   outputPath: string;
   startMs: number;
   endMs: number;
   crf?: number;
+  /** Force a common frame size / rate, for pieces that will be concatenated
+   *  with pieces from a different source. */
+  normalizeTo?: NormalizeTarget;
 }
 
 /**
@@ -292,17 +301,41 @@ export interface CutArgs {
  * keyframe and discards. Stream copy is deliberately not offered here — it
  * snaps the in-point to the nearest keyframe and silently shifts the cut.
  */
-export function buildCutArgs({ inputPath, outputPath, startMs, endMs, crf = 18 }: CutArgs): string[] {
+export function buildCutArgs({
+  inputPath,
+  outputPath,
+  startMs,
+  endMs,
+  crf = 18,
+  normalizeTo,
+}: CutArgs): string[] {
   assertSafePath(inputPath);
   assertSafePath(outputPath);
   if (endMs <= startMs) throw new Error(`end (${endMs}) must be after start (${startMs})`);
   if (!Number.isInteger(crf) || crf < 0 || crf > 51) throw new Error(`invalid crf: ${crf}`);
+
+  // Fitted and padded to a common frame, at a fixed rate. Only needed when the
+  // piece will be joined to pieces from another source: the concat demuxer
+  // splices at the container level and cannot switch resolution or frame rate
+  // part-way, so a mismatched piece is silently dropped — the join comes out
+  // with the right duration of audio over the first source's video alone.
+  const normalize = normalizeTo
+    ? [
+        "-vf",
+        `scale=${normalizeTo.width}:${normalizeTo.height}:force_original_aspect_ratio=decrease,` +
+          `pad=${normalizeTo.width}:${normalizeTo.height}:(ow-iw)/2:(oh-ih)/2,setsar=1`,
+        "-r", String(normalizeTo.fps),
+        "-ar", "48000",
+        "-ac", "2",
+      ]
+    : [];
 
   return [
     "-y",
     "-ss", msToTimestamp(startMs),
     "-to", msToTimestamp(endMs),
     "-i", inputPath,
+    ...normalize,
     "-c:v", "libx264",
     "-preset", "fast",
     "-crf", String(crf),

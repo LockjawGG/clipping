@@ -117,6 +117,8 @@ export interface CutOptions {
   startMs: number;
   endMs: number;
   crf?: number;
+  /** Force a common frame size / rate — see `buildCutArgs`. */
+  normalizeTo?: { width: number; height: number; fps: number };
 }
 
 export interface ReframeOptions {
@@ -361,7 +363,14 @@ export class FfmpegRunner implements Ffmpeg {
     await mkdir(dirname(outputPath), { recursive: true });
     await this.exec(
       this.ffmpegPath,
-      buildCutArgs({ inputPath, outputPath, startMs: opts.startMs, endMs: opts.endMs, crf: opts.crf }),
+      buildCutArgs({
+        inputPath,
+        outputPath,
+        startMs: opts.startMs,
+        endMs: opts.endMs,
+        crf: opts.crf,
+        normalizeTo: opts.normalizeTo,
+      }),
       signal,
     );
   }

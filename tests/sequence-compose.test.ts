@@ -17,7 +17,12 @@ import {
   remapWordsToTimeline,
   type ComposableItem,
 } from "../src/lib/sequence/compose.ts";
-import { buildConcatArgs, buildVideoLayerArgs, concatListLine } from "../src/lib/ffmpeg/args.ts";
+import {
+  buildConcatArgs,
+  buildCutArgs,
+  buildVideoLayerArgs,
+  concatListLine,
+} from "../src/lib/ffmpeg/args.ts";
 
 const item = (over: Partial<ComposableItem> & { id: string }): ComposableItem => ({
   trackId: "v1",
@@ -212,4 +217,26 @@ test("layer args place each piece in time and fit it to the frame", () => {
   assert.match(filter, /eof_action=pass:shortest=0/);
   // The base keeps its own audio.
   assert.deepEqual(args.slice(args.indexOf("-c:a"), args.indexOf("-c:a") + 2), ["-c:a", "copy"]);
+});
+
+test("a normalised cut fits and pads to the target frame at a fixed rate", () => {
+  const args = buildCutArgs({
+    inputPath: "/tmp/in.mp4",
+    outputPath: "/tmp/out.mp4",
+    startMs: 0,
+    endMs: 1_000,
+    normalizeTo: { width: 1920, height: 1080, fps: 30 },
+  });
+  const vf = args[args.indexOf("-vf") + 1];
+  assert.match(vf, /scale=1920:1080:force_original_aspect_ratio=decrease/);
+  assert.match(vf, /pad=1920:1080/);
+  assert.match(vf, /setsar=1/);
+  // Frame rate and audio layout matter as much as size: the demuxer splices
+  // containers, so any of them differing drops the piece.
+  assert.deepEqual(args.slice(args.indexOf("-r"), args.indexOf("-r") + 2), ["-r", "30"]);
+  assert.ok(args.includes("-ar") && args.includes("48000"));
+
+  // Without a target it stays the plain cut it always was.
+  const plain = buildCutArgs({ inputPath: "/tmp/in.mp4", outputPath: "/tmp/o.mp4", startMs: 0, endMs: 1_000 });
+  assert.equal(plain.includes("-vf"), false);
 });

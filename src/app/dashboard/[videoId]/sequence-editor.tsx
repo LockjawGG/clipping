@@ -123,6 +123,9 @@ export function SequenceEditor({
   const [selected, setSelected] = useState<string | null>(null);
   const [playhead, setPlayhead] = useState(0);
   const [save, setSave] = useState<"idle" | "saving" | "saved">("idle");
+  /** Videos that can be dropped onto this timeline, loaded on first use. */
+  const [media, setMedia] = useState<Array<{ id: string; name: string; durationMs: number }> | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   // Follow the main preview while it plays. Cheap: one state set per frame the
   // player emits (~30fps), and only while playing.
@@ -247,6 +250,44 @@ export function SequenceEditor({
       }
     },
     [seq?.id, load],
+  );
+
+  /**
+   * Put a whole video on a layer.
+   *
+   * It goes on the end of the lane at its full length — a lane is its pieces
+   * end to end, so adding one makes the export exactly that much longer, and
+   * trimming it back is the easy part. Guessing at a shorter default would just
+   * be a trim the user has to undo.
+   */
+  const insertMedia = useCallback(
+    async (videoId: string, trackId: string) => {
+      const id = seq?.id;
+      if (!id) return;
+      setSave("saving");
+      try {
+        const r = await fetch(`/api/sequences/${id}/items`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            trackId,
+            sourceVideoId: videoId,
+            // A day in, i.e. past the end of any lane. The server resolves a
+            // drop position to a place in the order, so this reads as "append".
+            timelineStart: 86_400_000,
+            sourceIn: 0,
+          }),
+        });
+        if (!r.ok) throw new Error();
+        setSave("saved");
+        setTimeout(() => setSave("idle"), 1500);
+        await load();
+        onChanged?.();
+      } catch {
+        setError("couldn't add that media — try again");
+      }
+    },
+    [seq?.id, load, onChanged],
   );
 
   const flush = useCallback((id: string) => {
@@ -474,6 +515,56 @@ export function SequenceEditor({
         >
           + Add layer
         </button>
+        {/* A list, not a menu that snaps back to nothing: you can see what is
+            available to add before committing, and every entry says how much
+            longer it will make the export. */}
+        <div className="relative">
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            aria-expanded={pickerOpen}
+            onClick={() => {
+              setPickerOpen((v) => !v);
+              if (media === null) {
+                void fetch(`/api/clips/${clipId}/media`)
+                  .then((r) => (r.ok ? r.json() : { media: [] }))
+                  .then((b) => setMedia(b.media ?? []))
+                  .catch(() => setMedia([]));
+              }
+            }}
+          >
+            + Add media
+          </button>
+          {pickerOpen && (
+            <div className="absolute left-0 top-full z-20 mt-1 w-64 rounded-lg border border-border bg-surface-raised p-1 shadow-lg">
+              {media === null ? (
+                <p className="px-2 py-1.5 text-muted">Loading…</p>
+              ) : media.length === 0 ? (
+                <p className="px-2 py-1.5 text-muted">No other finished videos in this project.</p>
+              ) : (
+                media.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className="flex w-full items-baseline gap-2 rounded px-2 py-1.5 text-left hover:bg-accent/10"
+                    onClick={() => {
+                      setPickerOpen(false);
+                      const lane =
+                        seq.tracks.find((t) => t.id === sel?.trackId) ??
+                        seq.tracks.find((t) => t.kind === "VIDEO");
+                      if (lane) void insertMedia(m.id, lane.id);
+                    }}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{m.name}</span>
+                    <span className="shrink-0 tabular-nums text-muted">
+                      +{(m.durationMs / 1000).toFixed(0)}s
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
         <span className="text-muted">
           {seq.tracks.filter((t) => t.kind === "VIDEO").length} video layer
           {seq.tracks.filter((t) => t.kind === "VIDEO").length === 1 ? "" : "s"} · drag a piece up or

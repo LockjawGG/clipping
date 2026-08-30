@@ -604,6 +604,20 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
       // whole timeline again.
       const pieces: string[] = [];
       const sources = new Map<string, string>([[target.videoId, source]]);
+      // Pieces from more than one source have to be made to match before they
+      // can be spliced: the demuxer joins containers, so a piece of a different
+      // size or frame rate is dropped rather than adapted. One probe of the
+      // first source decides the shape they all take.
+      const mixedSources = new Set(plan.map((p) => p.sourceVideoId)).size > 1;
+      let normalizeTo: { width: number; height: number; fps: number } | undefined;
+      if (mixedSources) {
+        const first = await deps.ffmpeg.probe(source, signal);
+        normalizeTo = {
+          width: first.width ?? 1920,
+          height: first.height ?? 1080,
+          fps: Math.round(first.fps ?? 30),
+        };
+      }
       for (const [i, piece] of plan.entries()) {
         let input = sources.get(piece.sourceVideoId);
         if (!input) {
@@ -617,7 +631,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
         await deps.ffmpeg.cut(
           input,
           out,
-          { startMs: piece.sourceIn, endMs: piece.sourceOut, crf },
+          { startMs: piece.sourceIn, endMs: piece.sourceOut, crf, normalizeTo },
           signal,
         );
         pieces.push(out);
@@ -626,7 +640,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
       // Pieces from more than one source can disagree on resolution, which the
       // demuxer cannot paper over — that case pays for a re-encode.
       const joined = layerPlan.length > 0 ? scratchPath(work, "base.mp4") : cut;
-      await deps.ffmpeg.concat(pieces, joined, { reencode: sources.size > 1, crf }, signal);
+      await deps.ffmpeg.concat(pieces, joined, { reencode: false, crf }, signal);
 
       // Anything on a lane above the base covers it for as long as it lasts.
       // Done here, on the joined base, so everything downstream — censoring,
