@@ -32,6 +32,8 @@ export interface SynthesisResult {
   /** Absolute path to the written WAV. */
   audioPath: string;
   durationMs: number;
+  /** The written file's sample rate — audio spliced into it must match. */
+  sampleRate: number;
   provider: string;
   voiceId: string;
 }

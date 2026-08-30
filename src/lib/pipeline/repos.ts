@@ -607,7 +607,18 @@ export function prismaVoiceoverRepo(client: PrismaClient): VoiceoverRepo {
           voiceId: true,
           speed: true,
           linesJson: true,
-          clip: { select: { id: true, videoId: true, startMs: true, endMs: true } },
+          clip: {
+            select: {
+              id: true, videoId: true, startMs: true, endMs: true,
+              // Narration is censored at synthesis time, so the rules have to
+              // reach the generator rather than only the render.
+              censorEnabled: true,
+              censorSensitivity: true,
+              censorAllowList: true,
+              censorDenyList: true,
+              censorAudioMode: true,
+            },
+          },
         },
       });
       if (!vo) return null;
@@ -623,6 +634,13 @@ export function prismaVoiceoverRepo(client: PrismaClient): VoiceoverRepo {
         voiceId: vo.voiceId,
         speed: vo.speed,
         linesJson: vo.linesJson,
+        censor: {
+          enabled: vo.clip.censorEnabled,
+          sensitivity: vo.clip.censorSensitivity as "LOW" | "MEDIUM" | "HIGH",
+          allowList: vo.clip.censorAllowList,
+          denyList: vo.clip.censorDenyList,
+          audioMode: vo.clip.censorAudioMode as "MUTE" | "BEEP" | "TONE",
+        },
       };
     },
     async begin(voiceoverId) {

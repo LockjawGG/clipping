@@ -263,6 +263,14 @@ export interface VoiceoverTarget {
   speed: number;
   /** Already-synthesized lines, so unchanged text is not redone. */
   linesJson: string | null;
+  /** The clip's censor rules, applied to the narration as it is written. */
+  censor: {
+    enabled: boolean;
+    sensitivity: "LOW" | "MEDIUM" | "HIGH";
+    allowList: string[];
+    denyList: string[];
+    audioMode: "MUTE" | "BEEP" | "TONE";
+  };
 }
 
 export interface VoiceoverRepo {

@@ -25,6 +25,7 @@ import {
   planDurationMs,
   remapWordsToTimeline,
 } from "../sequence/compose.ts";
+import { splitCensoredRuns } from "../censor/detect.ts";
 import {
   audioSpans,
   censoredIndices,
@@ -259,16 +260,65 @@ export const voiceoverHandler: JobHandler<PipelineDeps> = async ({
     const lines: VoiceLine[] = [...kept];
     let done = 0;
     for (const [ref, text] of todo) {
-      const out = scratchPath(work, `vo-${ref.replace(/[^\w]/g, "_")}.wav`);
-      const result = await deps.tts.synthesize(text, out, {
-        voiceId: target.voiceId || undefined,
-        language: target.language,
-        speed: target.speed,
-        signal,
+      const slug = ref.replace(/[^\w]/g, "_");
+      const speak = async (part: string, name: string) =>
+        deps.tts.synthesize(part, scratchPath(work, name), {
+          voiceId: target.voiceId || undefined,
+          language: target.language,
+          speed: target.speed,
+          signal,
+        });
+
+      // Narration obeys the clip's censoring, and it has to be done here rather
+      // than over the finished mix: a synthesised line has no word timings, so
+      // there is no way to find the word inside it afterwards. Instead the line
+      // is built from its clean parts, and each censored word is spoken only to
+      // learn how long it takes — that audio is thrown away and a bleep of the
+      // same length goes in its place. The word is therefore never present in
+      // anything that is stored or played, which is a stronger guarantee than
+      // covering it up would be.
+      const runs = splitCensoredRuns(text, {
+        enabled: target.censor.enabled,
+        sensitivity: target.censor.sensitivity,
+        allowList: target.censor.allowList,
+        denyList: target.censor.denyList,
       });
-      const key = `voiceovers/${voiceoverId}/${ref.replace(/[^\w]/g, "_")}.wav`;
-      await deps.storage.putFile(key, result.audioPath, "audio/wav");
-      lines.push({ ref, text, durationMs: result.durationMs, audioKey: key });
+      const key = `voiceovers/${voiceoverId}/${slug}.wav`;
+
+      if (runs.some((r) => r.censored)) {
+        const parts: string[] = [];
+        let totalMs = 0;
+        for (const [i, run] of runs.entries()) {
+          const spoken = await speak(run.text, `vo-${slug}-${i}.wav`);
+          if (!run.censored) {
+            parts.push(spoken.audioPath);
+            totalMs += spoken.durationMs;
+            continue;
+          }
+          // Silence keeps the gap; a tone fills it. Either way the word is gone.
+          const tone = scratchPath(work, `vo-${slug}-${i}-bleep.wav`);
+          await deps.ffmpeg.toneWav(
+            tone,
+            {
+              durationMs: spoken.durationMs,
+              sampleRate: spoken.sampleRate,
+              ...(target.censor.audioMode === "TONE" ? { hz: 400 } : {}),
+              ...(target.censor.audioMode === "MUTE" ? { gain: 0 } : {}),
+            },
+            signal,
+          );
+          parts.push(tone);
+          totalMs += spoken.durationMs;
+        }
+        const joined = scratchPath(work, `vo-${slug}.wav`);
+        await deps.ffmpeg.concat(parts, joined, {}, signal);
+        await deps.storage.putFile(key, joined, "audio/wav");
+        lines.push({ ref, text, durationMs: totalMs, audioKey: key });
+      } else {
+        const result = await speak(text, `vo-${slug}.wav`);
+        await deps.storage.putFile(key, result.audioPath, "audio/wav");
+        lines.push({ ref, text, durationMs: result.durationMs, audioKey: key });
+      }
       done++;
       await setProgress(todo.length ? 0.1 + (done / todo.length) * 0.85 : 0.95);
     }
@@ -768,9 +818,11 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
       }
     }
 
-    // Mix the voiceover onto the same staged audio, after censoring so the
-    // narration is never bleeped and before the reframe so `-c:a copy` carries
-    // it through everything downstream.
+    // Mix the voiceover onto the same staged audio. After censoring, so the
+    // transcript's bleeps do not land on the narration by coincidence of
+    // timing — the narration carries its own, applied when it was synthesised.
+    // Before the reframe, so `-c:a copy` carries it through everything
+    // downstream.
     if (target.voiceover) {
       // `clipMs` is declared further down with the reframe logic; the voiceover
       // pass runs before it, so derive the length here.

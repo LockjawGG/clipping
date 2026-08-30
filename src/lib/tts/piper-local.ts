@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { mkdir, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
@@ -43,6 +44,21 @@ export function parseVoiceFile(file: string): TtsVoice | null {
     language: region ? `${lang}-${region}` : lang,
     label: quality ? `${name} (${quality})` : name,
   };
+}
+
+/** The sample rate from a RIFF/WAVE header, falling back to Piper's default. */
+export async function readWavSampleRate(path: string, fallback = 22_050): Promise<number> {
+  const handle = await open(path, "r");
+  try {
+    const { buffer, bytesRead } = await handle.read(Buffer.alloc(44), 0, 44, 0);
+    if (bytesRead < 28 || buffer.toString("ascii", 0, 4) !== "RIFF") return fallback;
+    const rate = buffer.readUInt32LE(24);
+    return rate > 0 ? rate : fallback;
+  } catch {
+    return fallback;
+  } finally {
+    await handle.close();
+  }
 }
 
 /** WAV byte length -> ms. Piper writes 16-bit mono at the model's rate. */
@@ -134,11 +150,14 @@ export class PiperTtsProvider implements TtsProvider {
     if (!info || info.size <= 44) {
       throw new Error("piper produced no audio");
     }
-    // 22.05 kHz is the Piper default; the exact rate only affects the duration
-    // estimate, which the mixer re-measures anyway.
+    // Read the rate out of the header rather than assuming Piper's 22.05 kHz
+    // default: it varies by voice model, and a caller splicing audio into this
+    // line needs the real one or the join resamples.
+    const sampleRate = await readWavSampleRate(outputPath);
     return {
       audioPath: outputPath,
-      durationMs: wavDurationMs(info.size, 22_050),
+      durationMs: wavDurationMs(info.size, sampleRate),
+      sampleRate,
       provider: this.name,
       voiceId,
     };

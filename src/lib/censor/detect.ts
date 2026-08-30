@@ -80,6 +80,24 @@ export interface CensorSpan {
  * Returning the tier rather than a boolean is what lets the review panel say
  * which of those three decided it.
  */
+/** The lexicon and term-list decision alone, for text with no word ids. */
+function classifyBase(
+  text: string,
+  ctx: { lex: Map<string, CensorTier>; allow: Set<string>; deny: Set<string>; auto: boolean },
+): CensorTier | "custom" | null {
+  if (!ctx.auto) return null;
+  const token = normalizeToken(text);
+  if (!token) return null;
+  const candidates = stems(token);
+  if (candidates.some((c) => ctx.allow.has(c))) return null;
+  for (const c of candidates) {
+    if (ctx.deny.has(c)) return "custom";
+    const hit = ctx.lex.get(c);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 function maskTier(
   word: CensorWord,
   index: number,
@@ -190,6 +208,43 @@ export function censorHasWork(config: CensorConfigInput): boolean {
 export function censorHasAudioWork(config: CensorConfigInput): boolean {
   if (!censorHasWork(config)) return false;
   return (config.audioEnabled ?? true) || (config.audioForceWordIds?.length ?? 0) > 0;
+}
+
+export interface TextRun {
+  text: string;
+  censored: boolean;
+}
+
+/**
+ * Split written text into runs of clean words and censored ones.
+ *
+ * For text that has no timings — narration scripts, and the transcript lines
+ * they are read from. The per-occurrence id lists cannot apply here, since
+ * these words are not transcript words, so only the lexicon and the clip's own
+ * term lists decide.
+ *
+ * Runs rather than positions because the caller cannot seek inside speech it
+ * has not synthesised yet: it has to build the line out of pieces, and a run is
+ * the piece. Consecutive censored words stay together so "fucking hell" becomes
+ * one bleep rather than two abutting ones.
+ */
+export function splitCensoredRuns(text: string, config: CensorConfigInput): TextRun[] {
+  const ctx = context(config);
+  const runs: TextRun[] = [];
+  for (const token of text.split(/(\s+)/)) {
+    if (!token) continue;
+    // Whitespace joins whichever run it follows, so rebuilding the parts and
+    // concatenating their audio does not lose the spacing.
+    const isSpace = /^\s+$/.test(token);
+    const censored = !isSpace && classifyBase(token, ctx) !== null;
+    const last = runs[runs.length - 1];
+    if (last && (last.censored === censored || (isSpace && runs.length > 0))) {
+      last.text += token;
+    } else {
+      runs.push({ text: token, censored });
+    }
+  }
+  return runs.filter((r) => r.text.trim().length > 0 || !r.censored);
 }
 
 /**

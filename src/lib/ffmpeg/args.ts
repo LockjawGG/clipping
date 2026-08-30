@@ -1116,3 +1116,46 @@ export function buildVideoLayerArgs({
     outputPath,
   ];
 }
+
+export interface ToneWavArgs {
+  outputPath: string;
+  durationMs: number;
+  /** Match the speech it replaces, or the join will resample. */
+  sampleRate: number;
+  hz?: number;
+  gain?: number;
+}
+
+/**
+ * A standalone bleep, as a WAV that can be spliced between spoken parts.
+ *
+ * Used where a censored word cannot be located inside already-synthesised
+ * speech: the word is never spoken at all, and a tone of its natural length
+ * takes its place. Written at the voice's own sample rate and channel count so
+ * the pieces concatenate without a resample.
+ */
+export function buildToneWavArgs({
+  outputPath,
+  durationMs,
+  sampleRate,
+  hz = 1000,
+  gain = 0.5,
+}: ToneWavArgs): string[] {
+  assertSafePath(outputPath);
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    throw new Error(`bad tone duration: ${durationMs}`);
+  }
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
+    throw new Error(`bad sample rate: ${sampleRate}`);
+  }
+  return [
+    "-y",
+    "-f", "lavfi",
+    "-i", `sine=frequency=${fgNum(hz, 1, 20000)}:sample_rate=${Math.round(sampleRate)}`,
+    "-t", (Math.max(1, Math.round(durationMs)) / 1000).toFixed(3),
+    "-af", `volume=${fgNum(gain, 0, 4)}`,
+    "-ac", "1",
+    "-c:a", "pcm_s16le",
+    outputPath,
+  ];
+}

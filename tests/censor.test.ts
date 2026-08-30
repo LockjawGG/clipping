@@ -7,6 +7,7 @@ import {
   censorHasAudioWork,
   censorHasWork,
   detectSpans,
+  splitCensoredRuns,
   normalizeToken,
 } from "../src/lib/censor/detect.ts";
 import { maskWord, maskWords } from "../src/lib/censor/mask.ts";
@@ -568,4 +569,38 @@ test("keeping an occurrence takes it out of both halves at once", () => {
   // The exemptions have to beat the clip-wide default too, or "keep it" would
   // come undone the moment the audio switch was turned on.
   assert.deepEqual(audioSpans(words, { ...kept, audioEnabled: true }), []);
+});
+
+test("written text splits into clean runs and censored ones", () => {
+  const on = { enabled: true, sensitivity: "MEDIUM" as const };
+  assert.deepEqual(splitCensoredRuns("The narrator says shit on purpose.", on), [
+    { text: "The narrator says ", censored: false },
+    { text: "shit ", censored: true },
+    { text: "on purpose.", censored: false },
+  ]);
+
+  // Consecutive profanity is one run, so it becomes one bleep rather than two
+  // abutting ones.
+  assert.deepEqual(splitCensoredRuns("two fucking shit words", on), [
+    { text: "two ", censored: false },
+    { text: "fucking shit ", censored: true },
+    { text: "words", censored: false },
+  ]);
+
+  // Clean text is a single run: nothing to split, nothing to re-synthesise.
+  assert.deepEqual(splitCensoredRuns("nothing objectionable here", on), [
+    { text: "nothing objectionable here", censored: false },
+  ]);
+
+  // With detection off, narration is left exactly as written.
+  assert.deepEqual(
+    splitCensoredRuns("says shit", { enabled: false, sensitivity: "MEDIUM" }),
+    [{ text: "says shit", censored: false }],
+  );
+
+  // The clip's own allow-list rescues a word here too.
+  assert.deepEqual(
+    splitCensoredRuns("says shit", { ...on, allowList: ["shit"] }),
+    [{ text: "says shit", censored: false }],
+  );
 });

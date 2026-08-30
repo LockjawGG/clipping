@@ -9,6 +9,7 @@ import {
   type CaptionBurnStyle,
   type OverlayCompositeItem,
   buildConcatArgs,
+  buildToneWavArgs,
   buildVideoLayerArgs,
   buildCutArgs,
   concatListLine,
@@ -197,6 +198,12 @@ export interface Ffmpeg {
     opts: { layers: Array<{ path: string; startSec: number }>; width: number; height: number; crf?: number },
     signal?: AbortSignal,
   ): Promise<void>;
+  /** Write a bleep tone as a standalone WAV, for splicing into speech. */
+  toneWav(
+    outputPath: string,
+    opts: { durationMs: number; sampleRate: number; hz?: number; gain?: number },
+    signal?: AbortSignal,
+  ): Promise<void>;
   /** Join pre-cut pieces end to end, in the order given. */
   concat(
     pieces: readonly string[],
@@ -334,6 +341,15 @@ export class FfmpegRunner implements Ffmpeg {
   ): Promise<void> {
     await mkdir(dirname(outputPath), { recursive: true });
     await this.exec(this.ffmpegPath, buildVideoLayerArgs({ inputPath, outputPath, ...opts }), signal);
+  }
+
+  async toneWav(
+    outputPath: string,
+    opts: { durationMs: number; sampleRate: number; hz?: number; gain?: number },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await this.exec(this.ffmpegPath, buildToneWavArgs({ outputPath, ...opts }), signal);
   }
 
   async concat(

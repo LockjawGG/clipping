@@ -91,6 +91,7 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
       },
       remux: async () => {},
       concat: async () => {},
+      toneWav: async () => {},
       layerVideo: async () => {},
       transcodeAv: async () => {},
       videoTimestampReport: async () => ({ packets: 0, backwards: 0, duplicateRun: 0 }),
@@ -195,7 +196,13 @@ function makeDeps(over: Partial<PipelineDeps> = {}): { deps: PipelineDeps; spy: 
     tts: {
       name: "fake",
       voices: async () => [],
-      synthesize: async () => ({ audioPath: "", durationMs: 0, provider: "fake", voiceId: "v" }),
+      synthesize: async () => ({
+        audioPath: "",
+        durationMs: 0,
+        sampleRate: 22_050,
+        provider: "fake",
+        voiceId: "v",
+      }),
     },
     workers: {
       loadRun: async () => null,
