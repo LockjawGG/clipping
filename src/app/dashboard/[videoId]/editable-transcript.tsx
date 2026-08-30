@@ -2,6 +2,31 @@
 
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { CAPTION_CENSOR_MODES, type CaptionCensorMode, maskWord } from "@/lib/censor/mask.ts";
+import type {
+  AudioCensorMode,
+  CensorWordOverride,
+  CensorWordOverrides,
+} from "@/lib/censor/overrides.ts";
+
+/** The audio treatments, with the label each is known by in the UI. */
+const AUDIO_MODE_LABELS: { id: AudioCensorMode; label: string }[] = [
+  { id: "BEEP", label: "Beep (1 kHz)" },
+  { id: "TONE", label: "Soft tone (400 Hz)" },
+  { id: "MUTE", label: "Silence" },
+];
+
+/** Beep is the red one, matching the strike; the softer tone and plain silence
+ *  step down from it so the marker says which sound without a legend. */
+const soundName = (mode: AudioCensorMode | undefined) =>
+  mode === "MUTE" ? "silenced" : mode === "TONE" ? "replaced with a 400 Hz tone" : "beeped";
+
+const AUDIO_MODE_COLOR: Record<AudioCensorMode, string> = {
+  BEEP: "rgb(var(--c-danger))",
+  TONE: "#d97706",
+  MUTE: "rgb(var(--c-muted))",
+};
+
 
 export interface TranscriptWord {
   id: string;
@@ -62,6 +87,7 @@ export function wordSpanCss(s: WordStyle | undefined): React.CSSProperties {
 const Word = memo(function Word({
   censored,
   bleeped,
+  audioMode,
   outsideClip,
   word,
   style,
@@ -75,6 +101,8 @@ const Word = memo(function Word({
   censored?: boolean;
   /** This word will be bleeped in the audio. Independent of the mask. */
   bleeped?: boolean;
+  /** Which sound replaces it, once bleeped. Colours the marker. */
+  audioMode?: AudioCensorMode;
   /** Falls outside the clip's range, so it never reaches the output. */
   outsideClip?: boolean;
   word: TranscriptWord;
@@ -137,7 +165,14 @@ const Word = memo(function Word({
       }}
       onDoubleClick={() => setEditing(true)}
       aria-pressed={selected}
-      style={wordSpanCss(style)}
+      style={
+        bleeped
+          ? {
+              ...wordSpanCss(style),
+              borderBottom: `2px dotted ${AUDIO_MODE_COLOR[audioMode ?? "BEEP"]}`,
+            }
+          : wordSpanCss(style)
+      }
       className={`rounded px-0.5 ${busy ? "opacity-50" : ""} ${
         outsideClip ? "opacity-40" : ""
       } ${
@@ -149,22 +184,21 @@ const Word = memo(function Word({
               ? "bg-amber-400/25"
               : "hover:bg-accent/15"
       } ${
-        // The strike means masked in the captions; the underline means bleeped
-        // in the audio. They are separate decisions, so a word can carry
-        // either, both, or neither.
+        // The strike means masked in the captions. The bleep marker below is a
+        // border rather than an underline because the two must be able to show
+        // at once in different colours, and text-decoration-color is a single
+        // value shared by every line on the element.
         censored ? "line-through decoration-2 decoration-danger" : ""
-      } ${
-        bleeped && !censored ? "underline decoration-dotted decoration-2 decoration-accent" : ""
       }`}
       title={
         outsideClip
           ? "Outside this clip - it will not appear in the render"
           : censored && bleeped
-            ? "Masked in the captions and bleeped in the audio"
+            ? `Masked in the captions and ${soundName(audioMode)} in the audio`
             : censored
               ? "Masked in the captions, but left audible"
               : bleeped
-                ? "Bleeped in the audio, but not masked in the captions"
+                ? `${soundName(audioMode)} in the audio, but not masked in the captions`
                 : "Click to jump the preview here · double-click to fix a typo"
       }
     >
@@ -211,6 +245,17 @@ interface Props {
   bleepedIds?: ReadonlySet<string>;
   /** Turn the bleep on or off for these occurrences, on this clip only. */
   onSetBleeped?: (wordIds: string[], bleeped: boolean) => void;
+  /** Per-occurrence censor settings, keyed by word id. */
+  wordOverrides?: CensorWordOverrides;
+  /** The clip's own settings, shown as the "follow clip" fallback. */
+  clipAudioMode?: AudioCensorMode;
+  clipCaptionMode?: CaptionCensorMode;
+  clipReplacement?: string | null;
+  /** Set or clear a per-word setting. A null value means "follow the clip". */
+  onSetWordCensorOptions?: (
+    wordIds: string[],
+    patch: Partial<Record<keyof CensorWordOverride, unknown>>,
+  ) => void;
 }
 
 /**
@@ -237,6 +282,11 @@ export const EditableTranscript = memo(function EditableTranscript({
   onSetAudioCensored,
   bleepedIds,
   onSetBleeped,
+  wordOverrides,
+  clipAudioMode,
+  clipCaptionMode,
+  clipReplacement,
+  onSetWordCensorOptions,
 }: Props) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
@@ -308,15 +358,92 @@ export const EditableTranscript = memo(function EditableTranscript({
     return { bleeped: on, silent: off };
   }, [rows, selectedIds, bleepedIds, inClip]);
 
-  const bleepableCount = selectedByBleeped.bleeped.length + selectedByBleeped.silent.length;
-
   /** true = all bleeped, false = none, null = mixed. */
   const allBleeped =
     selectedByBleeped.bleeped.length > 0 && selectedByBleeped.silent.length > 0
       ? null
       : selectedByBleeped.bleeped.length > 0;
 
+  /** The censorable words in the selection — what the settings row acts on. */
+  const selectedCensorable = useMemo(
+    () => [...selectedByCensored.censored, ...selectedByCensored.clean],
+    [selectedByCensored],
+  );
+
   /**
+   * A setting's value across the selection, or undefined when they disagree.
+   *
+   * Disagreement shows as "follow clip" rather than picking a winner: the
+   * select is an instruction, and pre-filling it with one word's value would
+   * quietly apply that value to the rest on the next unrelated change.
+   */
+  const sharedOverride = useCallback(
+    <K extends keyof CensorWordOverride>(key: K): CensorWordOverride[K] | undefined => {
+      if (selectedCensorable.length === 0) return undefined;
+      const first = wordOverrides?.[selectedCensorable[0]]?.[key];
+      return selectedCensorable.every((id) => wordOverrides?.[id]?.[key] === first)
+        ? first
+        : undefined;
+    },
+    [selectedCensorable, wordOverrides],
+  );
+
+  const selectedAudioMode = sharedOverride("audioMode");
+  const selectedCaptionMode = sharedOverride("captionMode");
+  const selectedReplacement = sharedOverride("replacement");
+
+  /** One sentence describing what the render will do with the selection. */
+  const censorPreview = useMemo(() => {
+    const n = selectedCensorable.length;
+    if (n === 0) return "";
+    const masked = selectedByCensored.censored.length;
+    const bleeped = selectedByBleeped.bleeped.length;
+    if (masked === 0 && bleeped === 0) {
+      return n === 1 ? "Not censored." : "None of these are censored.";
+    }
+
+    const audioMode = selectedAudioMode ?? clipAudioMode ?? "BEEP";
+    const sound =
+      audioMode === "MUTE"
+        ? "goes silent"
+        : audioMode === "TONE"
+          ? "sounds as a 400 Hz tone"
+          : "sounds as a 1 kHz beep";
+
+    // For a single word the mask can be shown literally, which is far clearer
+    // than naming the mode.
+    if (n === 1) {
+      const id = selectedCensorable[0];
+      const word = rows.flatMap((r) => r.words).find((w) => w.id === id);
+      const readsAs =
+        masked > 0 && word
+          ? `reads as ${maskWord(
+              word.text,
+              selectedCaptionMode ?? clipCaptionMode ?? "FULL",
+              selectedReplacement ?? clipReplacement ?? undefined,
+            )}`
+          : "is not masked";
+      return `"${word?.text ?? ""}" ${readsAs} and ${bleeped > 0 ? sound : "stays audible"}.`;
+    }
+    return (
+      `${masked} of ${n} masked in the captions, ` +
+      `${bleeped} bleeped${bleeped > 0 ? ` — each ${sound}` : ""}.`
+    );
+  }, [
+    rows,
+    selectedCensorable,
+    selectedByCensored,
+    selectedByBleeped,
+    selectedAudioMode,
+    selectedCaptionMode,
+    selectedReplacement,
+    clipAudioMode,
+    clipCaptionMode,
+    clipReplacement,
+  ]);
+
+  /**
+   * How many in-clip words the render will mask.  /**
    * How many in-clip words the render will mask. Drives the audio toggle: a
    * switch for bleeping nothing would be a control with no effect, so it only
    * appears once there is something to bleep.
@@ -498,16 +625,28 @@ export const EditableTranscript = memo(function EditableTranscript({
               Clip from selection
             </button>
           )}
-          {onSetCensored && censorableCount > 0 && (
+          <button type="button" onClick={onClearSelection} className="btn btn-ghost btn-sm ml-auto">
+            Done
+          </button>
+        </div>
+      )}
+
+      {/* Censoring gets its own row rather than competing for space with the
+          caption styling above it: these are four related controls that have to
+          read as one decision about the selected words, and the preview line
+          under them is what makes the combination legible before rendering. */}
+      {count > 0 && onSetCensored && censorableCount > 0 && (
+        <div className="flex flex-col gap-1 border-b border-border bg-surface px-3 py-2 text-xs">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="font-medium uppercase tracking-wide text-danger">Censor</span>
+
             <label
-              className="flex items-center gap-1.5 text-danger"
-              title="Censor these words on this clip only. The shared word list is unchanged."
+              className="flex items-center gap-1.5"
+              title="Mask these words in the captions. The shared word list is unchanged."
             >
               <input
                 type="checkbox"
                 ref={(el) => {
-                  // Mixed selections show a dash rather than a misleading
-                  // checked/unchecked state.
                   if (el) el.indeterminate = allCensored === null;
                 }}
                 checked={allCensored === true}
@@ -518,35 +657,106 @@ export const EditableTranscript = memo(function EditableTranscript({
                 }}
                 className="h-3 w-3 cursor-pointer accent-[rgb(var(--c-danger))]"
               />
-              Censor {censorableCount === 1 ? "this one" : `these ${censorableCount}`}
+              captions
             </label>
-          )}
 
-          {onSetBleeped && bleepableCount > 0 && (
-            <label
-              className="flex items-center gap-1.5 text-danger"
-              title="Bleep these words in the audio. Untick to leave the speech audible — the caption text stays masked either way."
-            >
-              <input
-                type="checkbox"
-                ref={(el) => {
-                  if (el) el.indeterminate = allBleeped === null;
-                }}
-                checked={allBleeped === true}
-                onChange={(e) => {
-                  const on = e.target.checked;
-                  const ids = on ? selectedByBleeped.silent : selectedByBleeped.bleeped;
-                  if (ids.length > 0) onSetBleeped(ids, on);
-                }}
-                className="h-3 w-3 cursor-pointer accent-[rgb(var(--c-danger))]"
-              />
-              Bleep {bleepableCount === 1 ? "this one" : `these ${bleepableCount}`}
-            </label>
-          )}
+            {onSetBleeped && (
+              <label
+                className="flex items-center gap-1.5"
+                title="Silence these words in the audio. Independent of the caption mask."
+              >
+                <input
+                  type="checkbox"
+                  ref={(el) => {
+                    if (el) el.indeterminate = allBleeped === null;
+                  }}
+                  checked={allBleeped === true}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    const ids = on ? selectedByBleeped.silent : selectedByBleeped.bleeped;
+                    if (ids.length > 0) onSetBleeped(ids, on);
+                  }}
+                  className="h-3 w-3 cursor-pointer accent-[rgb(var(--c-danger))]"
+                />
+                audio
+              </label>
+            )}
 
-          <button type="button" onClick={onClearSelection} className="btn btn-ghost btn-sm ml-auto">
-            Done
-          </button>
+            {onSetWordCensorOptions && (
+              <>
+                <label className="flex items-center gap-1.5" title="How these words are silenced.">
+                  sound
+                  <select
+                    value={selectedAudioMode ?? ""}
+                    onChange={(e) =>
+                      onSetWordCensorOptions(selectedCensorable, {
+                        audioMode: e.target.value || null,
+                      })
+                    }
+                    className="field py-0.5"
+                  >
+                    {/* "Follow clip" is a real value, not a placeholder: it is
+                        how a word goes back to tracking the clip setting. */}
+                    <option value="">
+                      follow clip
+                      {clipAudioMode
+                        ? ` (${AUDIO_MODE_LABELS.find((m) => m.id === clipAudioMode)?.label})`
+                        : ""}
+                    </option>
+                    {AUDIO_MODE_LABELS.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex items-center gap-1.5" title="How these words are written on screen.">
+                  mask
+                  <select
+                    value={selectedCaptionMode ?? ""}
+                    onChange={(e) =>
+                      onSetWordCensorOptions(selectedCensorable, {
+                        captionMode: e.target.value || null,
+                      })
+                    }
+                    className="field py-0.5"
+                  >
+                    <option value="">
+                      follow clip
+                      {clipCaptionMode
+                        ? ` (${CAPTION_CENSOR_MODES.find((m) => m.id === clipCaptionMode)?.sample})`
+                        : ""}
+                    </option>
+                    {CAPTION_CENSOR_MODES.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label} ({m.sample})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {selectedCaptionMode === "CUSTOM" && (
+                  <input
+                    value={selectedReplacement ?? ""}
+                    onChange={(e) =>
+                      onSetWordCensorOptions(selectedCensorable, {
+                        replacement: e.target.value || null,
+                      })
+                    }
+                    placeholder={clipReplacement ?? "[BLEEP]"}
+                    aria-label="Replacement text for these words"
+                    className="field w-28 py-0.5"
+                  />
+                )}
+              </>
+            )}
+          </div>
+
+          {/* What the render will actually do with the selection, spelled out —
+              the combination of four controls is not obvious from their states
+              alone, and a wrong bleep is a publishable mistake. */}
+          <p className="text-muted">{censorPreview}</p>
         </div>
       )}
 
@@ -603,6 +813,7 @@ export const EditableTranscript = memo(function EditableTranscript({
                       selected={selectedIds.has(w.id)}
                       censored={censoredIds?.has(w.id) && inClip(w)}
                       bleeped={bleepedIds?.has(w.id) && inClip(w)}
+                      audioMode={wordOverrides?.[w.id]?.audioMode ?? clipAudioMode}
                       outsideClip={!inClip(w)}
                       matched={matches.set.has(w.id)}
                       active={w.id === activeId}

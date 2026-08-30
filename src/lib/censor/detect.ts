@@ -12,6 +12,7 @@
 
 import type { CensorSensitivity, CensorTier } from "./lexicon.ts";
 import { lexiconFor } from "./lexicon.ts";
+import type { AudioCensorMode, CensorWordOverrides } from "./overrides.ts";
 
 export interface CensorWord {
   id?: string;
@@ -44,6 +45,8 @@ export interface CensorConfigInput {
   audioExemptWordIds?: readonly string[];
   /** Censored words bleeped even when `audioEnabled` is false. */
   audioForceWordIds?: readonly string[];
+  /** Per-occurrence settings (how to bleep, how to mask), by word id. */
+  wordOverrides?: CensorWordOverrides;
 }
 
 export interface CensorSpan {
@@ -57,6 +60,8 @@ export interface CensorSpan {
   /** `custom` is a term the user added; `manual` is a single occurrence they
    *  ticked by hand. */
   tier: CensorTier | "custom" | "manual";
+  /** This occurrence's own audio mode, when it overrides the clip's. */
+  audioMode?: AudioCensorMode;
 }
 
 /**
@@ -157,6 +162,7 @@ function context(config: CensorConfigInput) {
     audio: config.audioEnabled ?? true,
     audioExemptIds: new Set(config.audioExemptWordIds ?? []),
     audioForceIds: new Set(config.audioForceWordIds ?? []),
+    overrides: config.wordOverrides ?? {},
   };
 }
 
@@ -283,6 +289,7 @@ function collect(
     const tier = audioOnly ? audioTier(w, index, ctx) : maskTier(w, index, ctx);
     if (!tier) return;
 
+    const audioMode = w.id ? ctx.overrides[w.id]?.audioMode : undefined;
     out.push({
       ...(w.id ? { wordId: w.id } : {}),
       index,
@@ -290,6 +297,7 @@ function collect(
       startMs: Math.max(0, w.startMs - padMs),
       endMs: Math.max(w.startMs + 1, w.endMs + padMs),
       tier,
+      ...(audioMode ? { audioMode } : {}),
     });
   });
 
@@ -306,7 +314,10 @@ function mergeOverlapping(spans: CensorSpan[]): CensorSpan[] {
   for (let i = 1; i < spans.length; i++) {
     const prev = out[out.length - 1];
     const cur = spans[i];
-    if (cur.startMs <= prev.endMs) {
+    // Two touching words with different audio modes stay separate: merging a
+    // muted word into a beeped one would silently change how one of them
+    // sounds.
+    if (cur.startMs <= prev.endMs && cur.audioMode === prev.audioMode) {
       // Keep both words' identity in the text so the review UI reads sensibly.
       out[out.length - 1] = {
         ...prev,

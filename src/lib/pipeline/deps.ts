@@ -125,6 +125,8 @@ export interface RenderCensorConfig {
   /** Per-occurrence audio overrides, mirroring exempt/force for the mask. */
   audioExemptWordIds: string[];
   audioForceWordIds: string[];
+  /** Per-occurrence settings, as stored JSON. Parsed by the renderer. */
+  wordOverridesJson: string | null;
   audioMode: "MUTE" | "BEEP" | "TONE";
   replacement: string | null;
   allowList: string[];

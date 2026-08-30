@@ -12,6 +12,7 @@ import { KEYFRAME_SNAP_MS } from "./focus-window";
 import { CensorControls, type CensorSettings } from "./censor-controls";
 import { VoiceoverPanel } from "./voiceover-panel";
 import { bleepedIndices, censoredIndices } from "@/lib/censor/detect.ts";
+import type { CensorWordOverride, CensorWordOverrides } from "@/lib/censor/overrides.ts";
 import { maskWords } from "@/lib/censor/mask.ts";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
 import type { TranscriptView } from "../editor-pane";
@@ -72,6 +73,7 @@ export interface ClipData {
   censorForceWordIds: string[];
   censorAudioExemptWordIds: string[];
   censorAudioForceWordIds: string[];
+  censorWordOverrides: CensorWordOverrides;
   accepted: boolean;
   savedToProjectId: string | null;
   captions: CaptionConfig | null;
@@ -318,6 +320,7 @@ export function ClipEditor({
       audioEnabled: draft.censorAudioEnabled,
       audioExemptWordIds: draft.censorAudioExemptWordIds,
       audioForceWordIds: draft.censorAudioForceWordIds,
+      wordOverrides: draft.censorWordOverrides,
     }),
     [
       draft.censorEnabled,
@@ -329,6 +332,7 @@ export function ClipEditor({
       draft.censorAudioEnabled,
       draft.censorAudioExemptWordIds,
       draft.censorAudioForceWordIds,
+      draft.censorWordOverrides,
     ],
   );
 
@@ -451,6 +455,34 @@ export function ClipEditor({
       });
     },
     [censoredWordIds],
+  );
+
+  /**
+   * Set a per-word censor setting on specific occurrences.
+   *
+   * `null` clears a field, which is not the same as setting it to the clip's
+   * current value: cleared means "follow the clip", so a later change to the
+   * clip setting still reaches this word. A word whose last field is cleared
+   * drops out of the map entirely rather than lingering as `{}`.
+   */
+  const setWordCensorOptions = useCallback(
+    (wordIds: string[], patch: Partial<Record<keyof CensorWordOverride, unknown>>) => {
+      if (wordIds.length === 0) return;
+      setDraft((d) => {
+        const next: CensorWordOverrides = { ...d.censorWordOverrides };
+        for (const id of wordIds) {
+          const entry: CensorWordOverride = { ...next[id] };
+          for (const [key, value] of Object.entries(patch)) {
+            if (value == null || value === "") delete entry[key as keyof CensorWordOverride];
+            else (entry as Record<string, unknown>)[key] = value;
+          }
+          if (Object.keys(entry).length === 0) delete next[id];
+          else next[id] = entry;
+        }
+        return { ...d, censorWordOverrides: next };
+      });
+    },
+    [],
   );
 
   const previewWords = useMemo(() => {
@@ -788,6 +820,7 @@ export function ClipEditor({
     !sameList(draft.censorForceWordIds, clip.censorForceWordIds) ||
     !sameList(draft.censorAudioExemptWordIds, clip.censorAudioExemptWordIds) ||
     !sameList(draft.censorAudioForceWordIds, clip.censorAudioForceWordIds) ||
+    JSON.stringify(draft.censorWordOverrides) !== JSON.stringify(clip.censorWordOverrides) ||
     draft.accepted !== clip.accepted;
 
   async function call(kind: NonNullable<typeof busy>, req: () => Promise<Response>) {
@@ -830,6 +863,7 @@ export function ClipEditor({
         censorForceWordIds: draft.censorForceWordIds,
         censorAudioExemptWordIds: draft.censorAudioExemptWordIds,
         censorAudioForceWordIds: draft.censorAudioForceWordIds,
+        censorWordOverrides: draft.censorWordOverrides,
         accepted: draft.accepted,
       }),
     });
@@ -1610,6 +1644,11 @@ export function ClipEditor({
           onSetAudioCensored={(on) => setDraft((d) => ({ ...d, censorAudioEnabled: on }))}
           bleepedIds={bleepedWordIds}
           onSetBleeped={setWordsBleeped}
+          wordOverrides={draft.censorWordOverrides}
+          clipAudioMode={draft.censorAudioMode}
+          clipCaptionMode={draft.censorCaptionMode}
+          clipReplacement={draft.censorReplacement}
+          onSetWordCensorOptions={setWordCensorOptions}
           clipStartMs={draft.startMs}
           clipEndMs={draft.endMs}
           onSetCensored={setWordsCensored}

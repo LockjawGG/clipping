@@ -67,9 +67,21 @@ export function maskWords<T extends { text: string }>(
   indices: ReadonlySet<number>,
   mode: CaptionCensorMode,
   replacement?: string,
+  /** Per-index settings that win over the clip's `mode` / `replacement`. A word
+   *  with no entry, or an entry missing a field, falls back to them. */
+  overrides?: ReadonlyMap<number, { mode?: CaptionCensorMode; replacement?: string | null }>,
 ): T[] {
   if (indices.size === 0) return words as T[];
-  return words.map((w, i) =>
-    indices.has(i) ? { ...w, text: maskWord(w.text, mode, replacement) } : w,
-  );
+  return words.map((w, i) => {
+    if (!indices.has(i)) return w;
+    const own = overrides?.get(i);
+    return {
+      ...w,
+      text: maskWord(
+        w.text,
+        own?.mode ?? mode,
+        own?.replacement ?? replacement,
+      ),
+    };
+  });
 }

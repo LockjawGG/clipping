@@ -358,6 +358,12 @@ model Clip {
   /// top of `censorAudioEnabled`, which is merely the clip-wide default.
   censorAudioExemptWordIds String[] @default([])
   censorAudioForceWordIds  String[] @default([])
+  /// Per-occurrence *settings* (as opposed to the on/off lists above), keyed by
+  /// TranscriptWord id: JSON `Record<wordId, { audioMode?, captionMode?,
+  /// replacement? }>`. One column rather than a pair per setting, because this
+  /// is an open-ended bag of per-word overrides and each new setting would
+  /// otherwise cost a migration.
+  censorWordOverridesJson String?
 
   /// An authored capture window: JSON `FocusKeyframe[]` of { atMs, x, y, scale,
   /// ease } that pans and zooms the crop over the clip. Takes precedence over

@@ -12,6 +12,7 @@ import {
 import { maskWord, maskWords } from "../src/lib/censor/mask.ts";
 import { lexiconFor, TIERS_BY_SENSITIVITY } from "../src/lib/censor/lexicon.ts";
 import { buildCensorAudioArgs } from "../src/lib/ffmpeg/args.ts";
+import { parseWordOverrides, serializeWordOverrides } from "../src/lib/censor/overrides.ts";
 
 const w = (text: string, i: number) => ({
   id: `w${i}`,
@@ -447,4 +448,82 @@ test("the clip-wide bleep switch is a default the per-word ticks override", () =
     ["w1"],
     "a ticked word beats the switch",
   );
+});
+
+test("each span carries its own sound, so one word can differ from the next", () => {
+  const args = buildCensorAudioArgs({
+    inputPath: "C:/tmp/in.mp4",
+    outputPath: "C:/tmp/out.mp4",
+    mode: "BEEP",
+    spans: [
+      { startSec: 1, endSec: 2 },                 // follows the clip: beep
+      { startSec: 3, endSec: 4, mode: "TONE" },
+      { startSec: 5, endSec: 6, mode: "MUTE" },
+      { startSec: 7, endSec: 8, mode: "BEEP" },
+    ],
+  });
+  const filter = args[args.indexOf("-filter_complex") + 1];
+
+  // One generator per distinct tone, not per span.
+  const sines = args.filter((a) => a.startsWith("sine=frequency="));
+  assert.deepEqual(sines, [
+    "sine=frequency=1000:sample_rate=48000",
+    "sine=frequency=400:sample_rate=48000",
+  ]);
+
+  // The 1 kHz generator is gated by both beep spans and neither of the others.
+  assert.match(filter, /\[1:a\]volume='if\(between\(t,1,2\)\+between\(t,7,8\),0\.8,0\)'/);
+  assert.match(filter, /\[2:a\]volume='if\(between\(t,3,4\),0\.5,0\)'/);
+  // The muted span still ducks the voice, it just has nothing mixed over it.
+  assert.match(filter, /\[0:a\]volume='if\(.*between\(t,5,6\).*,0,1\)'/);
+  assert.match(filter, /\[voice\]\[bleep1\]\[bleep2\]amix=inputs=3:.*normalize=0/);
+});
+
+test("all-muted spans mix nothing in at all", () => {
+  const args = buildCensorAudioArgs({
+    inputPath: "C:/tmp/in.mp4",
+    outputPath: "C:/tmp/out.mp4",
+    mode: "BEEP",
+    spans: [{ startSec: 1, endSec: 2, mode: "MUTE" }],
+  });
+  assert.equal(args.filter((a) => a.startsWith("sine=")).length, 0, "no generator is created");
+  assert.ok(!args.join(" ").includes("amix"), "and nothing to mix");
+  assert.match(args[args.indexOf("-filter_complex") + 1], /\[voice\]$/);
+});
+
+test("touching words with different sounds are not merged into one span", () => {
+  const words = [
+    { id: "n1", text: "shit", startMs: 1_000, endMs: 1_400 },
+    { id: "n2", text: "fuck", startMs: 1_420, endMs: 1_800 },
+  ];
+  const cfg = {
+    enabled: true,
+    sensitivity: "MEDIUM" as const,
+    wordOverrides: { n2: { audioMode: "MUTE" as const } },
+  };
+  const spans = audioSpans(words, cfg);
+  assert.equal(spans.length, 2, "a merge here would silently change one word's sound");
+  assert.equal(spans[0].audioMode, undefined, "the first follows the clip");
+  assert.equal(spans[1].audioMode, "MUTE");
+
+  // With the same sound they do merge, as before.
+  assert.equal(audioSpans(words, { enabled: true, sensitivity: "MEDIUM" }).length, 1);
+});
+
+test("word overrides survive a round trip and drop anything unrecognised", () => {
+  const json = serializeWordOverrides({
+    w1: { audioMode: "TONE", captionMode: "CUSTOM", replacement: "[REDACTED]" },
+    w2: {},
+    w3: { replacement: "" },
+  });
+  assert.deepEqual(parseWordOverrides(json), {
+    w1: { audioMode: "TONE", captionMode: "CUSTOM", replacement: "[REDACTED]" },
+  });
+  assert.equal(serializeWordOverrides({}), null, "nothing overridden is one value, not two");
+
+  // A render must never fail on a column it cannot read.
+  assert.deepEqual(parseWordOverrides("not json"), {});
+  assert.deepEqual(parseWordOverrides('{"w":{"audioMode":"KAZOO"}}'), {});
+  assert.deepEqual(parseWordOverrides('["nope"]'), {});
+  assert.deepEqual(parseWordOverrides(null), {});
 });

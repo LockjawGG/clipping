@@ -641,6 +641,8 @@ export type AudioCensorMode = "MUTE" | "BEEP" | "TONE";
 export interface CensorSpanSec {
   startSec: number;
   endSec: number;
+  /** This span's own treatment. Absent = the clip-wide `mode`. */
+  mode?: AudioCensorMode;
 }
 
 export interface CensorAudioArgs {
@@ -674,6 +676,21 @@ function spanPredicate(spans: CensorSpanSec[]): string {
  * Runs on the cut clip before reframing, so downstream passes keep `-c:a copy`
  * and the censoring survives them.
  */
+/**
+ * A 1 kHz bleep is the broadcast convention; the softer 400 Hz tone is for
+ * people who find it less abrasive.
+ *
+ * Gains are calibrated against measured output: 0.8 puts the bleep about 2 dB
+ * under the speech it replaces — clearly audible without being painful — and
+ * 0.5 puts the tone roughly 5 dB under that. Lower values sound weak enough
+ * that the censoring reads as a glitch. Clipping is not a risk because the
+ * voice is fully ducked inside the span, so nothing sums against it.
+ */
+const TONES: Record<"BEEP" | "TONE", { hz: number; gain: number }> = {
+  BEEP: { hz: 1000, gain: 0.8 },
+  TONE: { hz: 400, gain: 0.5 },
+};
+
 export function buildCensorAudioArgs({
   inputPath,
   outputPath,
@@ -684,11 +701,23 @@ export function buildCensorAudioArgs({
   assertSafePath(outputPath);
   if (spans.length === 0) throw new Error("no censor spans");
 
-  const inSpan = spanPredicate(spans);
-  // Duck the original voice inside every span.
-  const ducked = `[0:a]volume='if(${inSpan},0,1)':eval=frame[voice]`;
+  // Every span ducks the voice, whatever replaces it.
+  const ducked = `[0:a]volume='if(${spanPredicate(spans)},0,1)':eval=frame[voice]`;
 
-  if (mode === "MUTE") {
+  // Spans are grouped by treatment rather than assumed uniform: one word can be
+  // beeped and the next muted, so each distinct tone needs its own generator
+  // gated by only the spans that asked for it.
+  const grouped = new Map<"BEEP" | "TONE", CensorSpanSec[]>();
+  for (const span of spans) {
+    const resolved = span.mode ?? mode;
+    if (resolved === "MUTE") continue;
+    const bucket = grouped.get(resolved);
+    if (bucket) bucket.push(span);
+    else grouped.set(resolved, [span]);
+  }
+
+  if (grouped.size === 0) {
+    // Nothing to mix in — ducking alone is the whole effect.
     return [
       "-y",
       "-i", inputPath,
@@ -702,34 +731,36 @@ export function buildCensorAudioArgs({
     ];
   }
 
-  // A 1 kHz bleep is the broadcast convention; the softer 400 Hz tone is for
-  // people who find it less abrasive.
-  //
-  // Gains are calibrated against measured output: 0.8 puts the bleep about 2 dB
-  // under the speech it replaces — clearly audible without being painful — and
-  // 0.5 puts the tone roughly 5 dB under that. Lower values sound weak enough
-  // that the censoring reads as a glitch. Clipping is not a risk because the
-  // voice is fully ducked inside the span, so nothing sums against it.
-  const hz = mode === "TONE" ? 400 : 1000;
-  const gain = mode === "TONE" ? 0.5 : 0.8;
-  const chains = [
-    ducked,
-    // The generated tone is silent outside the spans and audible inside them.
-    `[1:a]volume='if(${inSpan},${gain},0)':eval=frame[bleep]`,
-    // `duration=first` keeps the output as long as the clip, not the infinite
-    // sine. `dropout_transition=0` stops amix ramping the gain when one input
-    // goes quiet, which would otherwise fade the voice back in oddly.
-    // `normalize=0` is not optional: amix divides by the number of inputs by
-    // default, which would quietly drop the entire clip by ~6 dB just because
-    // censoring is switched on.
-    `[voice][bleep]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]`,
-  ];
+  const inputs: string[] = [];
+  const chains: string[] = [ducked];
+  const labels: string[] = ["[voice]"];
+  let index = 1; // input 0 is the clip
+  for (const [toneMode, toneSpans] of grouped) {
+    const { hz, gain } = TONES[toneMode];
+    inputs.push("-f", "lavfi", "-i", `sine=frequency=${hz}:sample_rate=48000`);
+    // The generated tone is silent outside its spans and audible inside them.
+    chains.push(
+      `[${index}:a]volume='if(${spanPredicate(toneSpans)},${gain},0)':eval=frame[bleep${index}]`,
+    );
+    labels.push(`[bleep${index}]`);
+    index++;
+  }
+
+  // `duration=first` keeps the output as long as the clip, not the infinite
+  // sine. `dropout_transition=0` stops amix ramping the gain when one input
+  // goes quiet, which would otherwise fade the voice back in oddly.
+  // `normalize=0` is not optional: amix divides by the number of inputs by
+  // default, which would quietly drop the entire clip by ~6 dB just because
+  // censoring is switched on — and by more still now that the input count
+  // varies with how many different tones the clip happens to use.
+  chains.push(
+    `${labels.join("")}amix=inputs=${labels.length}:duration=first:dropout_transition=0:normalize=0[aout]`,
+  );
 
   return [
     "-y",
     "-i", inputPath,
-    "-f", "lavfi",
-    "-i", `sine=frequency=${hz}:sample_rate=48000`,
+    ...inputs,
     "-filter_complex", chains.join(";"),
     "-map", "0:v",
     "-map", "[aout]",

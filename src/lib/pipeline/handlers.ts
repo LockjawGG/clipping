@@ -23,7 +23,8 @@ import {
   censorHasAudioWork,
   censorHasWork,
 } from "../censor/detect.ts";
-import { maskWords } from "../censor/mask.ts";
+import { type CaptionCensorMode, maskWords } from "../censor/mask.ts";
+import { parseWordOverrides } from "../censor/overrides.ts";
 import { ASPECT_DIMENSIONS, type CaptionBurnStyle } from "../ffmpeg/args.ts";
 import { type FocalPoint, resampleTrack } from "../faces/track.ts";
 import {
@@ -600,6 +601,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
       audioEnabled: target.censor.audioEnabled,
       audioExemptWordIds: target.censor.audioExemptWordIds,
       audioForceWordIds: target.censor.audioForceWordIds,
+      wordOverrides: parseWordOverrides(target.censor.wordOverridesJson),
     };
     const censoring = censorHasWork(censorCfg);
 
@@ -628,6 +630,8 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
             spans: spans.map((sp) => ({
               startSec: Math.max(0, sp.startMs - target.startMs) / 1000,
               endSec: Math.max(0, sp.endMs - target.startMs) / 1000,
+              // Absent leaves the clip's own mode in charge.
+              ...(sp.audioMode ? { mode: sp.audioMode } : {}),
             })),
             mode: target.censor.audioMode,
           },
@@ -687,11 +691,22 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     // Mask the caption text for the same words the audio bleeped.
     if (censoring && words.length > 0) {
       const flagged = censoredIndices(words, censorCfg);
+      // A word can carry its own caption mode, so the mask is resolved per
+      // index rather than once for the clip.
+      const perWord = new Map<number, { mode?: CaptionCensorMode; replacement?: string | null }>();
+      for (const index of flagged) {
+        const id = words[index]?.id;
+        const own = id ? censorCfg.wordOverrides[id] : undefined;
+        if (own?.captionMode || own?.replacement != null) {
+          perWord.set(index, { mode: own.captionMode, replacement: own.replacement });
+        }
+      }
       words = maskWords(
         words,
         flagged,
         target.censor.captionMode,
         target.censor.replacement ?? undefined,
+        perWord,
       );
     }
     // Captions off: the words were only loaded to drive the bleep.

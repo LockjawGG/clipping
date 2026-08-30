@@ -4,6 +4,7 @@ import type { Segment, StorageProvider } from "../providers/types.ts";
 import { DEFAULT_SNAP_CONFIG, snapToSentences } from "../clips/boundaries.ts";
 import { CAPTION_ANIMATIONS } from "../captions/presets.ts";
 import { serializeFocusTrack } from "../focus/keyframes.ts";
+import { parseWordOverrides, serializeWordOverrides } from "../censor/overrides.ts";
 import { learnedDefaults } from "../learning/apply.ts";
 import type { StyleProfile } from "../learning/profile.ts";
 import { ApiError } from "./http.ts";
@@ -58,6 +59,19 @@ export const updateClipSchema = z
     /** The same overrides for the audio half of censoring. */
     censorAudioExemptWordIds: z.array(z.string().min(1).max(64)).max(5000),
     censorAudioForceWordIds: z.array(z.string().min(1).max(64)).max(5000),
+    /** Per-occurrence settings, keyed by word id. Stored as JSON. */
+    censorWordOverrides: z
+      .record(
+        z.string().min(1).max(64),
+        z
+          .object({
+            audioMode: z.enum(["MUTE", "BEEP", "TONE"]).optional(),
+            captionMode: z.enum(["FULL", "PARTIAL", "FIRST", "CUSTOM"]).optional(),
+            replacement: z.string().max(40).nullable().optional(),
+          })
+          .strict(),
+      )
+      .refine((r) => Object.keys(r).length <= 5000, "too many word overrides"),
     muted: z.boolean(),
     volume: z.number().min(0).max(2),
     playbackRate: z.number().min(0.25).max(4),
@@ -131,6 +145,7 @@ interface ClipListRow {
   censorForceWordIds: string[];
   censorAudioExemptWordIds: string[];
   censorAudioForceWordIds: string[];
+  censorWordOverridesJson: string | null;
   accepted: boolean;
   savedToProjectId: string | null;
   caption: string | null;
@@ -291,10 +306,15 @@ export async function updateClip(deps: ClipServiceDeps, clipId: string, input: u
   // The capture window arrives as keyframes and is stored as JSON. Normalising
   // through the same parser the renderer uses means what is saved is exactly
   // what will be rendered — sorted, clamped, and with defaults filled in.
-  const { focusTrack, ...rest } = patch;
+  const { focusTrack, censorWordOverrides, ...rest } = patch;
   const data: Record<string, unknown> = { ...rest };
   if (focusTrack !== undefined) {
     data.focusTrackJson = focusTrack === null ? null : serializeFocusTrack(focusTrack);
+  }
+  // Normalised through the same serialiser the renderer parses, so empty
+  // entries never reach the column and "nothing overridden" is always null.
+  if (censorWordOverrides !== undefined) {
+    data.censorWordOverridesJson = serializeWordOverrides(censorWordOverrides);
   }
 
   await deps.db.clip.update({ where: { id: clipId }, data });
@@ -501,6 +521,7 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
         censorForceWordIds: c.censorForceWordIds,
         censorAudioExemptWordIds: c.censorAudioExemptWordIds,
         censorAudioForceWordIds: c.censorAudioForceWordIds,
+        censorWordOverrides: parseWordOverrides(c.censorWordOverridesJson),
         accepted: c.accepted,
         savedToProjectId: c.savedToProjectId,
         caption: c.caption,

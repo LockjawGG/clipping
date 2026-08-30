@@ -106,6 +106,7 @@ function makeDeps(
             censorForceWordIds: [],
             censorAudioExemptWordIds: [],
             censorAudioForceWordIds: [],
+            censorWordOverridesJson: null,
             accepted: false,
             savedToProjectId: null,
             caption: "A punchy one-liner for socials",
