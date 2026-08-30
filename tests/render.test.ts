@@ -557,6 +557,41 @@ test("adjacent spans are not merged across a bleep exemption", async () => {
   );
 });
 
+test("a word can carry its own caption mask, unlike its neighbours", async () => {
+  const segs: Segment[] = [
+    {
+      startMs: 0,
+      endMs: 40_000,
+      text: "shit and shit",
+      words: [
+        { id: "k1", text: "shit", startMs: 12_000, endMs: 12_400 },
+        { id: "k2", text: "and", startMs: 13_000, endMs: 13_300 },
+        { id: "k3", text: "shit", startMs: 14_000, endMs: 14_400 },
+      ],
+    },
+  ];
+  const { deps, spy } = makeDeps(
+    target({
+      censor: {
+        ...censorOn,
+        captionMode: "FULL",
+        wordOverridesJson: JSON.stringify({
+          k3: { captionMode: "CUSTOM", replacement: "[REDACTED]" },
+        }),
+      },
+      burnCaptions: true,
+      captionAnimation: "POP",
+    }),
+    withTranscript(segs),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-permask" }));
+
+  const text = spy.captioned[0].cueText;
+  assert.ok(text.includes("****"), `the clip default still applies, got ${text}`);
+  assert.ok(text.includes("[REDACTED]"), `the per-word mask applies, got ${text}`);
+  assert.ok(!text.includes("shit"), "no raw word survives either way");
+});
+
 test("censoring works with captions off — the words only drive the bleep", async () => {
   const { deps, spy } = makeDeps(
     target({ censor: censorOn, burnCaptions: false }),

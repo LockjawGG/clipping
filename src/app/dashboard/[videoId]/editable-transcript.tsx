@@ -21,6 +21,14 @@ const AUDIO_MODE_LABELS: { id: AudioCensorMode; label: string }[] = [
 const soundName = (mode: AudioCensorMode | undefined) =>
   mode === "MUTE" ? "silenced" : mode === "TONE" ? "replaced with a 400 Hz tone" : "beeped";
 
+/** Short forms for the multi-word summary, where the full sentence would not
+ *  fit: "2 beeped, 1 silenced". */
+const SOUND_SHORT: Record<AudioCensorMode, string> = {
+  BEEP: "beeped",
+  TONE: "as a 400 Hz tone",
+  MUTE: "silenced",
+};
+
 const AUDIO_MODE_COLOR: Record<AudioCensorMode, string> = {
   BEEP: "rgb(var(--c-danger))",
   TONE: "#d97706",
@@ -425,15 +433,27 @@ export const EditableTranscript = memo(function EditableTranscript({
           : "is not masked";
       return `"${word?.text ?? ""}" ${readsAs} and ${bleeped > 0 ? sound : "stays audible"}.`;
     }
+    // Naming one sound for a mixed selection would state something the render
+    // will not do, so the sounds actually in play are counted instead.
+    const counts = new Map<AudioCensorMode, number>();
+    for (const id of selectedByBleeped.bleeped) {
+      const mode = wordOverrides?.[id]?.audioMode ?? clipAudioMode ?? "BEEP";
+      counts.set(mode, (counts.get(mode) ?? 0) + 1);
+    }
+    const breakdown = [...counts.entries()]
+      .map(([mode, count]) => `${count} ${SOUND_SHORT[mode]}`)
+      .join(", ");
+
     return (
       `${masked} of ${n} masked in the captions, ` +
-      `${bleeped} bleeped${bleeped > 0 ? ` — each ${sound}` : ""}.`
+      `${bleeped} bleeped${bleeped > 0 ? ` — ${breakdown}` : ""}.`
     );
   }, [
     rows,
     selectedCensorable,
     selectedByCensored,
     selectedByBleeped,
+    wordOverrides,
     selectedAudioMode,
     selectedCaptionMode,
     selectedReplacement,
@@ -715,11 +735,17 @@ export const EditableTranscript = memo(function EditableTranscript({
                   mask
                   <select
                     value={selectedCaptionMode ?? ""}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const next = e.target.value || null;
+                      // Replacement text only means anything under a CUSTOM
+                      // mask. Leaving it behind would strand a value the input
+                      // no longer shows, which would then apply invisibly.
+                      const stillCustom = (next ?? clipCaptionMode) === "CUSTOM";
                       onSetWordCensorOptions(selectedCensorable, {
-                        captionMode: e.target.value || null,
-                      })
-                    }
+                        captionMode: next,
+                        ...(stillCustom ? {} : { replacement: null }),
+                      });
+                    }}
                     className="field py-0.5"
                   >
                     <option value="">
@@ -736,7 +762,7 @@ export const EditableTranscript = memo(function EditableTranscript({
                   </select>
                 </label>
 
-                {selectedCaptionMode === "CUSTOM" && (
+                {(selectedCaptionMode ?? clipCaptionMode) === "CUSTOM" && (
                   <input
                     value={selectedReplacement ?? ""}
                     onChange={(e) =>
