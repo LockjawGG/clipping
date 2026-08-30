@@ -4,6 +4,7 @@ import { WorkerPanel } from "./[videoId]/worker-panel";
 import type { TranscriptRow, WordStyle } from "./[videoId]/editable-transcript";
 import type { PreviewWord } from "./[videoId]/clip-player";
 import type { OverlayView } from "./[videoId]/overlay-panel";
+import type { ClipPlan } from "@/lib/api/sequence.ts";
 
 export interface EditorVideo {
   id: string;
@@ -35,6 +36,7 @@ export function EditorPane({
   sourceUrl,
   clips,
   wordsByClip,
+  plansByClip,
   transcriptByClip,
   overlaysByClip,
   wordStylesByClip,
@@ -46,6 +48,8 @@ export function EditorPane({
   sourceUrl: string;
   clips: ClipData[];
   wordsByClip: Record<string, PreviewWord[]>;
+  /** Each clip's timeline, as pieces the preview can play. */
+  plansByClip: Record<string, ClipPlan>;
   transcriptByClip: Record<string, TranscriptRow[]>;
   overlaysByClip: Record<string, OverlayView[]>;
   wordStylesByClip: Record<string, Record<string, WordStyle>>;
@@ -87,6 +91,7 @@ export function EditorPane({
                   selectedTranscript={selectedTranscript}
                   sourceUrl={sourceUrl}
                   words={wordsByClip[c.id] ?? []}
+                  plan={plansByClip[c.id] ?? null}
                   transcript={transcriptByClip[c.id] ?? []}
                   overlays={overlaysByClip[c.id] ?? []}
                   wordStyles={wordStylesByClip[c.id] ?? {}}

@@ -8,7 +8,13 @@ import { listProjects } from "@/lib/api/projects.ts";
 import { listAssets } from "@/lib/api/assets.ts";
 import { listClipOverlaysBulk } from "@/lib/api/overlays.ts";
 import { listClipWordStylesBulk } from "@/lib/api/caption-styles.ts";
-import { assetService, overlayService, captionStyleService } from "@/lib/api/service.ts";
+import { listClipPlansBulk } from "@/lib/api/sequence.ts";
+import {
+  assetService,
+  overlayService,
+  captionStyleService,
+  sequenceService,
+} from "@/lib/api/service.ts";
 import { getStorage } from "@/lib/storage/index.ts";
 
 import { WorkspaceShell } from "./workspace-shell";
@@ -193,11 +199,17 @@ export default async function DashboardPage({
       );
 
       const clipIds = clips.map((c) => c.id);
-      const [overlaysByClip, wordStylesByClip] = await Promise.all([
+      const [overlaysByClip, wordStylesByClip, plansByClip] = await Promise.all([
         /** Library assets dropped onto each clip, bottom-to-top. */
         listClipOverlaysBulk(overlayService(userId), clipIds),
         /** Per-word caption style overrides, per clip. */
         listClipWordStylesBulk(captionStyleService(userId), clipIds),
+        /**
+         * Each clip's timeline, resolved to the pieces the render would cut, so
+         * the preview can play the timeline rather than the raw source window.
+         * Read-only — a clip with no timeline stays without one.
+         */
+        listClipPlansBulk(sequenceService(userId), clipIds),
       ]);
 
       editor = (
@@ -221,6 +233,7 @@ export default async function DashboardPage({
           transcriptByClip={transcriptByClip}
           overlaysByClip={overlaysByClip}
           wordStylesByClip={wordStylesByClip}
+          plansByClip={plansByClip}
           projects={projects.map((p) => ({ id: p.id, name: p.name }))}
         />
       );

@@ -86,6 +86,12 @@ function makeDeps(over: Partial<SequenceServiceDeps> = {}) {
         overlays.filter((o) => o.clipId === where.clipId) as never,
     },
     sequence: {
+      findMany: async ({ where }) => {
+        const ids = (where as { clipId?: { in?: string[] } }).clipId?.in ?? [];
+        return [...sequences.values()]
+          .filter((x) => ids.includes(x.clipId))
+          .map(withIncludes) as never;
+      },
       findUnique: async ({ where }) => {
         const s = where.id
           ? sequences.get(where.id)

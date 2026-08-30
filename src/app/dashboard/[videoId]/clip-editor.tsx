@@ -15,7 +15,8 @@ import { audioSpans, bleepedIndices, censoredIndices } from "@/lib/censor/detect
 import type { CensorWordOverride, CensorWordOverrides } from "@/lib/censor/overrides.ts";
 import { type CaptionCensorMode, maskWords } from "@/lib/censor/mask.ts";
 import { EditableTranscript, type TranscriptRow } from "./editable-transcript";
-import { cutDurationMs, cutSpansForWords } from "@/lib/sequence/cuts.ts";
+import { applyInteriorCuts, cutDurationMs, cutSpansForWords } from "@/lib/sequence/cuts.ts";
+import type { ClipPlan } from "@/lib/api/sequence.ts";
 import type { TranscriptView } from "../editor-pane";
 import { TRANSLATE_TARGETS } from "@/lib/translation/targets";
 import { OverlayPanel, type OverlayView } from "./overlay-panel";
@@ -149,6 +150,7 @@ export function ClipEditor({
   selectedTranscript,
   sourceUrl,
   words,
+  plan,
   transcript,
   overlays: serverOverlays,
   wordStyles: serverWordStyles,
@@ -161,6 +163,8 @@ export function ClipEditor({
   selectedTranscript: string;
   sourceUrl: string;
   words: PreviewWord[];
+  /** The clip's timeline, already resolved to pieces. Null when it has none. */
+  plan: ClipPlan | null;
   transcript: TranscriptRow[];
   overlays: OverlayView[];
   wordStyles: Record<string, WordStyle>;
@@ -512,9 +516,51 @@ export function ClipEditor({
    * uses, which is what makes "the preview plays what the export contains" true
    * rather than approximately true.
    */
-  const cutSpans = useMemo(
-    () => cutSpansForWords(words, draft.removedWordIds, "self"),
-    [words, draft.removedWordIds],
+  /**
+   * What the preview should actually play.
+   *
+   * The timeline's pieces with the struck words taken out — the same two
+   * transforms the renderer applies, in the same order, so scrubbing the
+   * preview walks the export. A clip with no timeline (or one that is still
+   * just its own window) gets a single piece synthesised from the *draft*, so
+   * dragging the trim handles is reflected immediately; once the timeline says
+   * something of its own, it wins.
+   */
+  const previewPlan = useMemo(() => {
+    const saved = plan?.pieces ?? [];
+    const untouched =
+      saved.length === 1 &&
+      saved[0].sourceVideoId === videoId &&
+      saved[0].sourceIn === clip.startMs &&
+      saved[0].sourceOut === clip.endMs;
+    const base =
+      saved.length > 0 && !untouched
+        ? saved
+        : [
+            {
+              sourceVideoId: videoId,
+              sourceStorageKey: null,
+              sourceIn: Math.round(draft.startMs),
+              sourceOut: Math.round(draft.endMs),
+              timelineStart: 0,
+              durationMs: Math.max(1, Math.round(draft.endMs - draft.startMs)),
+            },
+          ];
+    if (draft.removedWordIds.length === 0) return base;
+    // Word times arrive rebased onto the clip; cuts are expressed against the
+    // source, which is the coordinate the pieces use.
+    const inSource = words.map((w) => ({
+      ...w,
+      startMs: w.startMs + clip.startMs,
+      endMs: w.endMs + clip.startMs,
+    }));
+    return applyInteriorCuts(base, cutSpansForWords(inSource, draft.removedWordIds, videoId));
+  }, [plan, videoId, clip.startMs, clip.endMs, draft.startMs, draft.endMs, draft.removedWordIds, words]);
+
+  /** A playable URL for every source the plan touches. */
+  const planSourceUrls = useMemo(
+    () => ({ [videoId]: sourceUrl, ...(plan?.sourceUrls ?? {}) }),
+    [videoId, sourceUrl, plan],
   );
   const setWordsCut = useCallback((wordIds: string[], cut: boolean) => {
     if (wordIds.length === 0) return;
@@ -1410,7 +1456,8 @@ export function ClipEditor({
         captionsOn={captionsOn}
         caption={captionDraft}
         wordStyles={wordStyles}
-        cutSpans={cutSpans}
+        plan={previewPlan}
+        planSourceUrls={planSourceUrls}
         voiceover={narration.lines.length > 0 ? narration : null}
         bleeps={bleepSpans}
         renderUrl={clip.render?.downloadUrl ?? null}

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { StorageProvider } from "../providers/types.ts";
 import { insertionIndex, laneItems, packLanes } from "../sequence/lane.ts";
+import { buildComposePlan, type ComposePiece } from "../sequence/compose.ts";
 import { ApiError } from "./http.ts";
 
 /**
@@ -183,6 +184,7 @@ export interface SequenceDb {
     findMany(a: { where: { clipId: string }; orderBy?: unknown }): Promise<OverlayLite[]>;
   };
   sequence: {
+    findMany(a: { where: Record<string, unknown>; include?: unknown }): Promise<SeqRow[]>;
     findUnique(a: {
       where: { id?: string; clipId?: string };
       include?: unknown;
@@ -847,4 +849,69 @@ export async function splitSequenceItem(
     items: [byId.get(left.id) ?? left, byId.get(right.id) ?? right],
   });
   return { left: view.items[0], right: view.items[1] };
+}
+
+/* ------------------------------------------------- the plan, for the preview */
+
+/**
+ * A clip's base lane, resolved to the pieces the render will cut and join, with
+ * a URL for each source so the preview can actually play them.
+ *
+ * The renderer builds this from the same `buildComposePlan` over the same
+ * items. Handing the browser the identical structure is what lets the preview
+ * play the timeline instead of the untouched source window.
+ */
+export interface ClipPlan {
+  pieces: ComposePiece[];
+  /** Playable URL per source video id referenced by the pieces. */
+  sourceUrls: Record<string, string>;
+}
+
+/**
+ * Plans for many clips at once, for the workspace page.
+ *
+ * Read-only on purpose: unlike `getOrCreateClipSequence` this never creates a
+ * Sequence, so merely opening a video does not give every clip on it a timeline
+ * row. Clips without one are simply absent from the result.
+ */
+export async function listClipPlansBulk(
+  deps: SequenceServiceDeps,
+  clipIds: readonly string[],
+): Promise<Record<string, ClipPlan>> {
+  if (clipIds.length === 0) return {};
+  const rows = await deps.db.sequence.findMany({
+    where: { clipId: { in: [...clipIds] } },
+    include: {
+      tracks: true,
+      items: { include: { video: { select: { storageKey: true } } } },
+    },
+  });
+
+  const out: Record<string, ClipPlan> = {};
+  // One signed URL per source video, however many clips or pieces use it.
+  const urls = new Map<string, Promise<string>>();
+  for (const seq of rows) {
+    const base = [...seq.tracks]
+      .filter((t) => t.kind === "VIDEO")
+      .sort((a, b) => a.index - b.index)[0];
+    if (!base) continue;
+    const items = seq.items.map((i) => ({
+      ...i,
+      sourceStorageKey:
+        (i as { video?: { storageKey: string } | null }).video?.storageKey ?? null,
+    }));
+    const pieces = buildComposePlan(items, base.id);
+    if (pieces.length === 0) continue;
+
+    const sourceUrls: Record<string, string> = {};
+    for (const piece of pieces) {
+      if (!piece.sourceStorageKey || sourceUrls[piece.sourceVideoId]) continue;
+      if (!urls.has(piece.sourceStorageKey)) {
+        urls.set(piece.sourceStorageKey, deps.storage.createDownloadUrl(piece.sourceStorageKey));
+      }
+      sourceUrls[piece.sourceVideoId] = await urls.get(piece.sourceStorageKey)!;
+    }
+    out[seq.clipId] = { pieces, sourceUrls };
+  }
+  return out;
 }

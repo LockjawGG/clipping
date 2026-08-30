@@ -32,12 +32,22 @@ interface Props {
   startMs: number;
   endMs: number;
   /**
-   * Stretches the render cuts out, measured from the start of the clip — the
-   * same clip-relative milliseconds `words` uses. Playback jumps over them, so
-   * the preview is the length the export will be and the seams can be heard
-   * before committing to a render.
+   * The pieces the render will cut and join, in timeline order.
+   *
+   * This is the clip as the export will be: the timeline's edits and any words
+   * struck out of the middle, already applied. The preview walks it rather than
+   * playing the untouched source window, so a split, a reorder and a cut are
+   * all visible before rendering. Empty falls back to the clip's own window.
    */
-  cutSpans?: ReadonlyArray<{ startMs: number; endMs: number }>;
+  plan?: ReadonlyArray<{
+    sourceVideoId: string;
+    sourceIn: number;
+    sourceOut: number;
+    timelineStart: number;
+    durationMs: number;
+  }>;
+  /** A playable URL per source video id the plan references. */
+  planSourceUrls?: Record<string, string>;
   /**
    * Narration to play over the clip, placed exactly where the render will put
    * it. Times are clip-relative. Without this the preview is silent about a
@@ -113,7 +123,8 @@ export const ClipPlayer = memo(function ClipPlayer({
   sourceUrl,
   startMs,
   endMs,
-  cutSpans,
+  plan,
+  planSourceUrls,
   voiceover,
   bleeps,
   words,
@@ -160,8 +171,52 @@ export const ClipPlayer = memo(function ClipPlayer({
     return () => ro.disconnect();
   }, []);
 
-  const spanMs = mode === "source" ? Math.max(1, endMs - startMs) : Math.max(1, renderedDurMs);
-  const baseMs = mode === "source" ? startMs : 0;
+  /**
+   * The pieces to walk, in timeline order. A clip with nothing to compose still
+   * gets one piece — its own window — so there is a single code path.
+   */
+  const pieces = useMemo(() => {
+    const list = (plan ?? []).filter((p) => p.durationMs > 0);
+    if (list.length === 0) {
+      return [
+        {
+          sourceVideoId: "",
+          sourceIn: startMs,
+          sourceOut: endMs,
+          timelineStart: 0,
+          durationMs: Math.max(1, endMs - startMs),
+        },
+      ];
+    }
+    return [...list].sort((a, b) => a.timelineStart - b.timelineStart);
+  }, [plan, startMs, endMs]);
+
+  const planMs = useMemo(
+    () => pieces.reduce((end, p) => Math.max(end, p.timelineStart + p.durationMs), 0),
+    [pieces],
+  );
+  /** Which piece is on screen. An index, because pieces can repeat a source. */
+  const activeIdx = useRef(0);
+  if (activeIdx.current >= pieces.length) activeIdx.current = 0;
+
+  const spanMs = mode === "source" ? Math.max(1, planMs) : Math.max(1, renderedDurMs);
+  /** Where the active piece starts in its source — the render path has none. */
+  const baseMs = mode === "source" ? (pieces[activeIdx.current]?.sourceIn ?? startMs) : 0;
+
+  /** Timeline position → the piece playing there and its moment of the source. */
+  const locate = useCallback(
+    (posMs: number) => {
+      const at = Math.min(Math.max(0, posMs), Math.max(0, planMs - 1));
+      let i = pieces.findIndex((p) => at >= p.timelineStart && at < p.timelineStart + p.durationMs);
+      if (i < 0) i = pieces.length - 1;
+      return { index: i, piece: pieces[i], sourceMs: pieces[i].sourceIn + (at - pieces[i].timelineStart) };
+    },
+    [pieces, planMs],
+  );
+
+  /** The source that should be loaded for the piece on screen. */
+  const activeSrc =
+    planSourceUrls?.[pieces[activeIdx.current]?.sourceVideoId ?? ""] ?? sourceUrl;
 
   const cues = useMemo(
     () => buildCues(words as Parameters<typeof buildCues>[0]),
@@ -203,6 +258,7 @@ export const ClipPlayer = memo(function ClipPlayer({
     if (!v) return;
     setPlaying(false);
     setPosMs(0);
+    activeIdx.current = 0;
     v.pause();
     const seek = () => {
       // Assigning the position the element is already at (0 -> 0) is a no-op,
@@ -213,26 +269,57 @@ export const ClipPlayer = memo(function ClipPlayer({
     if (v.readyState >= 1) seek();
     else v.addEventListener("loadedmetadata", seek, { once: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceUrl, renderUrl, mode, startMs, endMs]);
+  }, [sourceUrl, renderUrl, mode, startMs, endMs, planMs]);
 
   /**
-   * Jump the playhead out of a cut stretch.
-   *
-   * Only in source mode: a finished render already has the cuts in it, and
-   * skipping again there would drop real footage. The tolerance keeps a seek
-   * that lands exactly on the far edge from bouncing forward again.
+   * Where the playhead is on the timeline, read from the element's own clock
+   * through whichever piece is showing.
    */
-  const skipCuts = useCallback(() => {
+  const timelinePos = useCallback(() => {
     const v = videoRef.current;
-    if (!v || mode !== "source" || !cutSpans || cutSpans.length === 0) return false;
-    // The element plays the whole source, so its clock has to come back to the
-    // clip's before it can be compared with a span.
-    const ms = v.currentTime * 1000 - baseMs;
-    const inside = cutSpans.find((c) => ms >= c.startMs && ms < c.endMs - 40);
-    if (!inside) return false;
-    v.currentTime = (baseMs + inside.endMs) / 1000;
-    return true;
-  }, [cutSpans, mode, baseMs]);
+    if (!v) return 0;
+    if (mode !== "source") return Math.min(Math.max(0, v.currentTime * 1000), spanMs);
+    const piece = pieces[activeIdx.current] ?? pieces[0];
+    const at = piece.timelineStart + (v.currentTime * 1000 - piece.sourceIn);
+    return Math.min(Math.max(0, at), spanMs);
+  }, [mode, pieces, spanMs]);
+
+  /**
+   * Move to the next piece when the current one runs out.
+   *
+   * The element plays one continuous source, so the joins are the player's job:
+   * at the end of a piece it seeks to wherever the next one starts. Pieces that
+   * happen to be contiguous in the same source need no seek at all, which is
+   * why an untouched clip plays exactly as smoothly as it always did.
+   *
+   * Returns true when it moved, so the caller can let the next frame report the
+   * position rather than reading a stale one.
+   */
+  const advance = useCallback(() => {
+    const v = videoRef.current;
+    if (!v || mode !== "source") return false;
+    const piece = pieces[activeIdx.current];
+    if (!piece) return false;
+    const srcMs = v.currentTime * 1000;
+    // A little tolerance: the element rarely lands exactly on the boundary.
+    if (srcMs < piece.sourceOut - 20 && srcMs >= piece.sourceIn - 250) return false;
+
+    const next = pieces[activeIdx.current + 1];
+    if (!next) {
+      v.pause();
+      setPlaying(false);
+      activeIdx.current = 0;
+      v.currentTime = pieces[0].sourceIn / 1000;
+      setPosMs(0);
+      onPlayhead(0);
+      return true;
+    }
+    activeIdx.current += 1;
+    const continuous =
+      next.sourceVideoId === piece.sourceVideoId && Math.abs(next.sourceIn - piece.sourceOut) < 40;
+    if (!continuous) v.currentTime = next.sourceIn / 1000;
+    return !continuous;
+  }, [mode, pieces, onPlayhead]);
 
   /**
    * Keep the narration lined up with the playhead.
@@ -368,19 +455,13 @@ export const ClipPlayer = memo(function ClipPlayer({
   function onTimeUpdate() {
     const v = videoRef.current;
     if (!v) return;
-    if (skipCuts()) return;
-    if (mode === "source" && v.currentTime >= endMs / 1000) {
-      v.pause();
-      v.currentTime = startMs / 1000;
-      setPlaying(false);
-      setPosMs(0);
-      onPlayhead(0);
-      return;
-    }
+    // Reaching the end of a piece is what ends the clip now — the last piece's
+    // own end, not the clip window's, since the timeline decides the length.
+    if (advance()) return;
     // While playing, the rAF loop below owns the position (smoother, ~30fps).
-    // `timeupdate` still covers paused seeks and the end-of-clip stop.
+    // `timeupdate` still covers paused seeks.
     if (playing) return;
-    const bounded = Math.min(Math.max(0, v.currentTime * 1000 - baseMs), spanMs);
+    const bounded = timelinePos();
     setPosMs(bounded);
     onPlayhead(bounded);
     syncAudio(bounded, false);
@@ -398,15 +479,15 @@ export const ClipPlayer = memo(function ClipPlayer({
       last = t;
       const v = videoRef.current;
       if (!v) return;
-      if (skipCuts()) return;
-      const bounded = Math.min(Math.max(0, v.currentTime * 1000 - baseMs), spanMs);
+      if (advance()) return;
+      const bounded = timelinePos();
       setPosMs(bounded);
       onPlayhead(bounded);
       syncAudio(bounded, true);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, baseMs, spanMs, onPlayhead, skipCuts, syncAudio]);
+  }, [playing, onPlayhead, advance, timelinePos, syncAudio]);
 
   useEffect(() => {
     onPlayingChange?.(playing);
@@ -416,8 +497,13 @@ export const ClipPlayer = memo(function ClipPlayer({
     const v = videoRef.current;
     if (!v) return;
     if (v.paused) {
-      if (v.currentTime < baseMs / 1000 || v.currentTime >= (baseMs + spanMs) / 1000) {
-        v.currentTime = baseMs / 1000;
+      // Off the end, or outside the piece on screen: start again from the top
+      // of the timeline rather than wherever the element happens to sit.
+      const piece = pieces[activeIdx.current];
+      const srcMs = v.currentTime * 1000;
+      if (mode === "source" && piece && (srcMs < piece.sourceIn - 250 || srcMs >= piece.sourceOut)) {
+        activeIdx.current = 0;
+        v.currentTime = pieces[0].sourceIn / 1000;
       }
       void v.play();
       setPlaying(true);
@@ -430,7 +516,15 @@ export const ClipPlayer = memo(function ClipPlayer({
   function scrub(relMs: number) {
     const v = videoRef.current;
     if (!v) return;
-    v.currentTime = (baseMs + relMs) / 1000;
+    if (mode === "source") {
+      // A timeline position means nothing to the element; it has to be turned
+      // back into a moment of whichever source plays there.
+      const { index, sourceMs } = locate(relMs);
+      activeIdx.current = index;
+      v.currentTime = sourceMs / 1000;
+    } else {
+      v.currentTime = relMs / 1000;
+    }
     setPosMs(relMs);
     onPlayhead(relMs);
   }
@@ -472,7 +566,7 @@ export const ClipPlayer = memo(function ClipPlayer({
     setDragging(false);
   }
 
-  const src = mode === "rendered" && renderUrl ? renderUrl : sourceUrl;
+  const src = mode === "rendered" && renderUrl ? renderUrl : activeSrc;
   const scale = (boxRef.current?.clientHeight ?? 480) / 1920;
   const showOverlay = mode === "source" && captionsOn && activeCue;
 
