@@ -124,7 +124,17 @@ export function SequenceEditor({
   const [playhead, setPlayhead] = useState(0);
   const [save, setSave] = useState<"idle" | "saving" | "saved">("idle");
   /** Videos that can be dropped onto this timeline, loaded on first use. */
-  const [media, setMedia] = useState<Array<{ id: string; name: string; durationMs: number }> | null>(null);
+  const [media, setMedia] = useState<
+    Array<{
+      id: string;
+      name: string;
+      durationMs: number;
+      kind: "clip" | "video";
+      videoId: string;
+      sourceIn: number;
+      sourceOut: number;
+    }> | null
+  >(null);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   // Follow the main preview while it plays. Cheap: one state set per frame the
@@ -261,7 +271,10 @@ export function SequenceEditor({
    * be a trim the user has to undo.
    */
   const insertMedia = useCallback(
-    async (videoId: string, trackId: string) => {
+    async (
+      item: { videoId: string; sourceIn: number; sourceOut: number },
+      trackId: string,
+    ) => {
       const id = seq?.id;
       if (!id) return;
       setSave("saving");
@@ -271,11 +284,14 @@ export function SequenceEditor({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             trackId,
-            sourceVideoId: videoId,
+            // A clip is a range of a video, so both kinds place the same way —
+            // the menu resolved which range before we got here.
+            sourceVideoId: item.videoId,
+            sourceIn: item.sourceIn,
+            sourceOut: item.sourceOut,
             // A day in, i.e. past the end of any lane. The server resolves a
             // drop position to a place in the order, so this reads as "append".
             timelineStart: 86_400_000,
-            sourceIn: 0,
           }),
         });
         if (!r.ok) throw new Error();
@@ -552,9 +568,15 @@ export function SequenceEditor({
                       const lane =
                         seq.tracks.find((t) => t.id === sel?.trackId) ??
                         seq.tracks.find((t) => t.kind === "VIDEO");
-                      if (lane) void insertMedia(m.id, lane.id);
+                      if (lane) void insertMedia(m, lane.id);
                     }}
                   >
+                    <span
+                      className="shrink-0 rounded px-1 text-[10px] uppercase"
+                      style={{ background: "rgb(var(--c-surface))" }}
+                    >
+                      {m.kind}
+                    </span>
                     <span className="min-w-0 flex-1 truncate">{m.name}</span>
                     <span className="shrink-0 tabular-nums text-muted">
                       +{(m.durationMs / 1000).toFixed(0)}s

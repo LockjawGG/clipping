@@ -158,6 +158,14 @@ interface OverlayLite {
 export interface SequenceDb {
   clip: {
     findUnique(a: { where: { id: string }; select?: unknown }): Promise<ClipLite | null>;
+    findMany(a: {
+      where: Record<string, unknown>;
+      select: Record<string, unknown>;
+      orderBy?: unknown;
+      take?: number;
+    }): Promise<
+      Array<{ id: string; title: string | null; startMs: number; endMs: number; videoId: string }>
+    >;
   };
   video: {
     findUnique(a: { where: { id: string } }): Promise<VideoLite | null>;
@@ -585,37 +593,83 @@ export async function deleteSequenceTrack(
 }
 
 export interface InsertableMedia {
+  /** Stable id for the menu — a clip id or a video id. */
   id: string;
   name: string;
   durationMs: number;
+  /** What it is, so the menu can group and label it. */
+  kind: "clip" | "video";
+  /** The video the piece is cut from, and the slice of it to place. */
+  videoId: string;
+  sourceIn: number;
+  sourceOut: number;
 }
 
 /**
- * What can be dropped onto this clip's timeline.
+ * What can be put on this clip's timeline: the project's other clips, and its
+ * whole videos.
  *
- * The project's own finished videos, longest-lived first. Scoped to the clip
- * rather than taking a project id from the caller: the timeline only ever
- * belongs to one clip, and letting the client name the project would be a
- * second place to get ownership wrong.
+ * Clips come first because they are the useful unit — combining two clips is
+ * the ordinary reason to reach for this, and a clip already is the interesting
+ * few seconds of a long recording. A whole video is offered too, for when the
+ * piece you want was never cut into a clip.
+ *
+ * Every entry carries the slice to place rather than just an id, so the client
+ * never has to know that a clip is really a range of some video.
+ *
+ * Scoped to the clip rather than taking a project id from the caller: the
+ * timeline only ever belongs to one clip, and letting the client name the
+ * project would be a second place to get ownership wrong.
  */
 export async function listInsertableMedia(
   deps: SequenceServiceDeps,
   clipId: string,
 ): Promise<InsertableMedia[]> {
   const clip = await ownedClip(deps, clipId);
-  const rows = await deps.db.video.findMany({
-    where: { projectId: clip.video.projectId, status: "READY" },
+  const projectId = clip.video.projectId;
+
+  const videos = await deps.db.video.findMany({
+    where: { projectId, status: "READY" },
     select: { id: true, originalFilename: true, durationMs: true },
     orderBy: { createdAt: "desc" },
     take: 100,
   });
-  return rows
+  const named = new Map(videos.map((v) => [v.id, v.originalFilename?.trim() || "Untitled"]));
+
+  const clips = await deps.db.clip.findMany({
+    // Its own range is already the base of this timeline, so offering it back
+    // would just be a confusing duplicate of what is on screen.
+    where: { id: { not: clipId }, video: { projectId } },
+    select: { id: true, title: true, startMs: true, endMs: true, videoId: true },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
+
+  const fromClips: InsertableMedia[] = clips
+    .filter((c) => c.endMs > c.startMs && named.has(c.videoId))
+    .map((c) => ({
+      id: c.id,
+      name: c.title?.trim() || named.get(c.videoId) || "Untitled clip",
+      durationMs: c.endMs - c.startMs,
+      kind: "clip" as const,
+      videoId: c.videoId,
+      sourceIn: c.startMs,
+      sourceOut: c.endMs,
+    }));
+
+  const fromVideos: InsertableMedia[] = videos
     .filter((v) => (v.durationMs ?? 0) > 0)
     .map((v) => ({
       id: v.id,
-      name: v.originalFilename?.trim() || "Untitled",
+      name: named.get(v.id) ?? "Untitled",
       durationMs: v.durationMs ?? 0,
+      kind: "video" as const,
+      videoId: v.id,
+      sourceIn: 0,
+      sourceOut: v.durationMs ?? 0,
     }));
+
+  return [...fromClips, ...fromVideos];
 }
 
 export async function updateSequence(

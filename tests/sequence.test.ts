@@ -58,7 +58,19 @@ function makeDeps(over: Partial<SequenceServiceDeps> = {}) {
   });
 
   const db: SequenceServiceDeps["db"] = {
-    clip: { findUnique: async ({ where }) => (clips[where.id] ?? null) as never },
+    clip: {
+      findUnique: async ({ where }) => (clips[where.id] ?? null) as never,
+      findMany: async ({ where }) =>
+        Object.entries(clips)
+          .filter(([id]) => id !== (where.id as { not?: string } | undefined)?.not)
+          .map(([id, c]) => ({
+            id,
+            title: (c as { title?: string }).title ?? null,
+            startMs: (c as { startMs: number }).startMs,
+            endMs: (c as { endMs: number }).endMs,
+            videoId: (c as { videoId: string }).videoId,
+          })) as never,
+    },
     video: {
       findUnique: async ({ where }) => (videos[where.id] ?? null) as never,
       findMany: async () =>
@@ -444,12 +456,27 @@ test("the last video layer cannot be removed", async () => {
   );
 });
 
-test("insertable media is the project's finished videos, longest-lived first", async () => {
+test("insertable media offers other clips as well as whole videos", async () => {
   const { deps } = makeDeps();
   const media = await listInsertableMedia(deps, "c1");
-  assert.ok(media.length > 0, "the project's own videos can be added");
+
+  assert.ok(media.some((m) => m.kind === "video"), "whole videos can be placed");
   assert.ok(media.every((m) => m.durationMs > 0), "a source with no duration cannot be placed");
   assert.ok(media.every((m) => m.name.length > 0), "and every one is nameable in a menu");
+  // Clips come first: combining two clips is the ordinary reason to be here.
+  const firstVideo = media.findIndex((m) => m.kind === "video");
+  assert.ok(
+    media.slice(0, firstVideo).every((m) => m.kind === "clip"),
+    "clips are listed ahead of whole videos",
+  );
+  // The clip being edited is not offered back to itself.
+  assert.ok(!media.some((m) => m.id === "c1"));
+  // Every entry carries its own slice, so the client never has to know that a
+  // clip is really a range of some video.
+  for (const m of media) {
+    assert.ok(m.videoId.length > 0);
+    assert.equal(m.sourceOut - m.sourceIn, m.durationMs);
+  }
 });
 
 test("adding media appends it, so the lane grows by exactly its length", async () => {
