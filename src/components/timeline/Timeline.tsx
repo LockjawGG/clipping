@@ -538,7 +538,14 @@ export function Timeline({
             <TBtn
               label={
                 splitTarget
-                  ? `Split ${splitTarget.name} at the playhead (S)`
+                  ? // A piece is named after its source, and a video title can
+                    // run to a full sentence — the tooltip should still read as
+                    // one line.
+                    `Split "${
+                      splitTarget.name.length > 28
+                        ? `${splitTarget.name.slice(0, 27)}…`
+                        : splitTarget.name
+                    }" at the playhead (S)`
                   : selected
                     ? "Split (S) — the playhead is not inside the selected piece"
                     : "Split (S) — move the playhead over a piece"

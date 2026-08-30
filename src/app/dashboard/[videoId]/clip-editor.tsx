@@ -1293,15 +1293,27 @@ export function ClipEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playheadMs, clip.startMs, clip.endMs]);
 
+  /**
+   * The moment of the source under the playhead.
+   *
+   * The playhead is a position in the *preview*, which skips struck words, so
+   * it is not a position in the clip's own window once anything is cut — with a
+   * second removed, preview 8000 is source 9010. Anything that writes a source
+   * or clip time from the playhead has to convert; anything that writes an
+   * output time (a focus keyframe, say, which the render applies after the cut)
+   * must not.
+   */
+  const sourceUnderPlayhead = () => clip.startMs + toTimeline(playheadMs);
+
   const setStartToPlayhead = () =>
     setDraft((d) => ({
       ...d,
-      startMs: Math.min(Math.max(0, clip.startMs + playheadMs), d.endMs - MIN_LEN_MS),
+      startMs: Math.min(Math.max(0, sourceUnderPlayhead()), d.endMs - MIN_LEN_MS),
     }));
   const setEndToPlayhead = () =>
     setDraft((d) => ({
       ...d,
-      endMs: Math.max(clip.startMs + playheadMs, d.startMs + MIN_LEN_MS),
+      endMs: Math.max(sourceUnderPlayhead(), d.startMs + MIN_LEN_MS),
     }));
 
   const nudge = (field: "startMs" | "endMs", deltaMs: number) =>
@@ -1819,10 +1831,13 @@ export function ClipEditor({
         onChange={setCaptionDraft}
       />
 
+      {/* Overlay windows are authored against the uncut clip — the render
+          shifts them itself — so "set to playhead" has to store where the
+          playhead is in *that* clip, not in the shortened preview. */}
       <OverlayPanel
         overlays={overlays}
         clipLenMs={clipLenMs}
-        playheadMs={playheadMs}
+        playheadMs={toTimeline(playheadMs)}
         selectedId={selectedOverlayId}
         onSelect={setSelectedOverlayId}
         onEdit={editOverlay}
@@ -1964,7 +1979,7 @@ export function ClipEditor({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <p className="min-w-0 flex-1 text-xs font-medium text-muted">
             Transcript for this clip — click a word to jump the preview there, double-click to fix a
-            typo, or select words to colour / bold them as captions
+            typo, or select words to colour them, bold them, or cut them out of the clip
           </p>
           <label className="flex items-center gap-1.5 text-xs text-muted">
             <span>Show in</span>
