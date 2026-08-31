@@ -164,7 +164,33 @@ export default async function DashboardPage({
         storage.createDownloadUrl(video.storageKey),
       ]);
 
-      const allWords = segments.flatMap((s) => s.words);
+      /**
+       * Words always come from the source transcript, whichever language is on
+       * screen. A translation carries segment text and no word timings, so
+       * reading one used to blank the captions, the censor marks and the cut
+       * controls — while the render, which only ever reads the source, went on
+       * burning and bleeping exactly as before. The picker changes what you
+       * read; it does not change what gets exported.
+       */
+      const sourceSegments =
+        selectedTranscript === ""
+          ? segments
+          : await db.transcriptSegment.findMany({
+              where: { transcript: { videoId: video.id, translatedTo: "" } },
+              orderBy: { index: "asc" },
+              select: {
+                startMs: true,
+                endMs: true,
+                speaker: true,
+                text: true,
+                words: {
+                  orderBy: { index: "asc" },
+                  select: { id: true, text: true, startMs: true, endMs: true },
+                },
+              },
+            });
+
+      const allWords = sourceSegments.flatMap((s) => s.words);
       const wordsByClip = Object.fromEntries(
         clips.map((c) => [
           c.id,

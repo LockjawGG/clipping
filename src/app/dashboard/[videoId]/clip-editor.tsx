@@ -2028,8 +2028,22 @@ export function ClipEditor({
       <div className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <p className="min-w-0 flex-1 text-xs font-medium text-muted">
-            Transcript for this clip — click a word to jump the preview there, double-click to fix a
-            typo, or select words to colour them, bold them, or cut them out of the clip
+            {selectedTranscript === "" ? (
+              <>
+                Transcript for this clip — click a word to jump the preview there, double-click to
+                fix a typo, or select words to colour them, bold them, or cut them out of the clip
+              </>
+            ) : (
+              /* A translation has segment text and no word timings, so the
+                 per-word tools have nothing to attach to here. Saying which
+                 language the export is in matters more than the missing
+                 controls: the render only ever reads the original. */
+              <>
+                Reading in {langName(selectedTranscript)}. Captions, censoring and cuts stay on the
+                original {langName(sourceLang)} — a translation carries no word timings, and the
+                export follows the original either way.
+              </>
+            )}
           </p>
           <label className="flex items-center gap-1.5 text-xs text-muted">
             <span>Show in</span>
