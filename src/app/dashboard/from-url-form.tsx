@@ -95,10 +95,14 @@ export function FromUrlForm({ projectId }: { projectId?: string }) {
       setPhase("input");
       if (body.playlist) {
         // Every entry is its own video in the rail, each with its own progress.
+        // "Added 0 — transcribing" would be a lie when everything was already
+        // here, so the message follows what actually happened.
+        const added = body.added ?? 0;
+        const skippedNote = body.skipped ? ` (${body.skipped} past the limit skipped)` : "";
         setNotice(
-          `Added ${body.added ?? 0} video${(body.added ?? 0) === 1 ? "" : "s"} from the playlist` +
-            (body.skipped ? ` (${body.skipped} past the limit skipped)` : "") +
-            " — transcribing.",
+          added > 0
+            ? `Added ${added} video${added === 1 ? "" : "s"} from the playlist${skippedNote} — transcribing.`
+            : `Every video in that playlist is already in your library${skippedNote}.`,
         );
         router.refresh();
       } else if (body.reused && body.videoId) {
