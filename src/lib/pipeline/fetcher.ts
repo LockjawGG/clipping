@@ -208,9 +208,16 @@ export function buildYtDlpArgs(
     // Never pull more than the clipper can use: prefer <=1080p, muxed mp4.
     "-S",
     `res:${MAX_SOURCE_HEIGHT},ext:mp4:m4a`,
-    // Prefer a single already-muxed mp4; fall back to bestvideo+bestaudio.
+    // Prefer a single already-muxed mp4, then mp4 video with m4a audio. The
+    // third branch is the one that matters: plenty of sources offer no muxed
+    // format at all and no mp4/m4a streams either — VP9 or AV1 video with opus
+    // audio in webm is ordinary on YouTube now — and without a codec-agnostic
+    // fallback yt-dlp answers "Requested format is not available" for a video
+    // it could perfectly well have fetched. `--merge-output-format mp4` below
+    // still lands it as mp4. Bare `b` stays last: it only ever matches a muxed
+    // format, so it is a fallback for the odd source, not for these.
     "-f",
-    "b[ext=mp4]/bv*[ext=mp4]+ba[ext=m4a]/b",
+    "b[ext=mp4]/bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b",
     "--merge-output-format",
     "mp4",
     "-o",

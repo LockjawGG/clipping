@@ -20,6 +20,19 @@ test("buildYtDlpArgs caps the source resolution and keeps the mp4 preference", (
   assert.equal(args[0], "https://x.example/v");
   const imp = args.indexOf("--impersonate");
   assert.ok(imp >= 0 && args[imp + 1] === "chrome");
+
+  // The format chain has to end somewhere that matches whatever the source
+  // actually offers. A video with no muxed format and no mp4/m4a streams — VP9
+  // or AV1 with opus, which is ordinary now — matched none of the earlier
+  // branches, and yt-dlp reported "Requested format is not available" for
+  // something it could have fetched.
+  const fmt = args[args.indexOf("-f") + 1];
+  const branches = fmt.split("/");
+  assert.ok(branches.includes("bv*+ba"), `no codec-agnostic branch in "${fmt}"`);
+  assert.ok(
+    branches.indexOf("bv*+ba") > branches.indexOf("b[ext=mp4]"),
+    "the mp4 preference must still be tried first",
+  );
 });
 
 test("buildProbeArgs is download-free and single-json", () => {
