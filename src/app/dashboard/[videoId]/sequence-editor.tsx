@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { clipMs, type ClipMs } from "@/lib/sequence/clock.ts";
 
 import { Timeline } from "@/components/timeline/Timeline";
 import type { TimelineClip, TimelineTrack } from "@/components/timeline/timeline-types";
@@ -102,12 +103,12 @@ export function SequenceEditor({
    * so scrubbing the preview and pressing Split cut at the start of the clip
    * instead of where you were looking.
    */
-  followPlayheadMs?: number | null;
+  followPlayheadMs?: ClipMs | null;
   /**
    * A one-shot playhead jump (e.g. clicking a transcript word). `n` changes on
    * every request so a repeat click on the same word still moves the playhead.
    */
-  seekToMs?: { ms: number; n: number } | null;
+  seekToMs?: { ms: ClipMs; n: number } | null;
   /**
    * The clip's overlays' current time windows, owned by the editor's Layers
    * panel. Changes here (a "Shows from/to" edit) are reconciled into the
@@ -124,7 +125,7 @@ export function SequenceEditor({
    * position back through `followPlayheadMs`. That round trip is what keeps the
    * two from disagreeing.
    */
-  onScrub?: (ms: number) => void;
+  onScrub?: (ms: ClipMs) => void;
   /** Called after any change lands server-side, so the editor can soft-refresh. */
   onChanged?: () => void;
 }) {
@@ -642,7 +643,9 @@ export function SequenceEditor({
           // Move locally at once so the drag feels direct, and tell the preview,
           // which echoes the same number straight back.
           setPlayhead(ms);
-          onScrub?.(ms);
+          // The timeline lays its pieces out in the clip's own span, so this is
+          // where a drag lands in clip time; the editor converts for the preview.
+          onScrub?.(clipMs(ms));
         }}
         durationMs={Math.max(contentEnd + 4000, 12000)}
         selectedClipId={selected}

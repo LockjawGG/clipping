@@ -22,6 +22,14 @@ import {
   remapAcrossCuts,
 } from "@/lib/sequence/cuts.ts";
 import type { ClipPlan } from "@/lib/api/sequence.ts";
+import {
+  clampPreview,
+  clipMs,
+  previewMs,
+  stepPreview,
+  type ClipMs,
+  type PreviewMs,
+} from "@/lib/sequence/clock.ts";
 import { mapSourceToTimeline, remapWordsToTimeline } from "@/lib/sequence/compose.ts";
 import { placeLines } from "@/lib/voiceover/sync.ts";
 import type { TranscriptView } from "../editor-pane";
@@ -572,19 +580,22 @@ export function ClipEditor({
    * first, so these are the same function with the arguments swapped. Both are
    * the identity while nothing is cut.
    */
-  const toTimeline = useCallback(
-    (ms: number) => remapAcrossCuts(previewPlan.base, previewPlan.uncut, ms),
+  const toClip = useCallback(
+    (ms: PreviewMs): ClipMs => clipMs(remapAcrossCuts(previewPlan.base, previewPlan.uncut, ms)),
     [previewPlan],
   );
   const toPreview = useCallback(
-    (ms: number) => remapAcrossCuts(previewPlan.uncut, previewPlan.base, ms),
+    (ms: ClipMs): PreviewMs => previewMs(remapAcrossCuts(previewPlan.uncut, previewPlan.base, ms)),
     [previewPlan],
   );
 
   /** A playable URL for every source the plan touches. */
   /** How long the preview runs — the clip's window less anything cut out. */
   const previewDurationMs = useMemo(
-    () => Math.max(1, previewPlan.base.reduce((e, p) => Math.max(e, p.timelineStart + p.durationMs), 0)),
+    () =>
+      previewMs(
+        Math.max(1, previewPlan.base.reduce((e, p) => Math.max(e, p.timelineStart + p.durationMs), 0)),
+      ),
     [previewPlan],
   );
 
@@ -772,10 +783,10 @@ export function ClipEditor({
     [],
   );
   const [error, setError] = useState<string | null>(null);
-  const [playheadMs, setPlayheadMs] = useState(0);
+  const [playheadMs, setPlayheadMs] = useState<PreviewMs>(previewMs(0));
   // A seek requested from the transcript (click a word). `n` forces the player's
   // effect to re-run even when the same word is clicked twice.
-  const [seekReq, setSeekReq] = useState<{ ms: number; n: number } | null>(null);
+  const [seekReq, setSeekReq] = useState<{ ms: PreviewMs; n: number } | null>(null);
   /**
    * Jump the preview to a word.
    *
@@ -787,9 +798,9 @@ export function ClipEditor({
    */
   const seekToWord = useCallback(
     (absStartMs: number) => {
-      const authored = Math.max(0, absStartMs - clip.startMs);
+      const authored = clipMs(Math.max(0, absStartMs - clip.startMs));
       const at = toPreview(authored);
-      setSeekReq({ ms: Math.min(Math.max(0, at), previewDurationMs - 1), n: Date.now() });
+      setSeekReq({ ms: clampPreview(at, previewDurationMs), n: Date.now() });
     },
     [clip.startMs, toPreview, previewDurationMs],
   );
@@ -799,7 +810,7 @@ export function ClipEditor({
   const [overlayError, setOverlayError] = useState<string | null>(null);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
   const [timelineOpen, setTimelineOpen] = useState(defaultTimelineOpen);
-  const clipLenMs = Math.max(1, clip.endMs - clip.startMs);
+  const clipLenMs = clipMs(Math.max(1, clip.endMs - clip.startMs));
 
   // Overlays are edited optimistically: every move/resize/hide/reorder updates
   // this list instantly and the server write happens in the background (slider
@@ -1277,7 +1288,7 @@ export function ClipEditor({
       // the preview is shorter, and the arrow keys should stop where it does.
       const seek = (deltaMs: number) =>
         setSeekReq({
-          ms: Math.min(previewDurationMs - 1, Math.max(0, playheadMs + deltaMs)),
+          ms: stepPreview(playheadMs, deltaMs, previewDurationMs),
           n: Date.now(),
         });
       switch (e.key) {
@@ -1320,7 +1331,7 @@ export function ClipEditor({
    * output time (a focus keyframe, say, which the render applies after the cut)
    * must not.
    */
-  const sourceUnderPlayhead = () => clip.startMs + toTimeline(playheadMs);
+  const sourceUnderPlayhead = () => clip.startMs + toClip(playheadMs);
 
   const setStartToPlayhead = () =>
     setDraft((d) => ({
@@ -1787,7 +1798,7 @@ export function ClipEditor({
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm font-mono tabular-nums"
-                    onClick={() => setSeekReq({ ms: k.atMs, n: Date.now() })}
+                    onClick={() => setSeekReq({ ms: previewMs(k.atMs), n: Date.now() })}
                     title="Jump to this keyframe"
                   >
                     {(k.atMs / 1000).toFixed(2)}s
@@ -1859,7 +1870,7 @@ export function ClipEditor({
       <OverlayPanel
         overlays={overlays}
         clipLenMs={clipLenMs}
-        playheadMs={toTimeline(playheadMs)}
+        playheadMs={toClip(playheadMs)}
         selectedId={selectedOverlayId}
         onSelect={setSelectedOverlayId}
         onEdit={editOverlay}
@@ -1984,9 +1995,9 @@ export function ClipEditor({
             </div>
             <SequenceEditor
               clipId={clip.id}
-              followPlayheadMs={toTimeline(playheadMs)}
-              onScrub={(ms) => setSeekReq({ ms: toPreview(ms), n: Date.now() })}
-              seekToMs={seekReq ? { ...seekReq, ms: toTimeline(seekReq.ms) } : seekReq}
+              followPlayheadMs={toClip(playheadMs)}
+              onScrub={(ms) => setSeekReq({ ms: toPreview(clipMs(ms)), n: Date.now() })}
+              seekToMs={seekReq ? { ...seekReq, ms: toClip(seekReq.ms) } : seekReq}
               overlayWindows={overlayWindows}
               onOverlayTiming={applyOverlayTiming}
               onOverlayDeleted={removeOverlayLocal}

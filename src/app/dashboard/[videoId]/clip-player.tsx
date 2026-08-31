@@ -19,6 +19,7 @@ import type { CaptionConfig } from "./caption-controls";
 import type { OverlayView } from "./overlay-panel";
 import { wordSpanCss, type WordStyle } from "./editable-transcript";
 import { TONES } from "@/lib/ffmpeg/args.ts";
+import { previewMs, type PreviewMs } from "@/lib/sequence/clock.ts";
 
 export interface PreviewWord {
   id: string;
@@ -83,7 +84,7 @@ interface Props {
   renderUrl: string | null;
   /** Seek the preview to `ms` (clip-relative). `n` changes even on a repeat
    *  request for the same position so the effect re-fires. */
-  seekToMs?: { ms: number; n: number } | null;
+  seekToMs?: { ms: PreviewMs; n: number } | null;
   /** Bump `n` to toggle play/pause from outside (a keyboard shortcut). */
   togglePlayReq?: { n: number } | null;
   overlays: OverlayView[];
@@ -91,7 +92,7 @@ interface Props {
   onSelectOverlay: (id: string | null) => void;
   /** Commit a moved / resized overlay (fires on pointer-up, not during drag). */
   onOverlayChange: (id: string, patch: { x?: number; y?: number; scale?: number }) => void;
-  onPlayhead: (ms: number) => void;
+  onPlayhead: (ms: PreviewMs) => void;
   /** Fires when playback starts / stops, so a linked timeline can follow along. */
   onPlayingChange?: (playing: boolean) => void;
   /** The <video> failed to load its source (e.g. an expired signed URL) — the
@@ -317,13 +318,13 @@ export const ClipPlayer = memo(function ClipPlayer({
    * Where the playhead is on the timeline, read from the element's own clock
    * through whichever piece is showing.
    */
-  const timelinePos = useCallback(() => {
+  const timelinePos = useCallback((): PreviewMs => {
     const v = videoRef.current;
-    if (!v) return 0;
-    if (mode !== "source") return Math.min(Math.max(0, v.currentTime * 1000), spanMs);
+    if (!v) return previewMs(0);
+    if (mode !== "source") return previewMs(Math.min(Math.max(0, v.currentTime * 1000), spanMs));
     const piece = pieces[activeIdx.current] ?? pieces[0];
     const at = piece.timelineStart + (v.currentTime * 1000 - piece.sourceIn);
-    return Math.min(Math.max(0, at), spanMs);
+    return previewMs(Math.min(Math.max(0, at), spanMs));
   }, [mode, pieces, spanMs]);
 
   /**
@@ -353,7 +354,7 @@ export const ClipPlayer = memo(function ClipPlayer({
       activeIdx.current = 0;
       v.currentTime = pieces[0].sourceIn / 1000;
       setPosMs(0);
-      onPlayhead(0);
+      onPlayhead(previewMs(0));
       return true;
     }
     activeIdx.current += 1;
@@ -557,7 +558,7 @@ export const ClipPlayer = memo(function ClipPlayer({
     }
   }
 
-  function scrub(relMs: number) {
+  function scrub(relMs: PreviewMs) {
     const v = videoRef.current;
     if (!v) return;
     if (mode === "source") {
@@ -581,7 +582,7 @@ export const ClipPlayer = memo(function ClipPlayer({
     if (!v) return;
     v.pause();
     setPlaying(false);
-    scrub(Math.min(Math.max(0, seekToMs.ms), spanMs));
+    scrub(previewMs(Math.min(Math.max(0, seekToMs.ms), spanMs)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seekToMs?.n]);
 
@@ -909,7 +910,7 @@ export const ClipPlayer = memo(function ClipPlayer({
           max={spanMs}
           step={10}
           value={Math.min(posMs, spanMs)}
-          onChange={(e) => scrub(Number(e.target.value))}
+          onChange={(e) => scrub(previewMs(Number(e.target.value)))}
           className="min-w-0 flex-1"
           aria-label="Scrub clip"
         />

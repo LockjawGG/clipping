@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useMemo } from "react";
+import type { ClipMs } from "@/lib/sequence/clock.ts";
 
 import type { ElementAnimSpec } from "@/lib/captions/element-anim.ts";
 import { parseElementAnim, serializeElementAnim } from "@/lib/captions/element-anim.ts";
@@ -80,8 +81,10 @@ export const OverlayPanel = memo(function OverlayPanel({
   onAddText,
 }: {
   overlays: OverlayView[];
-  clipLenMs: number;
-  playheadMs: number;
+  /** Both in clip time: an overlay window is authored against the clip's
+   *  own span, and the render shifts it for any cuts itself. */
+  clipLenMs: ClipMs;
+  playheadMs: ClipMs;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   onEdit: (id: string, patch: Record<string, unknown>, opts?: { coalesceMs?: number }) => void;
