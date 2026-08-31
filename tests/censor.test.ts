@@ -7,6 +7,8 @@ import {
   censorHasAudioWork,
   censorHasWork,
   detectSpans,
+  narrationRuns,
+  splitBleepedWordRuns,
   splitCensoredRuns,
   normalizeToken,
 } from "../src/lib/censor/detect.ts";
@@ -606,6 +608,114 @@ test("written text splits into clean runs and censored ones", () => {
   assert.deepEqual(
     splitCensoredRuns("says shit", { ...on, allowList: ["shit"] }),
     [{ text: "says shit", censored: false }],
+  );
+});
+
+test("narration bleeps the words the transcript marked, not just the lexicon", () => {
+  // "lunch" is nobody's profanity. It is bleeped only because someone ticked it
+  // in the transcript, which is exactly the case that used to slip through: the
+  // clip bleeped the word while the voice read it out.
+  const words = [
+    { id: "w1", text: "we", startMs: 0, endMs: 200 },
+    { id: "w2", text: "had", startMs: 220, endMs: 400 },
+    { id: "w3", text: "lunch", startMs: 420, endMs: 700 },
+    { id: "w4", text: "after", startMs: 720, endMs: 950 },
+  ];
+  const config = {
+    enabled: false,
+    sensitivity: "MEDIUM" as const,
+    audioForceWordIds: ["w3"],
+  };
+
+  assert.deepEqual(splitBleepedWordRuns(words, config), [
+    { text: "we had", censored: false },
+    { text: "lunch", censored: true },
+    { text: "after", censored: false },
+  ]);
+
+  // The same line read as plain text sees nothing to censor — no word ids to
+  // consult — which is why the narration has to be split by word.
+  assert.deepEqual(splitCensoredRuns("we had lunch after", config), [
+    { text: "we had lunch after", censored: false },
+  ]);
+});
+
+test("word-level narration runs follow both axes' per-word decisions", () => {
+  const words = [
+    { id: "a", text: "this", startMs: 0, endMs: 200 },
+    { id: "b", text: "fucking", startMs: 220, endMs: 500 },
+    { id: "c", text: "shit", startMs: 520, endMs: 800 },
+    { id: "d", text: "day", startMs: 820, endMs: 1_000 },
+  ];
+  const on = { enabled: true, sensitivity: "MEDIUM" as const, audioEnabled: true };
+
+  // Neighbouring bleeps are one run, so they are replaced by one tone rather
+  // than two abutting ones with a seam between them.
+  assert.deepEqual(splitBleepedWordRuns(words, on), [
+    { text: "this", censored: false },
+    { text: "fucking shit", censored: true },
+    { text: "day", censored: false },
+  ]);
+
+  // Letting one occurrence through has to reach the narration too, or the voice
+  // bleeps a word the clip decided to keep.
+  assert.deepEqual(splitBleepedWordRuns(words, { ...on, audioExemptWordIds: ["c"] }), [
+    { text: "this", censored: false },
+    { text: "fucking", censored: true },
+    { text: "shit day", censored: false },
+  ]);
+
+  // With the audio switch off there is nothing to bleep, so the line is spoken
+  // in a single take — the captions may still be masked, the two axes are
+  // independent and only the audio one decides what the voice says.
+  assert.deepEqual(
+    splitBleepedWordRuns(words, { ...on, audioEnabled: false }),
+    [{ text: "this fucking shit day", censored: false }],
+  );
+
+  // Whatever the split, the words spoken are the line, in order.
+  for (const config of [on, { ...on, audioExemptWordIds: ["c"] }]) {
+    assert.equal(
+      splitBleepedWordRuns(words, config).map((r) => r.text).join(" "),
+      "this fucking shit day",
+    );
+  }
+});
+
+test("a narration line is split by word whenever the words are known", () => {
+  const words = [
+    { id: "w1", text: "we", startMs: 0, endMs: 200 },
+    { id: "w2", text: "had", startMs: 220, endMs: 400 },
+    { id: "w3", text: "lunch", startMs: 420, endMs: 700 },
+  ];
+  const config = {
+    enabled: false,
+    sensitivity: "MEDIUM" as const,
+    audioForceWordIds: ["w3"],
+  };
+
+  // A transcript line: the tick reaches the voice.
+  assert.deepEqual(narrationRuns("we had lunch", config, words), [
+    { text: "we had", censored: false },
+    { text: "lunch", censored: true },
+  ]);
+
+  // A hand-written script has no occurrence to have ticked, so the term lists
+  // are all there is to go on — and nothing here matches them.
+  assert.deepEqual(narrationRuns("we had lunch", config), [
+    { text: "we had lunch", censored: false },
+  ]);
+  assert.deepEqual(narrationRuns("we had lunch", config, []), [
+    { text: "we had lunch", censored: false },
+  ]);
+
+  // A script still gets the lexicon, so profanity typed into one is bleeped.
+  assert.deepEqual(
+    narrationRuns("says shit", { enabled: true, sensitivity: "MEDIUM" }),
+    [
+      { text: "says ", censored: false },
+      { text: "shit", censored: true },
+    ],
   );
 });
 

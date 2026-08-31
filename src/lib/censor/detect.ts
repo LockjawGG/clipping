@@ -228,6 +228,57 @@ export interface TextRun {
  * the piece. Consecutive censored words stay together so "fucking hell" becomes
  * one bleep rather than two abutting ones.
  */
+/**
+ * The same, but over transcript words rather than a bare string.
+ *
+ * Narration read from the transcript has to make the *audio* decision, not a
+ * fresh guess from the text: a word ticked by hand in the transcript, or one
+ * exempted there, is identified by its id, and `splitCensoredRuns` never sees
+ * an id — it can only match the lexicon. That is why hand-marked words went on
+ * being spoken by the narration while the clip itself bleeped them.
+ *
+ * Consecutive bleeped words stay in one run, so "fucking hell" is a single
+ * tone rather than two abutting ones, and the spacing between kept words is
+ * preserved so the parts can simply be concatenated.
+ */
+export function splitBleepedWordRuns(
+  words: readonly CensorWord[],
+  config: CensorConfigInput,
+): TextRun[] {
+  const bleeped = bleepedIndices(words, config);
+  const runs: TextRun[] = [];
+  words.forEach((word, index) => {
+    const censored = bleeped.has(index);
+    const last = runs[runs.length - 1];
+    if (last && last.censored === censored) last.text += ` ${word.text}`;
+    else runs.push({ text: word.text, censored });
+  });
+  return runs;
+}
+
+/**
+ * How a narration line should be split, given what is known about it.
+ *
+ * The choice is the whole bug this exists to stop. Narration read from the
+ * transcript has words with ids, so it is judged per occurrence exactly as the
+ * clip's own soundtrack is — tick a word in the transcript and the voice stops
+ * saying it. Text with no words behind it (a hand-written script) can only be
+ * matched against the lexicon and the clip's term lists, because there is no
+ * occurrence to have ticked.
+ *
+ * Reading a transcript line as plain text is what let a censored word through:
+ * the clip bleeped it while the narration read it out.
+ */
+export function narrationRuns(
+  text: string,
+  config: CensorConfigInput,
+  words?: readonly CensorWord[],
+): TextRun[] {
+  return words && words.length > 0
+    ? splitBleepedWordRuns(words, config)
+    : splitCensoredRuns(text, config);
+}
+
 export function splitCensoredRuns(text: string, config: CensorConfigInput): TextRun[] {
   const ctx = context(config);
   const runs: TextRun[] = [];

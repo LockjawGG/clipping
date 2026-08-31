@@ -279,6 +279,19 @@ export interface VoiceoverTarget {
     allowList: string[];
     denyList: string[];
     audioMode: "MUTE" | "BEEP" | "TONE";
+    /**
+     * The per-occurrence decisions too. Narration read from the transcript is
+     * split by word and judged on the audio axis, exactly as the clip's own
+     * soundtrack is — a word ticked by hand belongs to that judgement, and
+     * without these the generator could only match the term lists and would go
+     * on speaking it.
+     */
+    exemptWordIds: string[];
+    forceWordIds: string[];
+    audioEnabled: boolean;
+    audioExemptWordIds: string[];
+    audioForceWordIds: string[];
+    wordOverridesJson: string | null;
   };
 }
 

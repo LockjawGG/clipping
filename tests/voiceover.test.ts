@@ -232,12 +232,14 @@ test("a value that looks like a path is checked as a path", () => {
 
 // --- getVoiceover hands back playable lines, unplaced ----------------------
 
-function previewDeps(over: Partial<Record<string, unknown>> = {}) {
-  const clip = { id: "c1", videoId: "v1", startMs: 10_000, endMs: 26_000, video: { projectId: "p1" } };
-  const lines = [
+function previewDeps(
+  over: Partial<Record<string, unknown>> = {},
+  lines: unknown[] = [
     { ref: "seg:0", text: "one", durationMs: 2_000, audioKey: "vo/a.wav" },
     { ref: "seg:1", text: "two", durationMs: 9_000, audioKey: "vo/b.wav" },
-  ];
+  ],
+) {
+  const clip = { id: "c1", videoId: "v1", startMs: 10_000, endMs: 26_000, video: { projectId: "p1" } };
   const deps = {
     db: {
       clip: { findUnique: async () => clip },
@@ -264,13 +266,37 @@ test("every synthesized line comes back with something to play it from", async (
   const vo = await getVoiceover(previewDeps(), "c1");
   assert.ok(vo);
   assert.deepEqual(
-    vo.lines.map((l) => [l.ref, l.durationMs, l.url]),
+    vo.lines.map((l) => [l.ref, l.durationMs, l.url.split("&v=")[0]]),
     [
       ["seg:0", 2_000, "https://files/vo/a.wav"],
       ["seg:1", 9_000, "https://files/vo/b.wav"],
     ],
   );
   assert.equal(vo.lineCount, 2);
+});
+
+test("a re-recorded line comes back under a different URL", async () => {
+  // The take is written back to the same key and the download URL is held
+  // steady for minutes so polling does not remount the player. Without a
+  // version the browser keeps the audio it already has, so the transcript shows
+  // the word bleeped while the preview happily reads it out.
+  const spoken = [{ ref: "seg:0", text: "on to my lunch", durationMs: 2_000, audioKey: "vo/a.wav",
+    censorKey: "on to my lunch~BEEP" }];
+  const bleeped = [{ ref: "seg:0", text: "on to my lunch", durationMs: 2_400, audioKey: "vo/a.wav",
+    censorKey: "on to my|#~BEEP" }];
+
+  const urlFor = async (lines: unknown[]) =>
+    (await getVoiceover(previewDeps({}, lines), "c1"))!.lines[0].url;
+
+  const before = await urlFor(spoken);
+  const after = await urlFor(bleeped);
+  assert.notEqual(before, after, "same URL after a re-record — the old take keeps playing");
+  // Same key either way: it is the version that moved, not the file.
+  assert.equal(before.split("&v=")[0], after.split("&v=")[0]);
+
+  // And a line nobody touched keeps its URL, so it is not re-fetched for
+  // nothing every time some other line is redone.
+  assert.equal(await urlFor(spoken), before);
 });
 
 test("the server does not place the lines", async () => {

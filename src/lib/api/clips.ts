@@ -333,13 +333,27 @@ export async function requestClipThumbnail(deps: ClipServiceDeps, clipId: string
   return { jobId, status: "QUEUED" as const };
 }
 
-/** Clip settings the narration is spoken through; changing one re-records it. */
+/**
+ * Clip settings the narration is spoken through; changing one re-records it.
+ *
+ * The per-occurrence lists are here for the same reason the term lists are.
+ * Narration read from the transcript is judged word by word on the audio axis,
+ * so ticking a single word in the transcript changes what the voice says — and
+ * without that re-record the clip bleeps the word while the narration reads it
+ * out, which is the whole point of censoring lost.
+ */
 const CENSOR_FIELDS = [
   "censorEnabled",
   "censorSensitivity",
   "censorAllowList",
   "censorDenyList",
   "censorAudioMode",
+  "censorAudioEnabled",
+  "censorExemptWordIds",
+  "censorForceWordIds",
+  "censorAudioExemptWordIds",
+  "censorAudioForceWordIds",
+  "censorWordOverrides",
 ] as const satisfies readonly (keyof z.infer<typeof updateClipSchema>)[];
 
 export async function updateClip(deps: ClipServiceDeps, clipId: string, input: unknown) {

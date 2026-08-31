@@ -32,7 +32,7 @@ import {
   remapAcrossCuts,
   type CutSpan,
 } from "../sequence/cuts.ts";
-import { splitCensoredRuns } from "../censor/detect.ts";
+import { type CensorWord, narrationRuns } from "../censor/detect.ts";
 import {
   audioSpans,
   censoredIndices,
@@ -238,8 +238,11 @@ export const voiceoverHandler: JobHandler<PipelineDeps> = async ({
   await deps.voiceovers.begin(voiceoverId);
   const work = jobWorkDir(deps.tempDir, job.id);
   try {
-    // Build the text to speak, keyed by the anchor it belongs to.
+    // Build the text to speak, keyed by the anchor it belongs to. Transcript
+    // lines keep their words as well, because the audio decision is made per
+    // word by id and cannot be recovered from the joined string.
     const wanted = new Map<string, string>();
+    const wantedWords = new Map<string, CensorWord[]>();
     if (target.sourceKind === "SCRIPT") {
       // A script has no anchors of its own, so its lines are pinned to evenly
       // spaced points across the clip.
@@ -254,7 +257,9 @@ export const voiceoverHandler: JobHandler<PipelineDeps> = async ({
         .filter((sg) => sg.endMs > target.startMs && sg.startMs < target.endMs)
         .forEach((sg, i) => {
           const text = sg.text.trim();
-          if (text) wanted.set(`seg:${i}`, text);
+          if (!text) return;
+          wanted.set(`seg:${i}`, text);
+          if (sg.words.length > 0) wantedWords.set(`seg:${i}`, sg.words);
         });
     }
 
@@ -270,13 +275,22 @@ export const voiceoverHandler: JobHandler<PipelineDeps> = async ({
       sensitivity: target.censor.sensitivity,
       allowList: target.censor.allowList,
       denyList: target.censor.denyList,
+      exemptWordIds: target.censor.exemptWordIds,
+      censorWordIds: target.censor.forceWordIds,
+      audioEnabled: target.censor.audioEnabled,
+      audioExemptWordIds: target.censor.audioExemptWordIds,
+      audioForceWordIds: target.censor.audioForceWordIds,
+      wordOverrides: parseWordOverrides(target.censor.wordOverridesJson),
     };
-    const censorKeyFor = (text: string) =>
-      `${splitCensoredRuns(text, narrationCensor)
+    /** Which parts of a line are spoken and which are replaced. */
+    const runsFor = (ref: string, text: string) =>
+      narrationRuns(text, narrationCensor, wantedWords.get(ref));
+    const censorKeyFor = (ref: string, text: string) =>
+      `${runsFor(ref, text)
         .map((r) => (r.censored ? "#" : r.text))
         .join("|")}~${target.censor.audioMode}`;
     const censorKeys = new Map(
-      [...wanted.entries()].map(([ref, text]) => [ref, censorKeyFor(text)]),
+      [...wanted.entries()].map(([ref, text]) => [ref, censorKeyFor(ref, text)]),
     );
 
     const existing = parseLines(target.linesJson);
@@ -309,7 +323,7 @@ export const voiceoverHandler: JobHandler<PipelineDeps> = async ({
       // same length goes in its place. The word is therefore never present in
       // anything that is stored or played, which is a stronger guarantee than
       // covering it up would be.
-      const runs = splitCensoredRuns(text, narrationCensor);
+      const runs = runsFor(ref, text);
       const key = `voiceovers/${voiceoverId}/${slug}.wav`;
 
       if (runs.some((r) => r.censored)) {
