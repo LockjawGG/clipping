@@ -32,6 +32,12 @@ files:
   # a second copy of the toolchain.
   - "!node_modules/electron/dist/**"
   - "!node_modules/.cache/**"
+  # Build cache: 247MB of webpack/eslint scratch the server never reads, and it
+  # embeds the build machine's absolute paths — username included. The trace
+  # file and the generated type stubs are dev artifacts with the same problem.
+  - "!.next/cache/**"
+  - "!.next/trace"
+  - "!.next/types/**"
   - "!**/*.map"
   - "!**/test/**"
   - "!**/tests/**"

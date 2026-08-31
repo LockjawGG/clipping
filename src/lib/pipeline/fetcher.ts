@@ -167,6 +167,11 @@ export interface MediaFetcher {
 /** The subset an analyze endpoint needs — no download. */
 export interface MediaProbe {
   probe(url: string, signal?: AbortSignal): Promise<ProbeResult>;
+  /**
+   * Enumerate a playlist link. Resolves null when the link is a single video
+   * after all, so callers can fall back to the ordinary path.
+   */
+  probePlaylist(url: string, signal?: AbortSignal): Promise<PlaylistProbeResult | null>;
   version(): Promise<string | null>;
 }
 
@@ -225,6 +230,74 @@ export function buildYtDlpArgs(
     "--print-json",
     "--no-simulate",
   ];
+}
+
+/**
+ * Does this link name a collection rather than one video?
+ *
+ * Deliberately conservative: only URLs that carry an explicit playlist marker.
+ * A plain watch link never becomes a surprise 50-video import, and a watch
+ * link *with* `list=` is how people actually share playlists, so it counts.
+ */
+export function isLikelyPlaylistUrl(url: string): boolean {
+  return /[?&]list=/.test(url) || /\/playlist([/?#]|$)/.test(url);
+}
+
+/**
+ * Argv for enumerating a playlist without downloading anything.
+ *
+ * `--flat-playlist` returns one small entry per video instead of probing each
+ * one — the difference between a second and many minutes on a long list.
+ */
+export function buildPlaylistProbeArgs(url: string, impersonate: string): string[] {
+  return [
+    url,
+    "--yes-playlist",
+    "--flat-playlist",
+    "--no-warnings",
+    "--skip-download",
+    "--dump-single-json",
+    ...(impersonate ? ["--impersonate", impersonate] : []),
+  ];
+}
+
+export interface PlaylistEntry {
+  url: string;
+  title?: string;
+  durationSec?: number;
+}
+
+export interface PlaylistProbeResult {
+  title: string | null;
+  /** What the source says the playlist holds, before any cap. */
+  total: number;
+  entries: PlaylistEntry[];
+}
+
+/** Pure: yt-dlp's flat-playlist JSON → entries. Exported for tests. */
+export function parsePlaylistJson(j: Record<string, unknown>): PlaylistProbeResult | null {
+  if (j._type !== "playlist" || !Array.isArray(j.entries)) return null;
+  const entries: PlaylistEntry[] = [];
+  for (const raw of j.entries as Array<Record<string, unknown>>) {
+    if (!raw || typeof raw !== "object") continue;
+    // Flat entries carry `url` on most extractors; YouTube sometimes only `id`.
+    const url =
+      (typeof raw.url === "string" && raw.url) ||
+      (typeof raw.id === "string" && raw.id
+        ? `https://www.youtube.com/watch?v=${raw.id}`
+        : null);
+    if (!url) continue;
+    entries.push({
+      url,
+      ...(typeof raw.title === "string" && raw.title ? { title: raw.title } : {}),
+      ...(typeof raw.duration === "number" ? { durationSec: Math.round(raw.duration) } : {}),
+    });
+  }
+  return {
+    title: typeof j.title === "string" ? j.title : null,
+    total: typeof j.playlist_count === "number" ? j.playlist_count : entries.length,
+    entries,
+  };
 }
 
 /** Build the yt-dlp argv for an info-only probe (no download). */
@@ -324,6 +397,43 @@ export class YtDlpFetcher implements MediaFetcher, MediaProbe {
         title: meta.title?.trim() || undefined,
         durationSec: typeof meta.duration === "number" ? meta.duration : undefined,
       };
+    }
+  }
+
+  /**
+   * Enumerate a playlist link without downloading. Null when the link turns
+   * out to be a single video, so the caller can take the ordinary path.
+   * Failures classify exactly as {@link probe} failures do.
+   */
+  async probePlaylist(url: string, signal?: AbortSignal): Promise<PlaylistProbeResult | null> {
+    let impersonate = this.impersonate;
+    for (;;) {
+      const { stdout, stderr, code, spawnError } = await this.exec(
+        buildPlaylistProbeArgs(url, impersonate),
+        signal,
+      );
+      if (spawnError) {
+        if ((spawnError as NodeJS.ErrnoException).code === "ENOENT") {
+          throw new FetchError("not_installed", FRIENDLY.not_installed, spawnError.message);
+        }
+        throw new FetchError("unknown", FRIENDLY.unknown, spawnError.message);
+      }
+      if (code !== 0) {
+        if (impersonate && /impersonat|curl[_ ]?cffi/i.test(stderr)) {
+          impersonate = "";
+          continue;
+        }
+        const tail = stderr.split("\n").filter(Boolean).slice(-4).join("\n").trim();
+        const { kind, message } = classifyFetchError(stderr);
+        throw new FetchError(kind, message, tail || `exit ${code}`);
+      }
+      const line = stdout
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.startsWith("{") && l.endsWith("}"))
+        .pop();
+      if (!line) throw new FetchError("no_stream", FRIENDLY.no_stream, "yt-dlp returned no JSON");
+      return parsePlaylistJson(JSON.parse(line) as Record<string, unknown>);
     }
   }
 

@@ -10,6 +10,7 @@ import {
   confirmUpload,
   createUploadSchema,
   createVideoFromUrl,
+  createVideosFromUrl,
   createVideoUpload,
   getVideoStatus,
   translateVideo,
@@ -190,6 +191,92 @@ test("createVideoFromUrl rejects non-URLs and non-http schemes", async () => {
   await assert.rejects(() => createVideoFromUrl(deps, { url: "not a url" }));
   await assert.rejects(() => createVideoFromUrl(deps, { url: "ftp://example.com/x.mp4" }));
   await assert.rejects(() => createVideoFromUrl(deps, {}));
+});
+
+// --- createVideosFromUrl (playlists) --------------------------
+
+test("a playlist link ingests every entry through the single-video path", async () => {
+  const { deps, enqueued, videos } = makeDeps();
+  const probe = {
+    probePlaylist: async () => ({
+      title: "Field Trip",
+      total: 3,
+      entries: [
+        { url: "https://www.youtube.com/watch?v=a1", title: "One" },
+        { url: "https://www.youtube.com/watch?v=a2", title: "Two" },
+        { url: "https://www.youtube.com/watch?v=a3", title: "Three" },
+      ],
+    }),
+  };
+  const out = await createVideosFromUrl(deps, probe, {
+    url: "https://www.youtube.com/playlist?list=PLxyz",
+  });
+
+  assert.equal("playlist" in out && out.playlist, true);
+  if ("playlist" in out) {
+    assert.equal(out.videos.length, 3);
+    assert.equal(out.added, 3);
+    assert.equal(out.skipped, 0);
+    assert.equal(out.title, "Field Trip");
+  }
+  // Three real videos, three FETCH jobs, one per entry URL.
+  assert.equal(videos.size, 3);
+  assert.deepEqual(
+    enqueued.map((j) => (j.payload as { url: string }).url),
+    ["https://www.youtube.com/watch?v=a1", "https://www.youtube.com/watch?v=a2", "https://www.youtube.com/watch?v=a3"],
+  );
+});
+
+test("the playlist cap ingests the first N and reports the rest as skipped", async () => {
+  const { deps, enqueued } = makeDeps();
+  const probe = {
+    probePlaylist: async () => ({
+      title: "Endless Mix",
+      total: 40,
+      entries: Array.from({ length: 40 }, (_, i) => ({ url: `https://www.youtube.com/watch?v=m${i}` })),
+    }),
+  };
+  const out = await createVideosFromUrl(
+    deps,
+    probe,
+    { url: "https://www.youtube.com/watch?v=m0&list=RDm0" },
+    5,
+  );
+  if ("playlist" in out) {
+    assert.equal(out.videos.length, 5);
+    assert.equal(out.skipped, 35, "what the cap left out is reported, not swallowed");
+  } else {
+    assert.fail("expected the playlist shape");
+  }
+  assert.equal(enqueued.length, 5);
+});
+
+test("a plain link goes down the single-video path untouched", async () => {
+  const { deps, enqueued } = makeDeps();
+  const probe = {
+    probePlaylist: async () => {
+      throw new Error("must not enumerate a plain watch link");
+    },
+  };
+  const out = await createVideosFromUrl(deps, probe, { url: "https://www.youtube.com/watch?v=solo" });
+  assert.equal("playlist" in out, false);
+  assert.equal(enqueued.length, 1);
+});
+
+test("a playlist link that turns out to hold one video falls back to the single path", async () => {
+  const { deps, enqueued } = makeDeps();
+  const probe = {
+    probePlaylist: async () => ({
+      title: "One-video list",
+      total: 1,
+      entries: [{ url: "https://www.youtube.com/watch?v=only" }],
+    }),
+  };
+  const out = await createVideosFromUrl(deps, probe, {
+    url: "https://www.youtube.com/playlist?list=PLone",
+  });
+  assert.equal("playlist" in out, false);
+  assert.equal(enqueued.length, 1);
 });
 
 // --- createVideoUpload ----------------------------------------

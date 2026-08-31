@@ -5,7 +5,10 @@ import {
   FetchError,
   MAX_SOURCE_HEIGHT,
   buildProbeArgs,
+  buildPlaylistProbeArgs,
   buildYtDlpArgs,
+  isLikelyPlaylistUrl,
+  parsePlaylistJson,
   classifyFetchError,
 } from "../src/lib/pipeline/fetcher.ts";
 
@@ -90,4 +93,51 @@ test("FetchError carries a kind and the technical tail, and reads as an Error", 
   assert.equal(e.kind, "network");
   assert.equal(e.technical, "getaddrinfo failed");
   assert.equal(e.message, "Couldn’t reach the video source.");
+});
+
+test("only explicit playlist markers take the playlist path", () => {
+  assert.equal(isLikelyPlaylistUrl("https://www.youtube.com/playlist?list=PLx"), true);
+  assert.equal(isLikelyPlaylistUrl("https://www.youtube.com/watch?v=a&list=PLx"), true);
+  assert.equal(isLikelyPlaylistUrl("https://youtu.be/abc?list=RDabc"), true);
+  // A plain watch link must never become a surprise bulk import.
+  assert.equal(isLikelyPlaylistUrl("https://www.youtube.com/watch?v=abc"), false);
+  assert.equal(isLikelyPlaylistUrl("https://example.com/v.mp4"), false);
+  // "playlist" merely appearing in a path segment name is not a marker.
+  assert.equal(isLikelyPlaylistUrl("https://example.com/playlists/cool.mp4"), false);
+});
+
+test("the playlist probe enumerates flat and never downloads", () => {
+  const args = buildPlaylistProbeArgs("https://www.youtube.com/playlist?list=PLx", "chrome");
+  assert.ok(args.includes("--flat-playlist"), "flat, or a long list probes for minutes");
+  assert.ok(args.includes("--yes-playlist"));
+  assert.ok(args.includes("--skip-download"));
+  assert.ok(!args.includes("--no-playlist"));
+  assert.equal(args[0], "https://www.youtube.com/playlist?list=PLx");
+});
+
+test("parsePlaylistJson maps entries and survives yt-dlp's variations", () => {
+  const r = parsePlaylistJson({
+    _type: "playlist",
+    title: "Field Trip",
+    playlist_count: 4,
+    entries: [
+      { url: "https://www.youtube.com/watch?v=a1", title: "One", duration: 61.4 },
+      // YouTube flat entries sometimes carry only the id.
+      { id: "a2", title: "Two" },
+      // Junk entries appear for deleted/private videos; they are skipped.
+      null,
+      { title: "no url or id" },
+    ],
+  });
+  assert.ok(r);
+  assert.equal(r?.title, "Field Trip");
+  assert.equal(r?.total, 4, "the source's own count survives even when entries were dropped");
+  assert.deepEqual(r?.entries.map((e) => e.url), [
+    "https://www.youtube.com/watch?v=a1",
+    "https://www.youtube.com/watch?v=a2",
+  ]);
+  assert.equal(r?.entries[0].durationSec, 61);
+
+  // A single video is not a playlist, whatever the URL looked like.
+  assert.equal(parsePlaylistJson({ _type: "video", id: "x" }), null);
 });

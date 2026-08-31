@@ -7,6 +7,7 @@ import type { StorageProvider } from "../providers/types.ts";
 import type { JobKind } from "../jobs/types.ts";
 import { normalizeSourceUrl, sourceUrlHash } from "../ingest/url-cache.ts";
 import { ApiError } from "./http.ts";
+import { isLikelyPlaylistUrl, type MediaProbe } from "../pipeline/fetcher.ts";
 import { TRANSLATE_TARGETS } from "../translation/targets.ts";
 
 /**
@@ -192,6 +193,46 @@ export async function createVideoFromUrl(deps: VideoServiceDeps, input: unknown)
 
   const jobId = await deps.enqueue({ videoId: video.id, kind: "FETCH", payload: { url } });
   return { videoId: video.id, jobId, status: "FETCHING" as const, reused: false };
+}
+
+/**
+ * Ingest a link that may be a playlist: one video per entry, each through the
+ * exact single-video path — so per-entry dedupe, project resolution and job
+ * shape stay one implementation.
+ *
+ * Entries are ingested up to PLAYLIST_MAX; what got skipped is reported, not
+ * swallowed. A failure on one entry stops the loop and reports how far it got
+ * rather than failing the whole batch retroactively: the created videos are
+ * real and already downloading, and pretending otherwise would orphan them.
+ */
+export async function createVideosFromUrl(
+  deps: VideoServiceDeps,
+  probe: Pick<MediaProbe, "probePlaylist">,
+  input: unknown,
+  playlistMax = 100,
+) {
+  const { url } = createFromUrlSchema.parse(input);
+  if (!isLikelyPlaylistUrl(url)) return createVideoFromUrl(deps, input);
+
+  const pl = await probe.probePlaylist(url);
+  if (!pl || pl.entries.length <= 1) return createVideoFromUrl(deps, input);
+
+  const take = pl.entries.slice(0, playlistMax);
+  const videos: Array<{ videoId: string; reused: boolean; url: string }> = [];
+  for (const entry of take) {
+    const r = await createVideoFromUrl(deps, { url: entry.url, projectId: (input as { projectId?: string })?.projectId });
+    videos.push({ videoId: r.videoId, reused: r.reused, url: entry.url });
+  }
+  return {
+    playlist: true as const,
+    title: pl.title,
+    total: pl.total,
+    added: videos.filter((v) => !v.reused).length,
+    reused: videos.filter((v) => v.reused).length,
+    skipped: Math.max(0, pl.entries.length - take.length),
+    videos: videos.map((v) => v.videoId),
+    status: "FETCHING" as const,
+  };
 }
 
 /** 404 (not 403) for a video the caller doesn't own — don't leak ids. */

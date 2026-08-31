@@ -99,6 +99,13 @@ const schema = z.object({
   YTDLP_PATH: z.string().default("yt-dlp"),
   // Browser fingerprint yt-dlp impersonates (`--impersonate`). Needed for
   // Rumble and other Cloudflare-fronted hosts. "" disables it.
+  /**
+   * Most videos ingested from one playlist link. YouTube "Mix" radios are
+   * endless and even honest playlists run to hundreds; without a ceiling one
+   * pasted link could fill the disk. Entries past the cap are reported, not
+   * silently dropped.
+   */
+  PLAYLIST_MAX: z.coerce.number().int().min(1).max(500).default(100),
   YTDLP_IMPERSONATE: z.string().default("chrome"),
   TEMP_DIR: z.string().default("/tmp/clipper"),
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(5_368_709_120),

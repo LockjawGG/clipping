@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 
 type Preview = {
   ok: true;
+  /** Present when the link is a playlist: what one click would import. */
+  playlist?: { title: string | null; total: number; willAdd: number; firstTitles: string[] };
   title: string | null;
   durationSec: number | null;
   thumbnail: string | null;
@@ -36,6 +38,7 @@ export function FromUrlForm({ projectId }: { projectId?: string }) {
   const [result, setResult] = useState<Analyzed | null>(null);
   const [thumbBroken, setThumbBroken] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [ytdlp, setYtdlp] = useState<{ version: string | null; updateCommand: string } | null>(null);
 
   useEffect(() => {
@@ -49,6 +52,7 @@ export function FromUrlForm({ projectId }: { projectId?: string }) {
     e.preventDefault();
     setPhase("analyzing");
     setError(null);
+    setNotice(null);
     setResult(null);
     setThumbBroken(false);
     try {
@@ -81,12 +85,23 @@ export function FromUrlForm({ projectId }: { projectId?: string }) {
         videoId?: string;
         projectId?: string;
         reused?: boolean;
+        playlist?: boolean;
+        added?: number;
+        skipped?: number;
       };
       if (!res.ok) throw new Error(body.error ?? "could not start");
       setUrl("");
       setResult(null);
       setPhase("input");
-      if (body.reused && body.videoId) {
+      if (body.playlist) {
+        // Every entry is its own video in the rail, each with its own progress.
+        setNotice(
+          `Added ${body.added ?? 0} video${(body.added ?? 0) === 1 ? "" : "s"} from the playlist` +
+            (body.skipped ? ` (${body.skipped} past the limit skipped)` : "") +
+            " — transcribing.",
+        );
+        router.refresh();
+      } else if (body.reused && body.videoId) {
         // Already transcribed this link — jump straight to it.
         router.push(
           `/dashboard?project=${body.projectId ?? projectId ?? ""}&video=${body.videoId}`,
@@ -109,6 +124,11 @@ export function FromUrlForm({ projectId }: { projectId?: string }) {
 
   return (
     <div className="flex flex-col gap-2">
+      {notice && phase === "input" && (
+        <p className="rounded-lg border border-border bg-surface-raised px-3 py-2 text-xs text-muted">
+          {notice}
+        </p>
+      )}
       {phase !== "preview" && (
         <form onSubmit={analyze} className="flex flex-col gap-2">
           <input
@@ -143,23 +163,40 @@ export function FromUrlForm({ projectId }: { projectId?: string }) {
               />
             ) : (
               <div className="grid h-16 w-28 shrink-0 place-items-center rounded bg-surface text-muted">
-                🔗
+                {result.playlist ? "🎞" : "🔗"}
               </div>
             )}
             <div className="min-w-0 flex-1 text-sm">
               <p className="truncate font-medium" title={result.title ?? url}>
-                {result.title ?? "Video found"}
+                {result.playlist
+                  ? (result.playlist.title ?? "Playlist found")
+                  : (result.title ?? "Video found")}
               </p>
-              <p className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted">
-                {result.source && <span>{result.source}</span>}
-                {dur(result.durationSec) && <span>· {dur(result.durationSec)}</span>}
-                {size(result.approxBytes) && <span>· {size(result.approxBytes)}</span>}
-                {result.isLive && <span className="text-danger">· live</span>}
-              </p>
-              <p className="mt-0.5 text-xs text-muted">
-                {result.hasAudio ? "Audio ✓" : "No audio ✕"} ·{" "}
-                {result.hasVideo ? "Video ✓" : "Audio only"}
-              </p>
+              {result.playlist ? (
+                <>
+                  <p className="mt-0.5 text-xs text-muted">
+                    Playlist · {result.playlist.total} videos
+                    {result.playlist.willAdd < result.playlist.total &&
+                      ` · first ${result.playlist.willAdd} will be added`}
+                  </p>
+                  <p className="mt-0.5 truncate text-xs text-muted" title={result.playlist.firstTitles.join(", ")}>
+                    {result.playlist.firstTitles.join(" · ")}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted">
+                    {result.source && <span>{result.source}</span>}
+                    {dur(result.durationSec) && <span>· {dur(result.durationSec)}</span>}
+                    {size(result.approxBytes) && <span>· {size(result.approxBytes)}</span>}
+                    {result.isLive && <span className="text-danger">· live</span>}
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted">
+                    {result.hasAudio ? "Audio ✓" : "No audio ✕"} ·{" "}
+                    {result.hasVideo ? "Video ✓" : "Audio only"}
+                  </p>
+                </>
+              )}
             </div>
           </div>
 
@@ -176,7 +213,7 @@ export function FromUrlForm({ projectId }: { projectId?: string }) {
               disabled={adding || !result.hasAudio}
               className="btn btn-primary flex-1"
             >
-              {adding ? "Starting…" : "Add & transcribe"}
+              {adding ? "Starting…" : result.playlist ? `Add all ${result.playlist.willAdd} & transcribe` : "Add & transcribe"}
             </button>
             <button onClick={reset} className="btn btn-ghost">
               Change link
