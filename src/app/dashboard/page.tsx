@@ -242,9 +242,16 @@ export default async function DashboardPage({
 
   return (
     <CaptionInsertProvider>
+      {/* The rails are elements built here, in a server component, and handed
+          to a client one as props. React serialises those across the boundary
+          as a list and checks them for keys like any other, so without these it
+          warns on every page load — about a "list" that reads as two ordinary
+          props. They are not reorderable and the names are arbitrary; they
+          exist to answer that check. */}
       <WorkspaceShell
         left={
           <LeftRail
+            key="left"
             projects={projects}
             activeProjectId={activeProjectId}
             favorites={favorites}
@@ -253,6 +260,7 @@ export default async function DashboardPage({
         }
         right={
           <ContentRail
+            key="right"
             videos={videos}
             projects={projects}
             activeProjectId={activeProjectId}
