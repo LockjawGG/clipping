@@ -203,12 +203,18 @@ export function SequenceEditor({
 
   // Reconcile overlay windows edited elsewhere (the Layers panel) into the
   // timeline. Values the timeline itself just set arrive back unchanged and are
-  // no-ops; a genuinely new overlay id triggers an authoritative refetch.
+  // no-ops; an id appearing or disappearing means a lane came or went, which
+  // only a refetch can describe.
+  //
+  // The prop being absent means the editor does not track overlays at all. An
+  // empty list is a real answer — "there are none left" — and bailing on it was
+  // the bug: deleting the last caption is exactly when the timeline was left
+  // showing a lane for something that no longer exists.
   const overlaySig = (overlayWindows ?? [])
     .map((w) => `${w.id}:${w.startMs ?? ""}:${w.endMs ?? ""}`)
     .join("|");
   useEffect(() => {
-    if (!overlayWindows || overlayWindows.length === 0) return;
+    if (!overlayWindows) return;
     setClips((cur) => {
       if (cur.length === 0) return cur;
       const videoEnd =
@@ -218,8 +224,14 @@ export function SequenceEditor({
       const haveIds = new Set(
         cur.filter((c) => isOverlay(c.id)).map((c) => overlayId(c.id)),
       );
-      if (overlayWindows.some((w) => !haveIds.has(w.id))) {
-        void load(); // an overlay was added elsewhere — refetch for its name/url
+      // Added or removed is a change to the lane list, not just to a piece's
+      // timing — the sequence carries one lane per overlay — so neither can be
+      // patched in here and both need the authoritative shape.
+      if (
+        overlayWindows.some((w) => !haveIds.has(w.id)) ||
+        [...haveIds].some((id) => !want.has(id))
+      ) {
+        void load();
         return cur;
       }
       let changed = false;
