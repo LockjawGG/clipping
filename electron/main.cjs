@@ -179,7 +179,10 @@ function bundledTools(bin) {
     PIPER_BINARY: bin("tools", "piper", "piper.exe"),
     PIPER_VOICE_DIR: bin("voices"),
     WHISPER_CPP_BINARY: bin("tools", "whisper", "whisper-cli.exe"),
-    WHISPER_CPP_MODEL: bin("tools", "whisper", "ggml-small.bin"),
+    // medium over small: accuracy first. On spoken English it fixed a real
+    // mishearing small made; on Korean it brought the portable build to parity
+    // with the main machine's engine. ~3x slower decode, accepted knowingly.
+    WHISPER_CPP_MODEL: bin("tools", "whisper", "ggml-medium.bin"),
   };
   const out = {};
   for (const [k, v] of Object.entries(candidates)) {
@@ -190,6 +193,11 @@ function bundledTools(bin) {
   // failure at the first transcription.
   if (out.WHISPER_CPP_BINARY && out.WHISPER_CPP_MODEL) {
     out.TRANSCRIPTION_PROVIDER = "whisper-cpp";
+  }
+  // A voice *id*, not a path — it cannot go through the exists() filter above,
+  // which would silently drop it. Set it only when the file it names shipped.
+  if (fs.existsSync(bin("voices", "en_US-lessac-high.onnx"))) {
+    out.PIPER_VOICE = "en_US-lessac-high";
   }
   return out;
 }

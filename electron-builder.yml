@@ -66,4 +66,8 @@ afterPack: electron/after-pack.cjs
 win:
   target:
     - target: dir
+    # One self-contained exe for handing to someone: unpacks itself to a temp
+    # dir and runs. Slower to first launch than the dir build, but it is a
+    # single file, which is what "send it to a friend" needs.
+    - target: portable
   artifactName: ${productName}-${version}-${arch}.${ext}
