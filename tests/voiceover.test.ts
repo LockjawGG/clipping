@@ -19,6 +19,12 @@ import {
 } from "../src/lib/voiceover/sync.ts";
 import { parseVoiceFile, wavDurationMs } from "../src/lib/tts/piper-local.ts";
 import { buildVoiceoverMixArgs } from "../src/lib/ffmpeg/args.ts";
+import {
+  duckGain,
+  duckLabel,
+  DUCK_DEFAULT_DB,
+  DUCK_SILENT_DB,
+} from "../src/lib/voiceover/duck.ts";
 
 const line = (ref: string, durationMs: number, text = `line ${ref}`): VoiceLine => ({
   ref,
@@ -174,6 +180,46 @@ test("wav duration is derived from byte length, header excluded", () => {
 
 // --------------------------------------------------------------------- mixing
 
+test("ducking reaches silence, and the export computes it the way the preview does", () => {
+  // Narration is a voice over a voice. Ducking part-way leaves both audible,
+  // which is the failure this range exists to make impossible: the bottom is
+  // silence, not merely quiet.
+  assert.equal(duckGain(0), 1);
+  assert.equal(duckGain(DUCK_SILENT_DB), 0);
+  assert.equal(duckGain(DUCK_SILENT_DB - 10), 0, "past the bottom is still silence");
+  assert.equal(DUCK_DEFAULT_DB, DUCK_SILENT_DB, "a new narration covers what it reads");
+
+  // Between the ends it is the ordinary dB curve: -6dB is about half.
+  assert.ok(Math.abs(duckGain(-6) - 0.501) < 0.01);
+
+  assert.equal(duckLabel(DUCK_SILENT_DB), "silent");
+  assert.equal(duckLabel(-12), "-12 dB");
+
+  // The export has to land on the same number the preview sets as volume. The
+  // two used to each write their own `10 ** (db / 20)`, which agreed only
+  // until one of them changed.
+  const args = buildVoiceoverMixArgs({
+    inputPath: "/tmp/in.mp4",
+    outputPath: "/tmp/out.mp4",
+    lines: [{ path: "/tmp/l0.wav", startMs: 1_000, tempo: 1, playedMs: 2_000 }],
+    duckDb: -6,
+  });
+  const fc = args[args.indexOf("-filter_complex") + 1];
+  assert.ok(
+    fc.includes(`volume='if(between(t,1,3),${duckGain(-6).toFixed(4)},1)'`),
+    `export gain does not match duckGain(-6) in: ${fc}`,
+  );
+
+  // And at silence the source is multiplied by a real zero.
+  const silent = buildVoiceoverMixArgs({
+    inputPath: "/tmp/in.mp4",
+    outputPath: "/tmp/out.mp4",
+    lines: [{ path: "/tmp/l0.wav", startMs: 0, tempo: 1, playedMs: 1_000 }],
+    duckDb: DUCK_SILENT_DB,
+  });
+  assert.match(silent[silent.indexOf("-filter_complex") + 1], /,0\.0000,1\)/);
+});
+
 test("the mixer retimes, positions and ducks", () => {
   const args = buildVoiceoverMixArgs({
     inputPath: "/tmp/clip.mp4",
@@ -182,6 +228,10 @@ test("the mixer retimes, positions and ducks", () => {
       { path: "/tmp/l0.wav", startMs: 1000, tempo: 1, playedMs: 900 },
       { path: "/tmp/l1.wav", startMs: 4000, tempo: 1.25, playedMs: 1600 },
     ],
+    // Stated rather than taken from the default: this test is about retiming
+    // and window placement, and should not start failing because the default
+    // duck level changed.
+    duckDb: -12,
   });
   const fc = args[args.indexOf("-filter_complex") + 1];
 

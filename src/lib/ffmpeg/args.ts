@@ -12,6 +12,8 @@
 
 export type AspectRatio = "9:16" | "1:1" | "16:9" | "4:5";
 
+import { duckGain, DUCK_DEFAULT_DB } from "../voiceover/duck.ts";
+
 export const ASPECT_DIMENSIONS: Record<AspectRatio, { width: number; height: number }> = {
   "9:16": { width: 1080, height: 1920 },
   "1:1": { width: 1080, height: 1080 },
@@ -842,7 +844,7 @@ export function buildVoiceoverMixArgs({
   inputPath,
   outputPath,
   lines,
-  duckDb = -12,
+  duckDb = DUCK_DEFAULT_DB,
 }: VoiceoverMixArgs): string[] {
   assertSafePath(inputPath);
   assertSafePath(outputPath);
@@ -867,8 +869,10 @@ export function buildVoiceoverMixArgs({
     labels.push(`[vo${i}]`);
   });
 
-  // Duck the source under every line's window.
-  const gain = Math.pow(10, Math.min(0, duckDb) / 20);
+  // Duck the source under every line's window. The gain comes from the shared
+  // helper so the preview and the export cannot drift apart on what a given
+  // dB value sounds like.
+  const gain = duckGain(duckDb);
   const spans = lines
     .map((l) => {
       const a = fgNum(Math.max(0, l.startMs) / 1000, 0, 1e6);

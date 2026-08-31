@@ -716,7 +716,10 @@ model Voiceover {
   voiceId  String  @default("")
   speed    Float   @default(1.0)
   /// dB the clip's own audio is ducked by while a line plays. 0 = no ducking.
-  duckDb   Float   @default(-12)
+  /// How far the clip's own audio drops while a line plays. Defaults to
+  /// silence: narration that only ducks part-way leaves two voices audible at
+  /// once and neither is intelligible.
+  duckDb   Float   @default(-60)
   /// Whether the narration is mixed in. Off keeps the synthesized audio so it
   /// can be switched back on without paying for Piper again.
   enabled  Boolean @default(true)

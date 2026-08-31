@@ -20,6 +20,7 @@ import type { OverlayView } from "./overlay-panel";
 import { wordSpanCss, type WordStyle } from "./editable-transcript";
 import { TONES } from "@/lib/ffmpeg/args.ts";
 import { previewMs, type PreviewMs } from "@/lib/sequence/clock.ts";
+import { duckGain } from "@/lib/voiceover/duck.ts";
 
 /**
  * How far ahead of a bleep the clip's audio is cut.
@@ -508,7 +509,7 @@ export const ClipPlayer = memo(function ClipPlayer({
         return;
       }
       stopTone();
-      v.volume = narrating ? Math.pow(10, (voiceover?.duckDb ?? 0) / 20) : 1;
+      v.volume = narrating ? duckGain(voiceover?.duckDb ?? 0) : 1;
     },
     [bleeps, mode, playTone, stopTone, syncLayers, syncVoiceover, voiceover],
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { duckLabel, DUCK_DEFAULT_DB, DUCK_SILENT_DB } from "@/lib/voiceover/duck.ts";
 
 /**
  * 🎙 AI Voiceover for one clip.
@@ -241,14 +242,14 @@ export const VoiceoverPanel = memo(function VoiceoverPanel({
             />
           </label>
 
-          <label className="flex items-center gap-2" title="How far the clip's own audio drops while the narration plays">
-            duck {(vo?.duckDb ?? -12).toFixed(0)} dB
+          <label className="flex items-center gap-2" title="How far the clip's own audio drops while the narration plays. At the bottom of the range it is silent, so the narration covers it rather than competing with it.">
+            duck {duckLabel(vo?.duckDb ?? DUCK_DEFAULT_DB)}
             <input
               type="range"
-              min={-30}
+              min={DUCK_SILENT_DB}
               max={0}
               step={1}
-              value={vo?.duckDb ?? -12}
+              value={vo?.duckDb ?? DUCK_DEFAULT_DB}
               onChange={(e) => setVo((v) => (v ? { ...v, duckDb: Number(e.target.value) } : v))}
               onPointerUp={(e) => save({ duckDb: Number((e.target as HTMLInputElement).value) })}
               disabled={busy}
