@@ -1158,17 +1158,25 @@ export function ClipEditor({
     !sameList(draft.removedWordIds, clip.removedWordIds) ||
     draft.accepted !== clip.accepted;
 
+  /**
+   * Run a request, showing it as busy and surfacing any error.
+   *
+   * Resolves to the response body on success and `null` on failure, so callers
+   * can still branch on truthiness and the ones that need to know what the
+   * server did can read it rather than guess.
+   */
   async function call(kind: NonNullable<typeof busy>, req: () => Promise<Response>) {
     setBusy(kind);
     setError(null);
     try {
       const res = await req();
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `${kind} failed`);
+      const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) throw new Error((body.error as string) ?? `${kind} failed`);
       router.refresh();
-      return true;
+      return body;
     } catch (e) {
       setError(e instanceof Error ? e.message : "something went wrong");
-      return false;
+      return null;
     } finally {
       setBusy(null);
     }
@@ -1209,16 +1217,13 @@ export function ClipEditor({
    *  the fresh recording into the preview instead of playing the stale one. */
   const [narrationReload, setNarrationReload] = useState(0);
   const save = async () => {
-    // Read before the save resolves: `call` refreshes the route, which folds
-    // the draft back into `clip` and would make this comparison a no-op.
-    const censorTouched =
-      draft.censorEnabled !== clip.censorEnabled ||
-      draft.censorSensitivity !== clip.censorSensitivity ||
-      draft.censorAudioMode !== clip.censorAudioMode ||
-      !sameList(draft.censorAllowList, clip.censorAllowList) ||
-      !sameList(draft.censorDenyList, clip.censorDenyList);
-    const ok = await call("save", saveReq);
-    if (ok && censorTouched) setNarrationReload((n) => n + 1);
+    // Whether the narration was re-queued is the server's own answer, not a
+    // guess made here. Predicting it meant keeping a second copy of the list of
+    // settings the narration is spoken through, and that copy fell behind: a
+    // word ticked in the transcript re-recorded the line while the preview
+    // carried on playing the take that still said it.
+    const body = await call("save", saveReq);
+    if (body?.voiceoverRequeued) setNarrationReload((n) => n + 1);
   };
   const saveAndRender = async () => {
     const ok = dirty ? await call("save", saveReq) : true;

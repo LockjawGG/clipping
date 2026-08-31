@@ -389,6 +389,7 @@ export async function updateClip(deps: ClipServiceDeps, clipId: string, input: u
    * out, which is the opposite of what censoring is for. Re-running the
    * synthesis re-records only the lines whose censoring actually changed.
    */
+  let voiceoverRequeued = false;
   const censorTouched = CENSOR_FIELDS.some((f) => patch[f] !== undefined);
   if (censorTouched && deps.db.voiceover) {
     const vo = await deps.db.voiceover.findFirst({
@@ -411,10 +412,16 @@ export async function updateClip(deps: ClipServiceDeps, clipId: string, input: u
         kind: "VOICEOVER",
         payload: { voiceoverId: vo.id },
       });
+      voiceoverRequeued = true;
     }
   }
 
-  return { id: clipId, ...patch, startMs, endMs };
+  // Reported rather than left for the caller to predict. The editor has to know
+  // to re-read the narration, and the only other way to know is to keep its own
+  // copy of CENSOR_FIELDS and compare — which is what it used to do, and which
+  // silently stopped covering the per-word lists when they were added: ticking a
+  // word re-recorded the line while the preview went on playing the old take.
+  return { id: clipId, ...patch, startMs, endMs, voiceoverRequeued };
 }
 
 export async function deleteClip(deps: ClipServiceDeps, clipId: string) {

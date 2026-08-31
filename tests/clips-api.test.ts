@@ -502,10 +502,23 @@ test("changing what gets bleeped re-records the narration", async () => {
   assert.deepEqual(enqueued, [{ videoId: "vidA", kind: "VOICEOVER", payload: { voiceoverId: "vo1" } }]);
 });
 
+test("ticking one word re-records the narration, and the answer comes back", async () => {
+  // The word lists are how a word nobody's lexicon flags gets bleeped. They
+  // reach the voice too, so they have to re-record it.
+  const { deps, enqueued } = makeDeps();
+  const out = await updateClip(deps, "clip1", { censorAudioForceWordIds: ["w3"] });
+
+  assert.deepEqual(enqueued, [{ videoId: "vidA", kind: "VOICEOVER", payload: { voiceoverId: "vo1" } }]);
+  // Reported, so the editor re-reads the narration instead of predicting it
+  // from its own copy of the list — the copy that stopped covering this case.
+  assert.equal(out.voiceoverRequeued, true);
+});
+
 test("an edit that cannot change what is spoken leaves the narration alone", async () => {
   const { deps, enqueued } = makeDeps();
-  await updateClip(deps, "clip1", { title: "Renamed", accepted: true });
+  const out = await updateClip(deps, "clip1", { title: "Renamed", accepted: true });
   assert.deepEqual(enqueued, []);
+  assert.equal(out.voiceoverRequeued, false, "nothing was re-queued, so nothing to re-read");
 });
 
 test("a hand-written script is not re-recorded for the clip's word lists", async () => {
