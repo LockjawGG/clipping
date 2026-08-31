@@ -30,8 +30,14 @@ const schema = z.object({
   LOCAL_STORAGE_DIR: z.string().default("./.storage"),
 
   TRANSCRIPTION_PROVIDER: z
-    .enum(["whisper-local", "openai", "deepgram"])
+    .enum(["whisper-local", "faster-whisper-local", "openai", "deepgram"])
     .default("whisper-local"),
+  /**
+   * CTranslate2 compute type for `faster-whisper-local`. Leave it at float32:
+   * the int8 variants run noticeably faster and get words wrong, replacing or
+   * repeating whole phrases rather than degrading gracefully.
+   */
+  FASTER_WHISPER_COMPUTE_TYPE: z.string().default("float32"),
   WHISPER_BINARY: z.string().default("whisper"),
   // Python used to run scripts/translate.py (Argos Translate, fully offline).
   PYTHON_BIN: z.string().default("python"),

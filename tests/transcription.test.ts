@@ -95,6 +95,45 @@ const whisperFixture = {
   ],
 };
 
+test("the faster-whisper helper's JSON parses as the CLI's does", () => {
+  // Two engines, one parser. The helper mirrors the CLI's shape on purpose, so
+  // what actually has to hold is that a payload shaped the way faster-whisper
+  // emits it — floats in seconds, `word` carrying its leading space, a
+  // per-segment avg_logprob — comes out as the same integer-ms result. If the
+  // helper's shape ever drifts, transcripts silently lose their word timings
+  // rather than failing, which is the kind of break nobody notices until the
+  // captions are wrong.
+  const fromHelper = {
+    language: "ko",
+    segments: [
+      {
+        start: 0.42,
+        end: 2.6,
+        text: " 오늘 실험을 하려고 합니다.",
+        avg_logprob: -0.25,
+        words: [
+          { word: " 오늘", start: 0.42, end: 1.1, probability: 0.91 },
+          { word: " 실험을", start: 1.1, end: 2.6, probability: 0.88 },
+        ],
+      },
+    ],
+  };
+
+  const r = parseWhisperJson(fromHelper as never, "small");
+  assert.equal(r.segments.length, 1);
+  const seg = r.segments[0];
+  assert.equal(seg.startMs, 420);
+  assert.equal(seg.endMs, 2_600);
+  assert.equal(seg.text, "오늘 실험을 하려고 합니다.");
+  assert.equal(seg.words?.length, 2);
+  // The leading space each word carries is the tokeniser's, not the word's.
+  assert.equal(seg.words?.[0].text, "오늘");
+  assert.equal(seg.words?.[0].startMs, 420);
+  assert.equal(seg.words?.[1].endMs, 2_600);
+  // avg_logprob is a natural log; it comes back as a 0..1 confidence.
+  assert.ok((seg.confidence ?? 0) > 0.7 && (seg.confidence ?? 0) < 0.8);
+});
+
 test("parseWhisperJson converts to integer-ms segments with word timings", () => {
   const r = parseWhisperJson(whisperFixture, "large-v3");
   assert.equal(r.provider, "whisper-local");

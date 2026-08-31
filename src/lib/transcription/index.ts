@@ -1,10 +1,12 @@
 import { ProviderUnavailableError, type TranscriptionProvider } from "../providers/types.ts";
 import { env } from "../env.ts";
 import { WhisperLocalProvider } from "./whisper-local.ts";
+import { FasterWhisperLocalProvider } from "./faster-whisper-local.ts";
 import { OpenAiTranscriptionProvider } from "./openai.ts";
 import { DeepgramTranscriptionProvider } from "./deepgram.ts";
 
 export { WhisperLocalProvider, parseWhisperJson } from "./whisper-local.ts";
+export { FasterWhisperLocalProvider } from "./faster-whisper-local.ts";
 export { OpenAiTranscriptionProvider, parseVerboseJson } from "./openai.ts";
 export { DeepgramTranscriptionProvider, parseDeepgramResponse } from "./deepgram.ts";
 export * from "./normalize.ts";
@@ -24,6 +26,16 @@ function build(): TranscriptionProvider {
         throw new ProviderUnavailableError("transcription:deepgram", "set DEEPGRAM_API_KEY");
       }
       return new DeepgramTranscriptionProvider({ apiKey: env.DEEPGRAM_API_KEY });
+
+    case "faster-whisper-local":
+      // Same weights as whisper-local through a faster runtime. Availability of
+      // python and the package is checked when transcribe() runs.
+      return new FasterWhisperLocalProvider({
+        python: env.PYTHON_BIN,
+        model: env.WHISPER_MODEL,
+        beamSize: env.WHISPER_BEAM_SIZE,
+        computeType: env.FASTER_WHISPER_COMPUTE_TYPE,
+      });
 
     case "whisper-local":
     default:

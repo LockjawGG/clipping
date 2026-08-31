@@ -82,6 +82,37 @@ function loadEnvFile() {
 const fileEnv = loadEnvFile();
 
 /**
+ * Where the app keeps its media on this machine.
+ *
+ * The same `LOCAL_STORAGE_DIR` the server reads, resolved against the project
+ * when it is relative — which is the default. Renders land under `renders/`,
+ * one directory per render, so that is what "your renders" means on disk.
+ */
+function storageDir() {
+  const raw = fileEnv.LOCAL_STORAGE_DIR || process.env.LOCAL_STORAGE_DIR || "./.storage";
+  return path.isAbsolute(raw) ? raw : path.resolve(ROOT, raw);
+}
+
+/**
+ * Open a folder in Explorer, creating it first if the app has not needed it yet.
+ *
+ * A menu item that silently does nothing is worse than one that explains
+ * itself: a fresh install has no `renders/` until the first export, and
+ * `openPath` on a missing directory just fails quietly.
+ */
+async function revealFolder(dir, label) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const err = await shell.openPath(dir);
+    if (err) throw new Error(err);
+  } catch (e) {
+    dialog.showErrorBox(`Could not open ${label}`, `${dir}
+
+${e?.message ?? e}`);
+  }
+}
+
+/**
  * Node's own binary, not whatever `node` resolves to on PATH.
  *
  * A packaged Electron app does not inherit a useful PATH, and the user may not
@@ -203,7 +234,18 @@ function buildMenu() {
     Menu.buildFromTemplate([
       {
         label: "File",
-        submenu: [{ role: "quit" }],
+        submenu: [
+          {
+            label: "Open renders folder",
+            click: () => void revealFolder(path.join(storageDir(), "renders"), "the renders folder"),
+          },
+          {
+            label: "Open media folder",
+            click: () => void revealFolder(storageDir(), "the media folder"),
+          },
+          { type: "separator" },
+          { role: "quit" },
+        ],
       },
       {
         label: "View",
