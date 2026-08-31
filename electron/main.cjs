@@ -174,12 +174,22 @@ function bundledTools(bin) {
     FFMPEG_PATH: bin("tools", "ffmpeg.exe"),
     FFPROBE_PATH: bin("tools", "ffprobe.exe"),
     YTDLP_PATH: bin("tools", "yt-dlp.exe"),
+    // Piper's own release build, not the pip console script — the packaged app
+    // cannot assume a Python to hang a shim off.
     PIPER_BINARY: bin("tools", "piper", "piper.exe"),
     PIPER_VOICE_DIR: bin("voices"),
+    WHISPER_CPP_BINARY: bin("tools", "whisper", "whisper-cli.exe"),
+    WHISPER_CPP_MODEL: bin("tools", "whisper", "ggml-small.bin"),
   };
   const out = {};
   for (const [k, v] of Object.entries(candidates)) {
     if (fs.existsSync(v)) out[k] = v;
+  }
+  // Only claim the engine when both halves of it actually shipped. Naming a
+  // provider whose binary is missing turns a working fallback into a hard
+  // failure at the first transcription.
+  if (out.WHISPER_CPP_BINARY && out.WHISPER_CPP_MODEL) {
+    out.TRANSCRIPTION_PROVIDER = "whisper-cpp";
   }
   return out;
 }

@@ -50,7 +50,9 @@ extraResources:
   # columns and fourteen enums, six of the arrays being the censor word lists.
   - from: vendor/pgsql
     to: pgsql
-  # ffmpeg, ffprobe and yt-dlp, so a fresh machine needs nothing on PATH.
+  # ffmpeg, ffprobe, yt-dlp, and the two engines that used to be Python:
+  # whisper.cpp (one exe plus a ggml model) and Piper's own release build.
+  # A fresh machine needs nothing on PATH and no Python at all.
   - from: vendor/tools
     to: tools
   # A Piper voice, so narration works out of the box.

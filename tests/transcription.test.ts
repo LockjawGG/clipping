@@ -12,6 +12,10 @@ import {
   parseWhisperCueEndMs,
   parseWhisperJson,
 } from "../src/lib/transcription/whisper-local.ts";
+import {
+  parseWhisperCppJson,
+  wordsFromTokens,
+} from "../src/lib/transcription/whisper-cpp.ts";
 import { parseVerboseJson } from "../src/lib/transcription/openai.ts";
 import { parseDeepgramResponse } from "../src/lib/transcription/deepgram.ts";
 
@@ -94,6 +98,64 @@ const whisperFixture = {
     },
   ],
 };
+
+test("whisper.cpp tokens assemble back into words", () => {
+  // whisper.cpp times *tokens*, not words: long words arrive in pieces and
+  // punctuation arrives alone. The tokeniser signals a word boundary with a
+  // leading space, so that is what the assembly keys on. Shaped exactly like
+  // the real `-ojf` output, including the `[_BEG_]` marker it opens with.
+  const words = wordsFromTokens([
+    { text: "[_BEG_]", offsets: { from: 0, to: 0 }, p: 0.71 },
+    { text: " Oh", offsets: { from: 1250, to: 1980 }, p: 0.9 },
+    { text: " cock", offsets: { from: 5090, to: 5600 }, p: 0.8 },
+    { text: "sucker", offsets: { from: 5600, to: 6900 }, p: 0.6 },
+    { text: ",", offsets: { from: 6900, to: 6950 }, p: 0.4 },
+    { text: " lunch", offsets: { from: 7000, to: 7400 }, p: 0.95 },
+  ]);
+
+  assert.deepEqual(
+    words.map((w) => w.text),
+    ["Oh", "cocksucker,", "lunch"],
+    "subword pieces and trailing punctuation belong to the word before them",
+  );
+  // The word spans from its first piece to its last, punctuation included —
+  // a caption highlighting "cock" and leaving "sucker" behind is the failure.
+  assert.equal(words[1].startMs, 5090);
+  assert.equal(words[1].endMs, 6950);
+  // The marker token contributes nothing, not even a leading empty word.
+  assert.equal(words[0].text, "Oh");
+  assert.equal(words[0].startMs, 1250);
+});
+
+test("whisper.cpp JSON parses into segments the rest of the app can use", () => {
+  const r = parseWhisperCppJson(
+    {
+      result: { language: "en" },
+      transcription: [
+        {
+          offsets: { from: 1000, to: 4000 },
+          text: " Oh lunch.",
+          tokens: [
+            { text: " Oh", offsets: { from: 1250, to: 1980 }, p: 0.9 },
+            { text: " lunch", offsets: { from: 2000, to: 3900 }, p: 0.8 },
+            { text: ".", offsets: { from: 3900, to: 3950 }, p: 0.5 },
+          ],
+        },
+        // A segment that transcribed to nothing should not become an empty cue.
+        { offsets: { from: 4000, to: 4500 }, text: "   ", tokens: [] },
+      ],
+    },
+    "ggml-small.bin",
+  );
+
+  assert.equal(r.provider, "whisper-cpp");
+  assert.equal(r.language, "en");
+  assert.equal(r.segments.length, 1, "the empty segment is dropped");
+  assert.equal(r.segments[0].text, "Oh lunch.");
+  assert.equal(r.segments[0].startMs, 1000);
+  assert.equal(r.segments[0].endMs, 4000);
+  assert.deepEqual(r.segments[0].words.map((w) => w.text), ["Oh", "lunch."]);
+});
 
 test("the faster-whisper helper's JSON parses as the CLI's does", () => {
   // Two engines, one parser. The helper mirrors the CLI's shape on purpose, so

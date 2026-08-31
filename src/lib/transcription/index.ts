@@ -2,11 +2,13 @@ import { ProviderUnavailableError, type TranscriptionProvider } from "../provide
 import { env } from "../env.ts";
 import { WhisperLocalProvider } from "./whisper-local.ts";
 import { FasterWhisperLocalProvider } from "./faster-whisper-local.ts";
+import { WhisperCppProvider } from "./whisper-cpp.ts";
 import { OpenAiTranscriptionProvider } from "./openai.ts";
 import { DeepgramTranscriptionProvider } from "./deepgram.ts";
 
 export { WhisperLocalProvider, parseWhisperJson } from "./whisper-local.ts";
 export { FasterWhisperLocalProvider } from "./faster-whisper-local.ts";
+export { WhisperCppProvider, parseWhisperCppJson, wordsFromTokens } from "./whisper-cpp.ts";
 export { OpenAiTranscriptionProvider, parseVerboseJson } from "./openai.ts";
 export { DeepgramTranscriptionProvider, parseDeepgramResponse } from "./deepgram.ts";
 export * from "./normalize.ts";
@@ -35,6 +37,14 @@ function build(): TranscriptionProvider {
         model: env.WHISPER_MODEL,
         beamSize: env.WHISPER_BEAM_SIZE,
         computeType: env.FASTER_WHISPER_COMPUTE_TYPE,
+      });
+
+    case "whisper-cpp":
+      return new WhisperCppProvider({
+        binary: env.WHISPER_CPP_BINARY,
+        model: env.WHISPER_CPP_MODEL,
+        tempDir: env.TEMP_DIR,
+        beamSize: env.WHISPER_BEAM_SIZE,
       });
 
     case "whisper-local":
