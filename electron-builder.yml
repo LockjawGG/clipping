@@ -46,6 +46,10 @@ extraResources:
   - from: node_modules/.prisma
     to: app/node_modules/.prisma
 
+# Puts `.env` beside the executable. electron-builder empties the output
+# directory on every run, so this cannot be a one-off manual copy.
+afterPack: electron/after-pack.cjs
+
 win:
   target:
     - target: dir
