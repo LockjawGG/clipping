@@ -349,6 +349,10 @@ export const ClipPlayer = memo(function ClipPlayer({
 
     const next = pieces[activeIdx.current + 1];
     if (!next) {
+      // Playing off the end rewinds; parking there does not. Scrubbing to the
+      // last frame used to throw the playhead back to the start, because the
+      // end-of-clip stop could not tell a seek from playback running out.
+      if (!playing) return false;
       v.pause();
       setPlaying(false);
       activeIdx.current = 0;
@@ -362,7 +366,7 @@ export const ClipPlayer = memo(function ClipPlayer({
       next.sourceVideoId === piece.sourceVideoId && Math.abs(next.sourceIn - piece.sourceOut) < 40;
     if (!continuous) v.currentTime = next.sourceIn / 1000;
     return !continuous;
-  }, [mode, pieces, onPlayhead]);
+  }, [mode, pieces, onPlayhead, playing]);
 
   /**
    * Keep the narration lined up with the playhead.
