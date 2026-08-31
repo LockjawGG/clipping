@@ -9,7 +9,13 @@ import {
   MIN_KEEP_MS,
   SEAM_PAD_MS,
 } from "../src/lib/sequence/cuts.ts";
-import { planDurationMs, remapWordsToTimeline, type ComposePiece } from "../src/lib/sequence/compose.ts";
+import {
+  planDurationMs,
+  remapWordsToTimeline,
+  type ComposePiece,
+} from "../src/lib/sequence/compose.ts";
+import { remapAcrossCuts } from "../src/lib/sequence/cuts.ts";
+import { audioSpans } from "../src/lib/censor/detect.ts";
 
 const V = "vid-1";
 
@@ -200,4 +206,73 @@ test("cutDurationMs is what the clip loses, slivers included", () => {
     ]),
     2_000,
   );
+});
+
+// --- the two clocks must agree ---------------------------------------------
+//
+// A cut gives the clip two timelines: the one it was authored against, and the
+// shorter one the preview and the export actually play. Every bug in this area
+// has been a surface reading a time in one and using it in the other, so these
+// pin the two places that got it wrong.
+
+/** The clip, its plan before the cut, and its plan after. */
+function cutFixture() {
+  const words = sentence();
+  const clipStartMs = 1_000;
+  const uncut = [piece(1_000, 5_000, 0)];
+  const cut = applyInteriorCuts(uncut, cutSpansForWords(words, ["um"], V));
+  return { words, clipStartMs, uncut, cut };
+}
+
+test("clicking a word seeks to where that word's caption is", () => {
+  const { words, clipStartMs, uncut, cut } = cutFixture();
+
+  // The captions come from the plan; the seek converts the word's own offset.
+  // If those disagree, clicking a word shows a different word — which is
+  // exactly what happened while the seek used the raw offset.
+  const shown = remapWordsToTimeline(words, cut, V, 0);
+  assert.ok(shown.length > 0);
+
+  for (const word of shown) {
+    const authored = words.find((w) => w.id === word.id)!.startMs - clipStartMs;
+    assert.equal(
+      remapAcrossCuts(uncut, cut, authored),
+      word.startMs,
+      `seek and caption disagree for "${word.text}"`,
+    );
+  }
+
+  // And the conversion is doing real work: for a word after the cut the raw
+  // offset is a different number, so dropping the conversion fails this.
+  const shipped = shown.find((w) => w.id === "w6")!;
+  const rawOffset = words.find((w) => w.id === "w6")!.startMs - clipStartMs;
+  assert.notEqual(rawOffset, shipped.startMs);
+  assert.equal(rawOffset - shipped.startMs, 700, "off by exactly the cut");
+});
+
+test("the censor review drops struck words and moves the rest", () => {
+  const { words, cut } = cutFixture();
+  // Bleep by id so the test does not depend on the lexicon: one word that is
+  // struck out, one that survives after it.
+  const config = {
+    enabled: false,
+    sensitivity: "MEDIUM" as const,
+    audioEnabled: true,
+    audioForceWordIds: ["um", "w6"],
+  };
+
+  const fromTranscript = audioSpans(words, config);
+  const fromPlan = audioSpans(remapWordsToTimeline(words, cut, V, 0), config);
+
+  // Read straight off the transcript, the review offers to bleep a word that
+  // is no longer in the clip.
+  assert.ok(fromTranscript.some((sp) => sp.wordId === "um"));
+  assert.ok(!fromPlan.some((sp) => sp.wordId === "um"), "struck word still listed");
+
+  // The survivor keeps its span but lands where the export will put it.
+  const before = fromTranscript.find((sp) => sp.wordId === "w6")!;
+  const after = fromPlan.find((sp) => sp.wordId === "w6")!;
+  assert.equal(after.endMs - after.startMs, before.endMs - before.startMs);
+  // 1000ms of clip offset comes off with the rebase, 700ms with the cut.
+  assert.equal(before.startMs - after.startMs, 1_700);
 });
