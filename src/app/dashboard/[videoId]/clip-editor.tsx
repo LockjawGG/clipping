@@ -2055,12 +2055,17 @@ export function ClipEditor({
 
       <div className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          {/* Its own line until the row is genuinely wide enough to share.
-              `flex-1 min-w-0` alone let this shrink below its own content
-              rather than wrap, so on a narrow viewport a two-line sentence
-              became a 60px column nineteen lines tall next to the language
-              picker. `basis-full` makes wrapping the narrow-width answer. */}
-          <p className="min-w-0 basis-full text-xs font-medium text-muted lg:flex-1 lg:basis-0">
+          {/* A real minimum width, not a breakpoint.
+              This needs to wrap to its own line when the row cannot give it
+              enough space — and how much space there is depends on the rails,
+              not on the window. A `lg:` breakpoint got that wrong in exactly
+              the case it was meant to fix: at a 1280px viewport with both rails
+              open the row is only ~550px, the breakpoint still applied, and
+              `flex-basis:0` with `min-w-0` squeezed a two-line sentence into a
+              24px column thirty-four lines tall. Stating the width the text
+              needs lets flex-wrap decide, which is the thing that actually
+              knows how wide the row is. */}
+          <p className="min-w-[20rem] flex-1 text-xs font-medium text-muted">
             {selectedTranscript === "" ? (
               <>
                 Transcript for this clip — click a word to jump the preview there, double-click to
