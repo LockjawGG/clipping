@@ -16,9 +16,47 @@ const { spawn } = require("node:child_process");
 const { createServer } = require("node:net");
 const path = require("node:path");
 const fs = require("node:fs");
+const { EmbeddedPostgres } = require("./postgres.cjs");
 
 /** The project root — where package.json, .next and node_modules live. */
 const ROOT = path.join(__dirname, "..");
+
+/**
+ * True when running from the packaged app rather than a checkout.
+ *
+ * The two want different things: a checkout should keep using the developer's
+ * own database and media so `npm run desktop` shows the library they already
+ * have, while a packaged copy has to assume the machine has nothing and bring
+ * its own.
+ */
+const PACKAGED = app.isPackaged;
+
+/** Everything the packaged app writes lives under one directory. */
+function dataRoot() {
+  return app.getPath("userData");
+}
+
+let pg = null;
+
+/**
+ * Append a line to the app's own startup log.
+ *
+ * A packaged app has no console to print to: `Start-Process` redirection
+ * catches whatever the children write, but anything that fails before the
+ * children exist vanishes, and an error dialog on a machine nobody is watching
+ * is a hang. So startup narrates itself to a file next to the data it is
+ * setting up.
+ */
+function logStartup(line) {
+  try {
+    const f = path.join(app.getPath("userData"), "startup.log");
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.appendFileSync(f, `[${new Date().toISOString()}] ${line}
+`, "utf8");
+  } catch {
+    /* logging must never be the thing that breaks startup */
+  }
+}
 
 /** Child processes we started, so quitting takes them with us. */
 const children = [];
@@ -82,6 +120,68 @@ function loadEnvFile() {
 const fileEnv = loadEnvFile();
 
 /**
+ * Configuration for a packaged app, which cannot rely on a `.env` written for
+ * somebody's checkout.
+ *
+ * Paths point inside the app's own data directory so a fresh machine needs no
+ * setup, and the database URL is whatever port the embedded server came up on.
+ * A checkout gets `{}` and keeps using its `.env` unchanged.
+ */
+function portableEnv(databaseUrl) {
+  if (!PACKAGED) return {};
+  const root = dataRoot();
+  const res = process.resourcesPath;
+  const bin = (...p) => path.join(res, ...p);
+  return {
+    DATABASE_URL: databaseUrl,
+    DATABASE_URL_UNPOOLED: databaseUrl,
+    LOCAL_STORAGE_DIR: path.join(root, "storage"),
+    TEMP_DIR: path.join(root, "tmp"),
+    STORAGE_PROVIDER: "local",
+    // Auth needs a stable secret across launches or every restart signs you
+    // out. Generated once and kept beside the data it protects.
+    NEXTAUTH_SECRET: authSecret(),
+    ...bundledTools(bin),
+  };
+}
+
+/** A secret generated on first run and reused thereafter. */
+function authSecret() {
+  const f = path.join(dataRoot(), "auth-secret");
+  try {
+    if (fs.existsSync(f)) return fs.readFileSync(f, "utf8").trim();
+    const v = require("node:crypto").randomBytes(32).toString("hex");
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, v, "utf8");
+    return v;
+  } catch {
+    // Non-fatal: auth reports a clear configuration error of its own.
+    return "";
+  }
+}
+
+/**
+ * Point the media tools at the copies shipped with the app, but only at ones
+ * that are actually there. Naming a path that does not exist is worse than
+ * leaving the variable unset — unset falls back to PATH, which may well find a
+ * working copy, while a wrong path fails with a confusing error.
+ */
+function bundledTools(bin) {
+  const candidates = {
+    FFMPEG_PATH: bin("tools", "ffmpeg.exe"),
+    FFPROBE_PATH: bin("tools", "ffprobe.exe"),
+    YTDLP_PATH: bin("tools", "yt-dlp.exe"),
+    PIPER_BINARY: bin("tools", "piper", "piper.exe"),
+    PIPER_VOICE_DIR: bin("voices"),
+  };
+  const out = {};
+  for (const [k, v] of Object.entries(candidates)) {
+    if (fs.existsSync(v)) out[k] = v;
+  }
+  return out;
+}
+
+/**
  * Where the app keeps its media on this machine.
  *
  * The same `LOCAL_STORAGE_DIR` the server reads, resolved against the project
@@ -119,11 +219,21 @@ ${e?.message ?? e}`);
  * have Node installed at all — Electron bundles one, and `ELECTRON_RUN_AS_NODE`
  * makes it behave like it.
  */
+let portable = {};
+
 function nodeChild(args, extraEnv) {
   return spawn(process.execPath, args, {
     cwd: ROOT,
-    // Real environment wins over the file, so a shell override still works.
-    env: { ...fileEnv, ...process.env, ELECTRON_RUN_AS_NODE: "1", ...extraEnv },
+    // Order matters: the packaged app's own paths beat a stale `.env`, but an
+    // explicit shell variable still wins over everything for debugging.
+    env: {
+      ...fileEnv,
+      ...portable,
+      ...process.env,
+      ...(PACKAGED ? portable : {}),
+      ELECTRON_RUN_AS_NODE: "1",
+      ...extraEnv,
+    },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -268,6 +378,23 @@ function buildMenu() {
 app.whenReady().then(async () => {
   buildMenu();
   try {
+    if (PACKAGED) {
+      // The database has to be up before the server or the worker touch it.
+      logStartup(`starting: root=${ROOT} resources=${process.resourcesPath}`);
+      pg = new EmbeddedPostgres({
+        dataDir: path.join(dataRoot(), "pgdata"),
+        appRoot: ROOT,
+        resourcesPath: process.resourcesPath,
+      });
+      logStartup(`postgres binaries: ${pg.binDir ?? "NOT FOUND"}`);
+      const url = await pg.start();
+      logStartup(`postgres ready on port ${pg.port}`);
+      portable = portableEnv(url);
+      for (const dir of [portable.LOCAL_STORAGE_DIR, portable.TEMP_DIR]) {
+        if (dir) fs.mkdirSync(dir, { recursive: true });
+      }
+    }
+
     serverPort = await freePort();
     startServer(serverPort);
     startWorker();
@@ -277,7 +404,15 @@ app.whenReady().then(async () => {
 
     createWindow(serverPort);
   } catch (err) {
-    dialog.showErrorBox("Clipper could not start", String(err?.message ?? err));
+    const message = String(err?.stack ?? err?.message ?? err);
+    logStartup(`FAILED: ${message}`);
+    dialog.showErrorBox(
+      "Clipper could not start",
+      `${err?.message ?? err}
+
+Details were written to:
+${path.join(app.getPath("userData"), "startup.log")}`,
+    );
     app.quit();
   }
 
@@ -297,4 +432,7 @@ app.on("before-quit", () => {
       /* already gone */
     }
   }
+  // After the children: stopping the database first would just give them
+  // connection errors on the way out.
+  pg?.stop();
 });

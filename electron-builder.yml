@@ -45,6 +45,17 @@ files:
 extraResources:
   - from: node_modules/.prisma
     to: app/node_modules/.prisma
+  # The database the app runs itself. The machine it lands on cannot be assumed
+  # to have PostgreSQL, and the schema cannot move to SQLite — eight String[]
+  # columns and fourteen enums, six of the arrays being the censor word lists.
+  - from: vendor/pgsql
+    to: pgsql
+  # ffmpeg, ffprobe and yt-dlp, so a fresh machine needs nothing on PATH.
+  - from: vendor/tools
+    to: tools
+  # A Piper voice, so narration works out of the box.
+  - from: vendor/voices
+    to: voices
 
 # Puts `.env` beside the executable. electron-builder empties the output
 # directory on every run, so this cannot be a one-off manual copy.

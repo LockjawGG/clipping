@@ -14,6 +14,15 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 exports.default = async function afterPack(context) {
+  // A portable build brings its own configuration and must not carry anyone's
+  // `.env` — that file holds a database password, and the package is a
+  // directory the recipient can browse. Set CLIPPER_PORTABLE=1 for a build you
+  // intend to hand to someone else.
+  if (process.env.CLIPPER_PORTABLE === "1") {
+    console.log("  • portable build — .env deliberately not included");
+    return;
+  }
+
   const source = path.join(context.packager.projectDir, ".env");
   const target = path.join(context.appOutDir, ".env");
 
