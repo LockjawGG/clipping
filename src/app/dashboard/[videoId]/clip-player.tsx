@@ -21,6 +21,17 @@ import { wordSpanCss, type WordStyle } from "./editable-transcript";
 import { TONES } from "@/lib/ffmpeg/args.ts";
 import { previewMs, type PreviewMs } from "@/lib/sequence/clock.ts";
 
+/**
+ * How far ahead of a bleep the clip's audio is cut.
+ *
+ * The render silences the span to the sample. The preview can only act on a
+ * position it read on the last frame callback, so acting exactly on the
+ * boundary is always a little late — measured at 44-56ms, which is the whole of
+ * the lead `audioSpans` puts in front of the word. Being early is inaudible
+ * (the span already opens in the gap before the word); being late is the word.
+ */
+const BLEEP_LEAD_MS = 90;
+
 export interface PreviewWord {
   id: string;
   text: string;
@@ -476,14 +487,23 @@ export const ClipPlayer = memo(function ClipPlayer({
       if (!v) return;
       syncLayers(posMs, running);
       const narrating = syncVoiceover(posMs, running);
+      // Silence starts early. This is read on a frame callback, so the position
+      // it acts on is already a frame or so old; muting exactly on the boundary
+      // put the change in after the word's first sample and you heard the
+      // attack of it under the tone. Ending is left exact — the span's own
+      // trailing pad covers it, and cutting the clip's audio back in late is
+      // the one direction nobody can hear.
       const bleep =
         mode === "source"
-          ? (bleeps ?? []).find((b) => posMs >= b.startMs && posMs < b.endMs)
+          ? (bleeps ?? []).find((b) => posMs >= b.startMs - BLEEP_LEAD_MS && posMs < b.endMs)
           : undefined;
 
       if (bleep) {
         v.volume = 0;
-        if (running && bleep.mode !== "MUTE") playTone(bleep.mode);
+        // The tone is the replacement, so it starts with the word, not with the
+        // lead — otherwise censoring announces itself before there is anything
+        // to censor.
+        if (running && bleep.mode !== "MUTE" && posMs >= bleep.startMs) playTone(bleep.mode);
         else stopTone();
         return;
       }
@@ -492,6 +512,19 @@ export const ClipPlayer = memo(function ClipPlayer({
     },
     [bleeps, mode, playTone, stopTone, syncLayers, syncVoiceover, voiceover],
   );
+
+  /**
+   * Re-apply the instant when what it should sound like changes.
+   *
+   * Turning the audio censor off while parked inside a bleep used to leave the
+   * clip muted: nothing re-ran until the next frame or seek, and a paused
+   * player has neither. The same for turning it on — the settings said bleeped
+   * and the speech carried on.
+   */
+  useEffect(() => {
+    syncAudio(posMs, playing);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bleeps, voiceover, mode, syncAudio]);
 
   // Nothing should keep talking once the video stops.
   useEffect(() => {
@@ -524,15 +557,18 @@ export const ClipPlayer = memo(function ClipPlayer({
     let last = 0;
     const tick = (t: number) => {
       raf = requestAnimationFrame(tick);
-      if (t - last < 33) return;
-      last = t;
       const v = videoRef.current;
       if (!v) return;
       if (advance()) return;
       const bounded = timelinePos();
+      // Audio every frame. The throttle below is for the playhead, which only
+      // has to look smooth; censoring that arrives a frame late has already
+      // let the word through, so it does not get to share that budget.
+      syncAudio(bounded, true);
+      if (t - last < 33) return;
+      last = t;
       setPosMs(bounded);
       onPlayhead(bounded);
-      syncAudio(bounded, true);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
