@@ -141,6 +141,9 @@ function portableEnv(databaseUrl) {
     // Auth needs a stable secret across launches or every restart signs you
     // out. Generated once and kept beside the data it protects.
     NEXTAUTH_SECRET: authSecret(),
+    // One machine, one person, loopback only: a sign-in screen guards nothing
+    // here and is pure friction. See the flag's note in env.ts.
+    DESKTOP_SINGLE_USER: "1",
     ...bundledTools(bin),
   };
 }

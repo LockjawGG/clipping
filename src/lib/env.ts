@@ -15,6 +15,22 @@ const schema = z.object({
   DATABASE_URL: z.string().url(),
 
   NEXTAUTH_SECRET: z.string().min(1).optional(),
+  /**
+   * Run without accounts, as a single local user.
+   *
+   * The desktop build sets this. It is a personal application whose data sits
+   * on the machine it runs on, reachable only over loopback — a sign-in screen
+   * there guards nothing and is pure friction. Everything still hangs off a
+   * User row so ownership checks, projects and the schema are unchanged; the
+   * app just stops asking who you are.
+   *
+   * It genuinely disables authentication, so it must never be set on anything
+   * reachable from a network. Nothing sets it but the desktop shell.
+   */
+  DESKTOP_SINGLE_USER: z
+    .enum(["0", "1"])
+    .default("0")
+    .transform((v) => v === "1"),
   NEXTAUTH_URL: z.string().url().default("http://localhost:3000"),
 
   STORAGE_PROVIDER: z.enum(["s3", "local"]).default("local"),

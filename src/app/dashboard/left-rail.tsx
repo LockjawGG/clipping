@@ -13,11 +13,14 @@ export function LeftRail({
   activeProjectId,
   favorites,
   assets,
+  showSignOut = true,
 }: {
   projects: ProjectSummary[];
   activeProjectId: string;
   favorites: FavoriteClip[];
   assets: AssetView[];
+  /** Desktop runs as a single local user, where signing out means nothing. */
+  showSignOut?: boolean;
 }) {
   const [tab, setTab] = useState<"projects" | "media" | "training">("projects");
 
@@ -25,7 +28,7 @@ export function LeftRail({
     <div className="rail flex h-full min-h-0 flex-col px-0">
       <div className="flex items-center justify-between px-4 pb-2 pt-4">
         <span className="text-sm font-semibold">Clipper</span>
-        <SignOutButton />
+        {showSignOut && <SignOutButton />}
       </div>
 
       <div role="tablist" className="tabs mx-3 mb-1 self-start">

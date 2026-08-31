@@ -16,6 +16,9 @@ export const authConfig = {
   providers: [],
   callbacks: {
     authorized({ auth, request }) {
+      // Single-user desktop: there is nobody else to be, so there is nothing
+      // to check. The session-side counterpart supplies the local user id.
+      if (env.DESKTOP_SINGLE_USER) return true;
       const onDashboard = request.nextUrl.pathname.startsWith("/dashboard");
       if (onDashboard) return Boolean(auth?.user);
       return true;

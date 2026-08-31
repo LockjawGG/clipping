@@ -20,6 +20,7 @@ import { getStorage } from "@/lib/storage/index.ts";
 import { WorkspaceShell } from "./workspace-shell";
 import { CaptionInsertProvider } from "./caption-insert";
 import { LeftRail } from "./left-rail";
+import { env } from "@/lib/env.ts";
 import { ContentRail } from "./content-rail";
 import { EditorPane } from "./editor-pane";
 
@@ -283,6 +284,7 @@ export default async function DashboardPage({
             activeProjectId={activeProjectId}
             favorites={favorites}
             assets={assets}
+            showSignOut={!env.DESKTOP_SINGLE_USER}
           />
         }
         right={
