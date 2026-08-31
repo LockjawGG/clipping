@@ -1205,7 +1205,21 @@ export function ClipEditor({
     });
   const renderReq = () => fetch(`/api/clips/${clip.id}/render`, { method: "POST" });
 
-  const save = () => call("save", saveReq);
+  /** Bumped when a save may have re-queued the narration, so the panel polls
+   *  the fresh recording into the preview instead of playing the stale one. */
+  const [narrationReload, setNarrationReload] = useState(0);
+  const save = async () => {
+    // Read before the save resolves: `call` refreshes the route, which folds
+    // the draft back into `clip` and would make this comparison a no-op.
+    const censorTouched =
+      draft.censorEnabled !== clip.censorEnabled ||
+      draft.censorSensitivity !== clip.censorSensitivity ||
+      draft.censorAudioMode !== clip.censorAudioMode ||
+      !sameList(draft.censorAllowList, clip.censorAllowList) ||
+      !sameList(draft.censorDenyList, clip.censorDenyList);
+    const ok = await call("save", saveReq);
+    if (ok && censorTouched) setNarrationReload((n) => n + 1);
+  };
   const saveAndRender = async () => {
     const ok = dirty ? await call("save", saveReq) : true;
     if (ok) await call("render", renderReq);
@@ -1857,7 +1871,7 @@ export function ClipEditor({
         </div>
       )}
 
-      <VoiceoverPanel clipId={clip.id} onLines={onNarrationLines} />
+      <VoiceoverPanel clipId={clip.id} onLines={onNarrationLines} reloadReq={narrationReload} />
 
       <div className="rounded-lg bg-surface-raised px-3 py-2">
         <CensorControls

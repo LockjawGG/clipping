@@ -30,6 +30,17 @@ export interface VoiceLine {
   durationMs: number;
   /** Storage key / path of this line's audio. */
   audioKey: string;
+  /**
+   * Which words this line had bleeped when it was made, and with what sound.
+   *
+   * A censored word is never spoken into the file — it is replaced with a tone
+   * while the audio is being built — so the settings in force at synthesis are
+   * baked into the bytes. Without recording them, turning censoring on later
+   * left the narration reading the word aloud over its own bleep: the text had
+   * not changed, so nothing looked stale. Absent on lines made before this
+   * existed, which is treated as unknown and re-synthesized once.
+   */
+  censorKey?: string;
 }
 
 export interface PlacedLine extends VoiceLine {
@@ -116,14 +127,25 @@ export function overrunningLines(placed: readonly PlacedLine[]): PlacedLine[] {
   return placed.filter((p) => p.overflowMs > 0);
 }
 
-/** Refs whose text no longer matches what was synthesized. */
+/**
+ * Refs that no longer match what was synthesized — in words or in censoring.
+ *
+ * `censorKeys` is optional so a caller that does not censor can ignore it; when
+ * given, a line whose censoring has changed is stale even though its text has
+ * not, and a line that predates the key is stale once so it can be remade with
+ * one recorded.
+ */
 export function staleLines(
   lines: readonly VoiceLine[],
   currentText: ReadonlyMap<string, string>,
+  censorKeys?: ReadonlyMap<string, string>,
 ): VoiceLine[] {
   return lines.filter((l) => {
     const now = currentText.get(l.ref);
-    return now !== undefined && normalize(now) !== normalize(l.text);
+    if (now === undefined) return false;
+    if (normalize(now) !== normalize(l.text)) return true;
+    if (!censorKeys) return false;
+    return l.censorKey !== censorKeys.get(l.ref);
   });
 }
 

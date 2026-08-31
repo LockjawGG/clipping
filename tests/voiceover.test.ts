@@ -363,3 +363,33 @@ test("a toggle bundled with a real change is still a real change", async () => {
   await upsertVoiceover(deps, "c1", { enabled: true, voiceId: "other" });
   assert.equal(queued.length, 1);
 });
+
+// --- censoring is part of a line's identity --------------------------------
+
+test("a line whose censoring changed is stale, even with the same words", () => {
+  const line: VoiceLine = {
+    ref: "seg:0", text: "well shit that worked", durationMs: 1_000,
+    audioKey: "a.wav", censorKey: "well|#|that worked~BEEP",
+  };
+  const text = new Map([["seg:0", "well shit that worked"]]);
+
+  // Same words, same censoring: nothing to redo.
+  assert.deepEqual(staleLines([line], text, new Map([["seg:0", "well|#|that worked~BEEP"]])), []);
+
+  // Censoring switched off — the word must now be spoken, so the recording,
+  // which has a tone where the word goes, is wrong.
+  assert.equal(staleLines([line], text, new Map([["seg:0", "well shit that worked~BEEP"]])).length, 1);
+
+  // Same words bleeped, different sound: the tone in the file is the old one.
+  assert.equal(staleLines([line], text, new Map([["seg:0", "well|#|that worked~TONE"]])).length, 1);
+});
+
+test("a line recorded before censor keys existed is redone once", () => {
+  const legacy: VoiceLine = { ref: "seg:0", text: "hello", durationMs: 500, audioKey: "a.wav" };
+  const text = new Map([["seg:0", "hello"]]);
+  // Nothing is known about how it was censored, and the bytes cannot say, so
+  // the only safe reading is that it might be wrong.
+  assert.equal(staleLines([legacy], text, new Map([["seg:0", "hello~BEEP"]])).length, 1);
+  // Callers that do not care about censoring are unaffected.
+  assert.deepEqual(staleLines([legacy], text), []);
+});

@@ -58,6 +58,10 @@ function makeDeps(
   const renders: Array<Record<string, unknown>> = [];
   const renderUpdates: Array<Record<string, unknown>> = [];
   const enqueued: Array<{ videoId: string; kind: string; payload?: unknown }> = [];
+  // A transcript-derived narration on the clip, so censor changes have
+  // something to re-record. Tests that want none clear it.
+  let voiceoverRow: { id: string; sourceKind: string } | null = { id: "vo1", sourceKind: "TRANSCRIPT" };
+  const setVoiceover = (v: typeof voiceoverRow) => { voiceoverRow = v; };
   const updates: Array<{ id: string; data: Record<string, unknown> }> = [];
   const created: Array<Record<string, unknown>> = [];
   const deleted: string[] = [];
@@ -152,6 +156,10 @@ function makeDeps(
         ];
       },
     },
+    voiceover: {
+      findFirst: async () => voiceoverRow,
+      update: async () => ({}),
+    },
     video: { findUnique: async ({ where }) => videos.get(where.id) ?? null },
     transcriptSegment: { findMany: async () => segments },
     render: {
@@ -193,7 +201,7 @@ function makeDeps(
     },
     ...over,
   };
-  return { deps, renders, renderUpdates, enqueued, updates, created, deleted, clips, captionConfigs, captionOps };
+  return { deps, renders, renderUpdates, enqueued, updates, created, deleted, clips, captionConfigs, captionOps, setVoiceover };
 }
 
 // --- requestRender ------------------------------------------------
@@ -480,4 +488,36 @@ test("a render whose job is still alive is returned as in flight, not restarted"
   assert.equal(res.alreadyRunning, true);
   assert.equal(renders.length, 0, "nothing new is queued");
   assert.equal(renderUpdates.length, 0, "and the live row is left alone");
+});
+
+// --- censoring the clip re-records the narration ---------------------------
+
+test("changing what gets bleeped re-records the narration", async () => {
+  const { deps, enqueued } = makeDeps();
+  await updateClip(deps, "clip1", { censorEnabled: true });
+
+  // A bleeped word is never spoken into the recording, so the settings are
+  // baked into the bytes: leave them and the clip bleeps a word its own
+  // narration reads out.
+  assert.deepEqual(enqueued, [{ videoId: "vidA", kind: "VOICEOVER", payload: { voiceoverId: "vo1" } }]);
+});
+
+test("an edit that cannot change what is spoken leaves the narration alone", async () => {
+  const { deps, enqueued } = makeDeps();
+  await updateClip(deps, "clip1", { title: "Renamed", accepted: true });
+  assert.deepEqual(enqueued, []);
+});
+
+test("a hand-written script is not re-recorded for the clip's word lists", async () => {
+  const { deps, enqueued, setVoiceover } = makeDeps();
+  setVoiceover({ id: "vo1", sourceKind: "SCRIPT" });
+  await updateClip(deps, "clip1", { censorDenyList: ["banana"] });
+  assert.deepEqual(enqueued, []);
+});
+
+test("no narration means nothing to re-record", async () => {
+  const { deps, enqueued, setVoiceover } = makeDeps();
+  setVoiceover(null);
+  await updateClip(deps, "clip1", { censorEnabled: true });
+  assert.deepEqual(enqueued, []);
 });

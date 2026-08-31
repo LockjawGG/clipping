@@ -258,8 +258,29 @@ export const voiceoverHandler: JobHandler<PipelineDeps> = async ({
         });
     }
 
+    /**
+     * What each line's censoring will do to it, as a value that changes when
+     * the outcome changes: the run pattern with censored words blanked, plus
+     * the sound they are replaced with. Comparing this is what makes turning
+     * censoring on re-record the narration instead of leaving a line that
+     * cheerfully says the word the clip is bleeping.
+     */
+    const narrationCensor = {
+      enabled: target.censor.enabled,
+      sensitivity: target.censor.sensitivity,
+      allowList: target.censor.allowList,
+      denyList: target.censor.denyList,
+    };
+    const censorKeyFor = (text: string) =>
+      `${splitCensoredRuns(text, narrationCensor)
+        .map((r) => (r.censored ? "#" : r.text))
+        .join("|")}~${target.censor.audioMode}`;
+    const censorKeys = new Map(
+      [...wanted.entries()].map(([ref, text]) => [ref, censorKeyFor(text)]),
+    );
+
     const existing = parseLines(target.linesJson);
-    const stale = new Set(staleLines(existing, wanted).map((l) => l.ref));
+    const stale = new Set(staleLines(existing, wanted, censorKeys).map((l) => l.ref));
     // Keep what is still valid; drop lines whose anchor no longer exists.
     const kept = existing.filter((l) => wanted.has(l.ref) && !stale.has(l.ref));
     const todo = [...wanted.entries()].filter(([ref]) => !kept.some((l) => l.ref === ref));
@@ -288,12 +309,7 @@ export const voiceoverHandler: JobHandler<PipelineDeps> = async ({
       // same length goes in its place. The word is therefore never present in
       // anything that is stored or played, which is a stronger guarantee than
       // covering it up would be.
-      const runs = splitCensoredRuns(text, {
-        enabled: target.censor.enabled,
-        sensitivity: target.censor.sensitivity,
-        allowList: target.censor.allowList,
-        denyList: target.censor.denyList,
-      });
+      const runs = splitCensoredRuns(text, narrationCensor);
       const key = `voiceovers/${voiceoverId}/${slug}.wav`;
 
       if (runs.some((r) => r.censored)) {
@@ -333,11 +349,11 @@ export const voiceoverHandler: JobHandler<PipelineDeps> = async ({
         const joined = scratchPath(work, `vo-${slug}.wav`);
         await deps.ffmpeg.concat(parts, joined, {}, signal);
         await deps.storage.putFile(key, joined, "audio/wav");
-        lines.push({ ref, text, durationMs: totalMs, audioKey: key });
+        lines.push({ ref, text, durationMs: totalMs, audioKey: key, censorKey: censorKeys.get(ref) });
       } else {
         const result = await speak(text, `vo-${slug}.wav`);
         await deps.storage.putFile(key, result.audioPath, "audio/wav");
-        lines.push({ ref, text, durationMs: result.durationMs, audioKey: key });
+        lines.push({ ref, text, durationMs: result.durationMs, audioKey: key, censorKey: censorKeys.get(ref) });
       }
       done++;
       await setProgress(todo.length ? 0.1 + (done / todo.length) * 0.85 : 0.95);

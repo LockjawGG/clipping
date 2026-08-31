@@ -46,10 +46,18 @@ const SOURCES: Array<{ id: string; label: string; hint: string }> = [
 export const VoiceoverPanel = memo(function VoiceoverPanel({
   clipId,
   onLines,
+  reloadReq = 0,
 }: {
   clipId: string;
   /** Hand the placed lines up so the preview can play them. */
   onLines?: (lines: PreviewLine[], duckDb: number) => void;
+  /**
+   * Bumped when something outside this panel re-queued the synthesis — saving
+   * censor changes does, because the narration is spoken through them. The
+   * panel then re-reads, sees the row running, and polls the fresh recording
+   * into the preview when it lands.
+   */
+  reloadReq?: number;
 }) {
   const [vo, setVo] = useState<Voiceover | null>(null);
   const [voices, setVoices] = useState<Voice[]>([]);
@@ -84,6 +92,10 @@ export const VoiceoverPanel = memo(function VoiceoverPanel({
       })
       .catch(() => {});
   }, [load]);
+
+  useEffect(() => {
+    if (reloadReq > 0) void load();
+  }, [reloadReq, load]);
 
   const running = vo?.status === "QUEUED" || vo?.status === "PROCESSING";
   useEffect(() => {

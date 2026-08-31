@@ -204,6 +204,14 @@ export interface ClipDb {
       include?: unknown;
     }): Promise<ClipListRow[]>;
   };
+  voiceover?: {
+    findFirst(args: {
+      where: Record<string, unknown>;
+      orderBy?: unknown;
+      select?: unknown;
+    }): Promise<{ id: string; sourceKind: string } | null>;
+    update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<unknown>;
+  };
   video: {
     findUnique(args: {
       where: { id: string };
@@ -244,7 +252,7 @@ export interface ClipServiceDeps {
   loadProfile?: (contentType: string) => Promise<StyleProfile | null>;
   enqueue: (input: {
     videoId: string;
-    kind: "RENDER" | "THUMBNAIL";
+    kind: "RENDER" | "THUMBNAIL" | "VOICEOVER";
     payload?: unknown;
   }) => Promise<string>;
   /**
@@ -325,6 +333,15 @@ export async function requestClipThumbnail(deps: ClipServiceDeps, clipId: string
   return { jobId, status: "QUEUED" as const };
 }
 
+/** Clip settings the narration is spoken through; changing one re-records it. */
+const CENSOR_FIELDS = [
+  "censorEnabled",
+  "censorSensitivity",
+  "censorAllowList",
+  "censorDenyList",
+  "censorAudioMode",
+] as const satisfies readonly (keyof z.infer<typeof updateClipSchema>)[];
+
 export async function updateClip(deps: ClipServiceDeps, clipId: string, input: unknown) {
   const patch = updateClipSchema.parse(input);
   const clip = await ownedClip(deps, clipId);
@@ -350,6 +367,39 @@ export async function updateClip(deps: ClipServiceDeps, clipId: string, input: u
   }
 
   await deps.db.clip.update({ where: { id: clipId }, data });
+
+  /**
+   * Narration is censored while it is being spoken — a bleeped word is never
+   * recorded, so the settings are baked into the audio. Change them and the
+   * stored lines are wrong: the clip bleeps the word while the voice reads it
+   * out, which is the opposite of what censoring is for. Re-running the
+   * synthesis re-records only the lines whose censoring actually changed.
+   */
+  const censorTouched = CENSOR_FIELDS.some((f) => patch[f] !== undefined);
+  if (censorTouched && deps.db.voiceover) {
+    const vo = await deps.db.voiceover.findFirst({
+      where: { clipId },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true, sourceKind: true },
+    });
+    // A script is written by hand and is not derived from the transcript, so
+    // the clip's word lists have nothing to say about it.
+    if (vo && vo.sourceKind !== "SCRIPT") {
+      // Marked QUEUED here, not just when the worker picks it up: the panel
+      // polls only while the row says it is running, so without this it reads
+      // COMPLETED with the old lines once and stops looking.
+      await deps.db.voiceover.update({
+        where: { id: vo.id },
+        data: { status: "QUEUED", errorMessage: null },
+      });
+      await deps.enqueue({
+        videoId: clip.videoId,
+        kind: "VOICEOVER",
+        payload: { voiceoverId: vo.id },
+      });
+    }
+  }
+
   return { id: clipId, ...patch, startMs, endMs };
 }
 
