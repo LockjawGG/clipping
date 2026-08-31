@@ -22,3 +22,6 @@ next-env.d.ts
 .voices/
 dist/
 *.log
+
+# desktop build output
+dist-desktop

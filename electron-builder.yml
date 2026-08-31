@@ -1,0 +1,52 @@
+# Packaging for the desktop shell.
+#
+# This app is not a bundle of static files: it ships its own Next.js server and
+# its own worker, both of which are ordinary Node programs reading the project
+# the way they always have. So the package is the project — source included —
+# rather than a compiled artifact.
+appId: com.clipper.desktop
+productName: Clipper
+copyright: ""
+
+directories:
+  output: dist-desktop
+  buildResources: electron/resources
+
+# asar packs the app into one archive, which breaks two things here: Prisma
+# loads a native .node query engine by path, and the worker is TypeScript that
+# Node strips at load time. Both need real files on disk.
+asar: false
+
+files:
+  - electron/**
+  - .next/**
+  - public/**
+  - prisma/**
+  # The worker runs `scripts/worker.ts` directly and imports across `src`, so
+  # both ship as source. Nothing here is secret — `.env` is deliberately absent.
+  - scripts/**
+  - src/**
+  - package.json
+  - node_modules/**
+  # Trim what is only ever used to build or test, so the package is not carrying
+  # a second copy of the toolchain.
+  - "!node_modules/electron/dist/**"
+  - "!node_modules/.cache/**"
+  - "!**/*.map"
+  - "!**/test/**"
+  - "!**/tests/**"
+  - "!**/__tests__/**"
+
+# `prisma generate` writes the client and its native query engine into a dot
+# directory under node_modules, and electron-builder drops those from `files`
+# whatever pattern you give it. Copying it in as a resource lands it exactly
+# where Prisma looks. Without this the app launches and then cannot reach the
+# database at all.
+extraResources:
+  - from: node_modules/.prisma
+    to: app/node_modules/.prisma
+
+win:
+  target:
+    - target: dir
+  artifactName: ${productName}-${version}-${arch}.${ext}
