@@ -1834,7 +1834,12 @@ export function ClipEditor({
       <div className="rounded-lg bg-surface-raised px-3 py-2">
         <CensorControls
           value={draft as CensorSettings}
-          words={words}
+          // The review list describes what the export will do, so it reads the
+          // words as the export will have them: struck ones are absent, and the
+          // rest carry the times they will land on. Given the raw transcript it
+          // offered to bleep a word that had been cut out of the clip, and
+          // timed every row after a cut a second early.
+          words={timelineWords}
           onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
         />
       </div>
