@@ -231,6 +231,7 @@ export default async function DashboardPage({
           clips={clips}
           wordsByClip={wordsByClip}
           transcriptByClip={transcriptByClip}
+          segments={transcriptRows}
           overlaysByClip={overlaysByClip}
           wordStylesByClip={wordStylesByClip}
           plansByClip={plansByClip}

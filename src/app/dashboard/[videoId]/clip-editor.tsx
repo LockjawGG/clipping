@@ -762,6 +762,15 @@ export function ClipEditor({
     () => parseFocusTrack(draft.focusTrackJson),
     [draft.focusTrackJson],
   );
+  /**
+   * The same window on the preview's clock, for anything that draws or samples
+   * it against the playhead. Stored in clip time, shown in preview time — the
+   * two differ by whatever has been cut before each keyframe.
+   */
+  const focusTrackPreview = useMemo(
+    () => focusTrack.map((k) => ({ ...k, atMs: Math.round(toPreview(clipMs(k.atMs))) })),
+    [focusTrack, toPreview],
+  );
   const setFocusTrack = useCallback(
     (next: FocusKeyframe[]) =>
       setDraft((d) => ({ ...d, focusTrackJson: serializeFocusTrack(next) })),
@@ -773,14 +782,22 @@ export function ClipEditor({
    */
   const commitFocus = useCallback(
     (kf: FocusKeyframe) => {
+      // Callers place a keyframe where the playhead is, which is a position in
+      // the preview. It is stored against the clip so that striking a word out
+      // moves the camera move with its footage instead of leaving it on
+      // whatever the cut pulled into that moment.
+      const at = Math.round(toClip(previewMs(kf.atMs)));
       setDraft((d) => {
         const track = parseFocusTrack(d.focusTrackJson);
-        const i = track.findIndex((k) => Math.abs(k.atMs - kf.atMs) <= KEYFRAME_SNAP_MS);
-        const next = i >= 0 ? track.map((k, j) => (j === i ? { ...k, ...kf, atMs: k.atMs } : k)) : [...track, kf];
+        const i = track.findIndex((k) => Math.abs(k.atMs - at) <= KEYFRAME_SNAP_MS);
+        const next =
+          i >= 0
+            ? track.map((k, j) => (j === i ? { ...k, ...kf, atMs: k.atMs } : k))
+            : [...track, { ...kf, atMs: at }];
         return { ...d, focusTrackJson: serializeFocusTrack(next) };
       });
     },
-    [],
+    [toClip],
   );
   const [error, setError] = useState<string | null>(null);
   const [playheadMs, setPlayheadMs] = useState<PreviewMs>(previewMs(0));
@@ -1633,7 +1650,7 @@ export function ClipEditor({
         onPlayhead={setPlayheadMs}
         onSourceError={softReset}
         onCaptionLayout={onCaptionLayout}
-        focusTrack={focusTrack}
+        focusTrack={focusTrackPreview}
         targetAspect={ASPECT_RATIOS[draft.aspectRatio] ?? 1080 / 1920}
         focusEditing={focusEditing}
         onFocusCommit={commitFocus}
@@ -1769,7 +1786,7 @@ export function ClipEditor({
               onClick={() =>
                 commitFocus({
                   atMs: Math.round(playheadMs),
-                  ...sampleFocusAt(focusTrack, playheadMs),
+                  ...sampleFocusAt(focusTrackPreview, playheadMs),
                 })
               }
             >
@@ -1793,7 +1810,7 @@ export function ClipEditor({
             </p>
           ) : (
             <ul className="flex flex-col gap-1">
-              {focusTrack.map((k, i) => (
+              {focusTrackPreview.map((k, i) => (
                 <li key={i} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                   <button
                     type="button"

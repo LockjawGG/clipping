@@ -38,6 +38,7 @@ export function EditorPane({
   wordsByClip,
   plansByClip,
   transcriptByClip,
+  segments,
   overlaysByClip,
   wordStylesByClip,
   projects,
@@ -51,6 +52,8 @@ export function EditorPane({
   /** Each clip's timeline, as pieces the preview can play. */
   plansByClip: Record<string, ClipPlan>;
   transcriptByClip: Record<string, TranscriptRow[]>;
+  /** Every segment of the video, for the New-clip form's snap preview. */
+  segments: TranscriptRow[];
   overlaysByClip: Record<string, OverlayView[]>;
   wordStylesByClip: Record<string, Record<string, WordStyle>>;
   projects: Array<{ id: string; name: string }>;
@@ -106,7 +109,11 @@ export function EditorPane({
 
       <WorkerPanel videoId={video.id} />
 
-      <ClipComposer videoId={video.id} />
+      <ClipComposer
+        videoId={video.id}
+        segments={segments}
+        videoDurationMs={video.durationMs ?? 0}
+      />
     </div>
   );
 }

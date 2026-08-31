@@ -962,6 +962,39 @@ test("a pan-only capture window reuses the cheap crop path", async () => {
   assert.ok(Math.abs(track[track.length - 1].x - 0.8) < 1e-9);
 });
 
+test("a capture window moves with its footage when words are cut", async () => {
+  // CENSOR_WORDS on a 10s-38s clip; striking "shit" removes 11.75s-12.65s of
+  // source, i.e. 900ms starting 1.75s into the clip. A keyframe authored at 4s
+  // is 900ms earlier in the export, because that much footage before it is
+  // gone — otherwise the camera move would land on whatever the cut pulled
+  // into 4s instead of the moment it was framed on.
+  const { deps, spy } = makeDeps(
+    target({
+      removedWordIds: ["c2"],
+      focusTrackJson: JSON.stringify([
+        { atMs: 0, x: 0.2, y: 0.5, scale: 1 },
+        { atMs: 4_000, x: 0.8, y: 0.5, scale: 1 },
+      ]),
+    }),
+    withTranscript(CENSOR_WORDS),
+  );
+  await renderHandler(ctx(deps, { renderId: "r-win-cut" }));
+
+  const track = spy.trackedTracks[0];
+  const atStart = track.find((p) => p.atMs === 0);
+  assert.ok(atStart, "the first keyframe is before the cut, so it does not move");
+  assert.ok(Math.abs(atStart.x - 0.2) < 1e-9);
+
+  // The pan finishes 900ms early: by 3.1s it has reached the far end.
+  const at3100 = track.reduce((best, p) =>
+    Math.abs(p.atMs - 3_100) < Math.abs(best.atMs - 3_100) ? p : best,
+  );
+  assert.ok(
+    Math.abs(at3100.x - 0.8) < 0.02,
+    `expected the pan to have arrived by 3.1s, got x=${at3100.x} at ${at3100.atMs}ms`,
+  );
+});
+
 test("a capture window that zooms uses zoompan instead", async () => {
   const { deps, spy } = makeDeps(
     target({

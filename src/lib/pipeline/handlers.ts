@@ -1041,7 +1041,13 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
     const clipMs = outMs;
     // An authored capture window reframes even a 16:9 clip — the user asked for
     // a punch-in, not an aspect change.
-    const focusWindow = parseFocusTrack(target.focusTrackJson);
+    // Authored against the clip, like an overlay window, so it moves with the
+    // footage when words are struck out: a camera move framed on a face should
+    // still be on that face, not on whatever the cut pulled into its place.
+    const focusWindow = parseFocusTrack(target.focusTrackJson).map((k) => ({
+      ...k,
+      atMs: Math.round(afterCuts(k.atMs)),
+    }));
     const hasWindow = focusWindow.length > 0;
     const needsReframe =
       aspect !== "16:9" || subtitlePath !== undefined || animated || hasWindow;
