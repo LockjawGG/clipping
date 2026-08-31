@@ -148,9 +148,30 @@ export function SequenceEditor({
     }> | null
   >(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
   /** Which lane "+ Add media" drops onto. Explicit, because inferring it from
    *  whatever happened to be selected is invisible and easy to get wrong. */
   const [addToTrackId, setAddToTrackId] = useState<string | null>(null);
+
+  // Let the picker go. Clicking away from an open menu and pressing Escape are
+  // both "I didn't mean to open this"; without them the only way out was to
+  // find the button again, and a list this long can cover what you were
+  // reaching for.
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (!pickerRef.current?.contains(e.target as Node)) setPickerOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPickerOpen(false);
+    };
+    document.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [pickerOpen]);
 
   // Mirror the preview. Cheap: one state set per frame the player emits
   // (~30fps while playing, one per scrub otherwise), and the value coming back
@@ -570,7 +591,7 @@ export function SequenceEditor({
         {/* A list, not a menu that snaps back to nothing: you can see what is
             available to add before committing, and every entry says how much
             longer it will make the export. */}
-        <div className="relative">
+        <div className="relative" ref={pickerRef}>
           <button
             type="button"
             className="btn btn-ghost btn-sm"

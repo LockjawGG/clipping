@@ -1112,8 +1112,17 @@ export function ClipEditor({
     const close = (e: MouseEvent) => {
       if (!menuRef.current?.contains(e.target as Node)) setSaveMenu(false);
     };
+    // Escape closes it too — clicking away was the only way out, which is not
+    // where a hand goes to back out of a menu.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSaveMenu(false);
+    };
     document.addEventListener("click", close);
-    return () => document.removeEventListener("click", close);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", close);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [saveMenu]);
 
   const savedProject = projects.find((p) => p.id === clip.savedToProjectId) ?? null;
@@ -2046,7 +2055,12 @@ export function ClipEditor({
 
       <div className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <p className="min-w-0 flex-1 text-xs font-medium text-muted">
+          {/* Its own line until the row is genuinely wide enough to share.
+              `flex-1 min-w-0` alone let this shrink below its own content
+              rather than wrap, so on a narrow viewport a two-line sentence
+              became a 60px column nineteen lines tall next to the language
+              picker. `basis-full` makes wrapping the narrow-width answer. */}
+          <p className="min-w-0 basis-full text-xs font-medium text-muted lg:flex-1 lg:basis-0">
             {selectedTranscript === "" ? (
               <>
                 Transcript for this clip — click a word to jump the preview there, double-click to
