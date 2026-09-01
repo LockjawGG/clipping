@@ -7,6 +7,7 @@ import { ProjectRail, type ProjectSummary, type FavoriteClip } from "./project-r
 import { MediaLibrary, type AssetView } from "./media-library";
 import { TrainingRail } from "./training-rail";
 import { SettingsRail } from "./settings-rail";
+import { BrainWidget } from "../brain/brain-widget";
 
 /** Left column: a Projects / Media / Training / Settings tab switch above the panels. */
 export function LeftRail({
@@ -64,7 +65,16 @@ export function LeftRail({
         <ProjectRail projects={projects} activeProjectId={activeProjectId} favorites={favorites} />
       )}
       {tab === "media" && <MediaLibrary assets={assets} />}
-      {tab === "training" && <TrainingRail />}
+      {tab === "training" && (
+        <>
+          <TrainingRail />
+          {/* The AI panel is also where you watch the AI work: the compact
+              Agent Brain card, linking through to the full /brain page. */}
+          <div className="px-2.5 pb-3 pt-1">
+            <BrainWidget />
+          </div>
+        </>
+      )}
       {tab === "settings" && <SettingsRail />}
     </div>
   );

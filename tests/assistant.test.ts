@@ -115,6 +115,61 @@ test("OllamaAnalysisProvider: speaks the /api/chat contract and parses clips", a
   }
 });
 
+test("OllamaAnalysisProvider: bad JSON is retried quietly, and the retry's answer wins", async () => {
+  const goodReply = JSON.stringify({
+    clips: [
+      {
+        startMs: 0,
+        endMs: 8000,
+        title: "Third time lucky",
+        hook: "h",
+        description: "d",
+        reason: "r",
+        caption: "c",
+        socialTitle: "s",
+        hashtags: [],
+        score: 0.5,
+      },
+    ],
+  });
+  let chatCalls = 0;
+  const mock = await mockOllama(() => {
+    chatCalls++;
+    // llama3.2's observed failure mode: two unusable replies, then a clean one.
+    return chatCalls < 3 ? "not json at all" : goodReply;
+  });
+  try {
+    const provider = new OllamaAnalysisProvider({ baseUrl: mock.baseUrl, model: "llama3.2" });
+    const clips = await provider.suggestClips([seg(0, 5000, "hello there")], {
+      minClipMs: 5000,
+      maxClipMs: 60_000,
+      maxClips: 5,
+    });
+    assert.equal(chatCalls, 3, "two bad replies were absorbed inside one suggestClips call");
+    assert.equal(clips.length, 1);
+    assert.equal(clips[0].title, "Third time lucky");
+  } finally {
+    mock.close();
+  }
+});
+
+test("OllamaAnalysisProvider: three bad replies surface the failure", async () => {
+  const mock = await mockOllama(() => "still not json");
+  try {
+    const provider = new OllamaAnalysisProvider({ baseUrl: mock.baseUrl, model: "llama3.2" });
+    await assert.rejects(
+      provider.suggestClips([seg(0, 5000, "hello there")], {
+        minClipMs: 5000,
+        maxClipMs: 60_000,
+        maxClips: 5,
+      }),
+      /non-JSON/,
+    );
+  } finally {
+    mock.close();
+  }
+});
+
 test("OllamaWithFallbackProvider: absent server falls back to the heuristic", async () => {
   const provider = new OllamaWithFallbackProvider(
     new OllamaAnalysisProvider({ baseUrl: "http://127.0.0.1:1" }),
