@@ -78,6 +78,9 @@ export class OllamaAnalysisProvider implements AnalysisProvider {
           `socialTitle, hashtags (array of strings), score (0..1).`,
         messages: [{ role: "user", content: buildUserPrompt(segments, options) }],
         format: "json",
+        // Room for a full clip list; without this the model's own default can
+        // cut the JSON off mid-array and it reads as "fewer clips", silently.
+        numPredict: 4096,
         signal: options.signal,
       });
 
@@ -104,8 +107,17 @@ export class OllamaAnalysisProvider implements AnalysisProvider {
                 workerOutput: call.outputTokens,
                 orchestratorOverhead: 0,
               }),
-        meta: { segments: segments.length },
+        meta: { segments: segments.length, ...(call.doneReason ? { doneReason: call.doneReason } : {}) },
       });
+
+      // Truncation is not bad luck, so it is not retried: the same budget will
+      // cut the same reply at the same place. Fail loudly with the real cause
+      // instead of letting the mangled JSON masquerade as a flaky model.
+      if (call.doneReason === "length") {
+        throw new Error(
+          `ollama stopped at the ${model} output budget (done_reason=length) — raise numPredict`,
+        );
+      }
 
       try {
         const raw = call.content;

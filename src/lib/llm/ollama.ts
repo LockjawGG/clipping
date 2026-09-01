@@ -48,6 +48,14 @@ export interface OllamaChatRequest {
   messages: Array<{ role: "user" | "assistant"; content: string }>;
   /** "json" makes Ollama constrain the reply to valid JSON. */
   format?: "json";
+  /**
+   * Generation budget (Ollama `num_predict`). Set explicitly by every caller
+   * that expects a long structured reply: the server-side default depends on
+   * the model's own template, and a reply silently cut off at that default is
+   * exactly the failure this field exists to prevent (observed: qwen2.5:14b
+   * stopping at ~256 tokens, two clips into a three-clip answer).
+   */
+  numPredict?: number;
   baseUrl?: string;
   signal?: AbortSignal;
   /** Whole-call ceiling; local models on CPU can be slow. */
@@ -69,6 +77,12 @@ export interface OllamaChatResult {
   inputTokens?: number;
   /** Generated tokens, as counted by Ollama. */
   outputTokens?: number;
+  /**
+   * Why generation ended, verbatim from Ollama ("stop" = finished naturally,
+   * "length" = ran out of budget mid-reply). Undefined on servers that do not
+   * report it. Callers must treat "length" as a broken answer, not a short one.
+   */
+  doneReason?: string;
   /** Wall-clock duration of the whole call, measured here. */
   latencyMs: number;
 }
@@ -98,6 +112,7 @@ export async function ollamaChat(req: OllamaChatRequest): Promise<OllamaChatResu
       model: req.model,
       stream: false,
       ...(req.format ? { format: req.format } : {}),
+      ...(req.numPredict ? { options: { num_predict: req.numPredict } } : {}),
       messages: [{ role: "system", content: req.system }, ...req.messages],
     }),
   });
@@ -109,11 +124,13 @@ export async function ollamaChat(req: OllamaChatRequest): Promise<OllamaChatResu
     message?: { content?: string };
     prompt_eval_count?: number;
     eval_count?: number;
+    done_reason?: string;
   };
   return {
     content: body.message?.content ?? "",
     inputTokens: countOf(body.prompt_eval_count),
     outputTokens: countOf(body.eval_count),
+    doneReason: typeof body.done_reason === "string" ? body.done_reason : undefined,
     latencyMs: Date.now() - startedAt,
   };
 }

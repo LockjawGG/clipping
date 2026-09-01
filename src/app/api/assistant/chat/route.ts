@@ -95,6 +95,9 @@ export const POST = route(async (req: Request) => {
     system,
     messages: input.messages,
     format: "json",
+    // Room for a multi-proposal reply. qwen2.5:14b was observed stopping at
+    // ~256 tokens — two clips into a three-clip answer — with no budget set.
+    numPredict: 4096,
     // A closed tab must cancel the generation: Ollama runs one generation at a
     // time, so an abandoned turn would queue the user's next question behind it.
     signal: req.signal,
@@ -123,8 +126,17 @@ export const POST = route(async (req: Request) => {
             workerOutput: call.outputTokens,
             orchestratorOverhead: 0,
           }),
-    meta: { turns: input.messages.length },
+    meta: {
+      turns: input.messages.length,
+      ...(call.doneReason ? { doneReason: call.doneReason } : {}),
+    },
   });
+
+  // A budget-truncated reply is a broken reply, whatever the JSON parser makes
+  // of the fragment. Say what actually happened rather than shipping half.
+  if (call.doneReason === "length") {
+    throw new ApiError(502, "the model ran out of reply budget mid-answer — ask again, or for less at once");
+  }
 
   return Response.json({ model, ...parseAssistantReply(call.content, durationMs) });
 });

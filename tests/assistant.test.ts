@@ -13,8 +13,12 @@ import {
 } from "../src/lib/assistant/protocol.ts";
 import type { Segment } from "../src/lib/providers/types.ts";
 
-/** A tiny in-process Ollama: /api/tags and /api/chat, scripted per test. */
-function mockOllama(reply: (body: Record<string, unknown>) => string) {
+/** A tiny in-process Ollama: /api/tags and /api/chat, scripted per test.
+ *  `reply` returns the assistant text, or an object to also script the
+ *  server-reported done_reason. */
+function mockOllama(
+  reply: (body: Record<string, unknown>) => string | { content: string; done_reason?: string },
+) {
   const server = http.createServer((req, res) => {
     if (req.url === "/api/tags") {
       res.setHeader("content-type", "application/json");
@@ -25,9 +29,14 @@ function mockOllama(reply: (body: Record<string, unknown>) => string) {
       let data = "";
       req.on("data", (c) => (data += c));
       req.on("end", () => {
+        const out = reply(JSON.parse(data));
+        const scripted = typeof out === "string" ? { content: out } : out;
         res.setHeader("content-type", "application/json");
         res.end(
-          JSON.stringify({ message: { role: "assistant", content: reply(JSON.parse(data)) } }),
+          JSON.stringify({
+            message: { role: "assistant", content: scripted.content },
+            ...(scripted.done_reason ? { done_reason: scripted.done_reason } : {}),
+          }),
         );
       });
       return;
@@ -148,6 +157,48 @@ test("OllamaAnalysisProvider: bad JSON is retried quietly, and the retry's answe
     assert.equal(chatCalls, 3, "two bad replies were absorbed inside one suggestClips call");
     assert.equal(clips.length, 1);
     assert.equal(clips[0].title, "Third time lucky");
+  } finally {
+    mock.close();
+  }
+});
+
+test("OllamaAnalysisProvider: the generation budget reaches the wire", async () => {
+  let sawNumPredict: unknown;
+  const mock = await mockOllama((body) => {
+    sawNumPredict = (body.options as Record<string, unknown> | undefined)?.num_predict;
+    return JSON.stringify({ clips: [] });
+  });
+  try {
+    const provider = new OllamaAnalysisProvider({ baseUrl: mock.baseUrl, model: "llama3.2" });
+    await provider.suggestClips([seg(0, 5000, "hello")], {
+      minClipMs: 5000,
+      maxClipMs: 60_000,
+      maxClips: 5,
+    });
+    assert.equal(sawNumPredict, 4096, "an explicit num_predict was sent, not the model default");
+  } finally {
+    mock.close();
+  }
+});
+
+test("OllamaAnalysisProvider: a budget-truncated reply fails once, loudly — never retried", async () => {
+  let chatCalls = 0;
+  const mock = await mockOllama(() => {
+    chatCalls++;
+    // What truncation actually looks like: a JSON fragment plus done_reason.
+    return { content: '{"clips": [{"startMs": 0, "endMs": 8', done_reason: "length" };
+  });
+  try {
+    const provider = new OllamaAnalysisProvider({ baseUrl: mock.baseUrl, model: "llama3.2" });
+    await assert.rejects(
+      provider.suggestClips([seg(0, 5000, "hello there")], {
+        minClipMs: 5000,
+        maxClipMs: 60_000,
+        maxClips: 5,
+      }),
+      /output budget|done_reason=length/,
+    );
+    assert.equal(chatCalls, 1, "a hard cap is deterministic — retrying it would be waste");
   } finally {
     mock.close();
   }
