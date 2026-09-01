@@ -26,6 +26,10 @@ files:
   # both ship as source. Nothing here is secret — `.env` is deliberately absent.
   - scripts/**
   - src/**
+  # The Remotion composite pass bundles `remotion/index.ts` at runtime, so the
+  # entry and its compositions must exist as files next to the worker's cwd.
+  # Without them every animated-caption / overlay render dies at ENOENT.
+  - remotion/**
   - package.json
   - node_modules/**
   # Trim what is only ever used to build or test, so the package is not carrying
