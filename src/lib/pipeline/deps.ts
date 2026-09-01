@@ -379,6 +379,15 @@ export interface LiveChunkRepo {
 }
 
 export interface PipelineDeps {
+  /**
+   * The owning user's Settings-tab values for a video, for the handlers that
+   * honour them (transcription quality and language pin). Optional so tests
+   * and minimal harnesses stand unchanged.
+   */
+  settingsForVideo?: (videoId: string) => Promise<{
+    transcriptionQuality: "accurate" | "fast";
+    transcriptionLanguage: string;
+  }>;
   ffmpeg: Ffmpeg;
   storage: StorageProvider;
   source: SourceCache;

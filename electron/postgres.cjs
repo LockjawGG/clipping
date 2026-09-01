@@ -135,6 +135,7 @@ class EmbeddedPostgres {
     this.started = true;
 
     if (fresh) this.createDatabase();
+    else this.applyUpgrades();
     return this.url();
   }
 
@@ -188,6 +189,28 @@ ${this.log.trim().slice(-400)}`,
     // ON_ERROR_STOP so a half-applied schema fails loudly here rather than
     // surfacing later as a missing table in the middle of an edit.
     run(psql, [...base, "-d", DB, "-v", "ON_ERROR_STOP=1", "-f", ddl]);
+  }
+
+  /**
+   * Bring an existing cluster up to the current schema.
+   *
+   * schema.sql only ever runs on a fresh cluster, so a data directory created
+   * by an older build never sees new tables. upgrades.sql is the idempotent
+   * delta — every statement in it is safe to run on every start.
+   */
+  applyUpgrades() {
+    const file = path.join(this.appRoot, "prisma", "upgrades.sql");
+    if (!fs.existsSync(file)) return;
+    try {
+      run(this.exe("psql"), [
+        "-h", "127.0.0.1", "-p", String(this.port), "-U", ROLE, "-d", DB,
+        "-v", "ON_ERROR_STOP=1", "-q", "-f", file,
+      ]);
+    } catch (e) {
+      // Startup should not die on an upgrade the app may not even need yet;
+      // the feature that wants the table will fail with a clearer message.
+      console.error("settings upgrade failed:", e?.message ?? e);
+    }
   }
 
   url() {

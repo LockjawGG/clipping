@@ -36,6 +36,12 @@ export interface TranscriptResult {
 }
 
 export interface TranscribeOptions {
+  /**
+   * Settings-tab quality choice. "fast" asks the engine to run its small
+   * sibling of the configured model; engines that have no notion of it (the
+   * cloud providers) ignore it.
+   */
+  quality?: "accurate" | "fast";
   language?: string;
   /**
    * "transcribe" (default) writes what was said. "translate" is Whisper's

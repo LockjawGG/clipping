@@ -71,6 +71,14 @@ CREATE TABLE "text_presets" (
 );
 
 -- CreateTable
+CREATE TABLE "user_settings" (
+    "userId" TEXT NOT NULL,
+    "json" TEXT NOT NULL DEFAULT '{}',
+
+    CONSTRAINT "user_settings_pkey" PRIMARY KEY ("userId")
+);
+
+-- CreateTable
 CREATE TABLE "projects" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
@@ -587,6 +595,9 @@ CREATE INDEX "jobs_videoId_kind_idx" ON "jobs"("videoId", "kind");
 
 -- AddForeignKey
 ALTER TABLE "text_presets" ADD CONSTRAINT "text_presets_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "user_settings" ADD CONSTRAINT "user_settings_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "projects" ADD CONSTRAINT "projects_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { ProviderUnavailableError, type TranscriptionProvider } from "../providers/types.ts";
+import { beamSizeFor } from "../api/settings.ts";
+import { stripLoneSurrogates } from "../text.ts";
 import type { Segment, TranscribeOptions, TranscriptResult, Word } from "../providers/types.ts";
 
 /**
@@ -109,10 +111,16 @@ export function wordsFromTokens(tokens: readonly CppToken[]): Word[] {
 /** Pure: whisper.cpp's `-ojf` JSON → TranscriptResult. Exported for tests. */
 export function parseWhisperCppJson(raw: CppJson, model: string): TranscriptResult {
   const segments: Segment[] = (raw.transcription ?? []).map((s) => {
-    const words = wordsFromTokens(s.tokens ?? []);
+    // Sanitize after assembly, not per token: a character split across two
+    // tokens joins back into a valid pair here, and only what stays unpaired
+    // is junk that would crash downstream UTF-8 encoders (Piper).
+    const words = wordsFromTokens(s.tokens ?? []).map((w) => ({
+      ...w,
+      text: stripLoneSurrogates(w.text),
+    }));
     const startMs = s.offsets?.from ?? words[0]?.startMs ?? 0;
     const endMs = Math.max(startMs, s.offsets?.to ?? words[words.length - 1]?.endMs ?? startMs);
-    const text = (s.text ?? words.map((w) => w.text).join(" ")).trim();
+    const text = stripLoneSurrogates(s.text ?? words.map((w) => w.text).join(" ")).trim();
     return { text, startMs, endMs, words };
   });
 
@@ -139,6 +147,7 @@ export class WhisperCppProvider implements TranscriptionProvider {
     const work = await fs.mkdtemp(path.join(this.opts.tempDir, "wcpp-"));
     const outBase = path.join(work, "out");
     try {
+
       const args = [
         "-m", this.opts.model,
         "-f", audioPath,
@@ -148,7 +157,8 @@ export class WhisperCppProvider implements TranscriptionProvider {
         "--suppress-nst",
         "-ojf",
         "-of", outBase,
-        "-bs", String(this.opts.beamSize ?? 5),
+        // Quality "fast" is a greedy pass over the same model - see beamSizeFor.
+        "-bs", String(beamSizeFor(options.quality ?? "accurate", this.opts.beamSize ?? 5)),
         "--no-prints",
       ];
       if (options.task === "translate") args.push("-tr");

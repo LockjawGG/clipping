@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { ProviderUnavailableError, type TranscriptionProvider } from "../providers/types.ts";
+import { beamSizeFor } from "../api/settings.ts";
 import type { TranscribeOptions, TranscriptResult } from "../providers/types.ts";
 import { parseWhisperJson } from "./whisper-local.ts";
 
@@ -52,7 +53,8 @@ export class FasterWhisperLocalProvider implements TranscriptionProvider {
     const request = {
       audio: audioPath,
       model: this.opts.model,
-      beam_size: this.opts.beamSize ?? 5,
+      // Quality "fast" is a greedy pass over the same model - see beamSizeFor.
+      beam_size: beamSizeFor(options.quality ?? "accurate", this.opts.beamSize ?? 5),
       compute_type: this.opts.computeType ?? "float32",
       language: options.language ?? null,
       task: options.task ?? "transcribe",

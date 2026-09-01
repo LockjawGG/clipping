@@ -329,3 +329,40 @@ test("parseDeepgramResponse falls back to word grouping without paragraphs", () 
   assert.equal(r.segments.length, 2);
   assert.equal(r.segments[0].text, "one two.");
 });
+
+test("lone surrogates are stripped from parsed transcripts (they crash TTS)", () => {
+  // Observed live: a Korean transcript carried an unpaired \udc9d and Piper
+  // died with "surrogates not allowed" while narrating it.
+  const dirty = "가\uDC9D나"; // 가 + lone low surrogate + 나
+  const j = parseWhisperJson(
+    {
+      language: "ko",
+      segments: [{ start: 0, end: 1, text: dirty, words: [{ word: dirty, start: 0, end: 1 }] }],
+    } as never,
+    "medium",
+  );
+  assert.equal(j.segments[0].text, "가나");
+  assert.equal(j.segments[0].words[0].text, "가나");
+
+  const c = parseWhisperCppJson(
+    {
+      result: { language: "ko" },
+      transcription: [
+        {
+          offsets: { from: 0, to: 1000 },
+          text: dirty,
+          tokens: [{ text: " " + dirty, offsets: { from: 0, to: 1000 }, p: 0.9 }],
+        },
+      ],
+    } as never,
+    "ggml-medium.bin",
+  );
+  assert.equal(c.segments[0].text, "가나");
+  assert.equal(c.segments[0].words[0].text, "가나");
+  // A surrogate PAIR (emoji) must survive.
+  const ok = parseWhisperJson(
+    { language: "en", segments: [{ start: 0, end: 1, text: "hi 😀", words: [] }] } as never,
+    "medium",
+  );
+  assert.equal(ok.segments[0].text, "hi 😀");
+});

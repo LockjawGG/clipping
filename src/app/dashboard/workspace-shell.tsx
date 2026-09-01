@@ -30,15 +30,18 @@ export function WorkspaceShell({
         </button>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)_340px]">
+      {/* grid-rows minmax(0,1fr): without it the single implicit row sizes to
+          its tallest pane, so a tall rail (Settings) stretches the whole page
+          instead of scrolling inside itself. */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_340px]">
         {/* Left rail — desktop */}
-        <aside className="hidden border-r border-border xl:block">{left}</aside>
+        <aside className="hidden min-h-0 border-r border-border xl:block">{left}</aside>
 
         {/* Center */}
         <main className="min-w-0 overflow-y-auto px-5 py-6 md:px-8">{children}</main>
 
         {/* Right rail — desktop */}
-        <aside className="hidden border-l border-border xl:block">{right}</aside>
+        <aside className="hidden min-h-0 border-l border-border xl:block">{right}</aside>
       </div>
 
       {/* Drawers */}
@@ -50,7 +53,7 @@ export function WorkspaceShell({
         />
       )}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-[85vw] max-w-[320px] border-r border-border bg-bg transition-transform xl:hidden ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-[85vw] max-w-[320px] flex-col border-r border-border bg-bg transition-transform xl:hidden ${
           open === "left" ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -60,10 +63,10 @@ export function WorkspaceShell({
             ✕
           </button>
         </div>
-        {left}
+        <div className="min-h-0 flex-1">{left}</div>
       </aside>
       <aside
-        className={`fixed inset-y-0 right-0 z-50 w-[85vw] max-w-[340px] border-l border-border bg-bg transition-transform xl:hidden ${
+        className={`fixed inset-y-0 right-0 z-50 flex w-[85vw] max-w-[340px] flex-col border-l border-border bg-bg transition-transform xl:hidden ${
           open === "right" ? "translate-x-0" : "translate-x-full"
         }`}
       >
@@ -73,7 +76,7 @@ export function WorkspaceShell({
             ✕
           </button>
         </div>
-        {right}
+        <div className="min-h-0 flex-1">{right}</div>
       </aside>
     </div>
   );

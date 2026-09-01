@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { executableExists } from "../providers/executable.ts";
+import { beamSizeFor } from "../api/settings.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os, { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
@@ -14,6 +15,7 @@ import {
   type Word,
 } from "../providers/types.ts";
 import { clamp01, meanConfidence, normalizeLanguage, secToMs } from "./normalize.ts";
+import { stripLoneSurrogates } from "../text.ts";
 
 
 /** Shape of the JSON the OpenAI `whisper` CLI writes with `--output_format json`. */
@@ -36,7 +38,9 @@ export function parseWhisperJson(raw: WhisperJson, model: string): TranscriptRes
     const words: Word[] = (s.words ?? []).map((w) => {
       const startMs = secToMs(w.start);
       return {
-        text: w.word.trim(),
+        // Whisper can leave half a UTF-16 pair behind when a character is
+        // split across tokens; downstream UTF-8 encoders (Piper) crash on it.
+        text: stripLoneSurrogates(w.word).trim(),
         startMs,
         endMs: Math.max(startMs, secToMs(w.end)),
         ...(typeof w.probability === "number" ? { confidence: clamp01(w.probability) } : {}),
@@ -47,7 +51,7 @@ export function parseWhisperJson(raw: WhisperJson, model: string): TranscriptRes
     const confidence =
       typeof s.avg_logprob === "number" ? clamp01(Math.exp(s.avg_logprob)) : undefined;
     return {
-      text: s.text.trim(),
+      text: stripLoneSurrogates(s.text).trim(),
       startMs,
       endMs: Math.max(startMs, secToMs(s.end)),
       words,
@@ -138,8 +142,9 @@ export class WhisperLocalProvider implements TranscriptionProvider {
       "False",
       "--condition_on_previous_text",
       "True",
+      // Quality "fast" is a greedy pass over the same model - see beamSizeFor.
       "--beam_size",
-      String(this.opts.beamSize ?? 5),
+      String(beamSizeFor(options.quality ?? "accurate", this.opts.beamSize ?? 5)),
     ];
     if (options.language) args.push("--language", options.language);
     if (options.task === "translate") args.push("--task", "translate");

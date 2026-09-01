@@ -1,4 +1,5 @@
 import { env } from "../env.ts";
+import { getSettings } from "./settings.ts";
 import { db } from "../db.ts";
 import { getStorage } from "../storage/index.ts";
 import { enqueueJob } from "../jobs/prisma-store.ts";
@@ -48,6 +49,7 @@ export function videoService(userId: string): VideoServiceDeps {
 /** Clip-service deps scoped to the signed-in user. */
 export function clipService(userId: string): ClipServiceDeps {
   return {
+    loadSettings: () => getSettings(db, userId),
     db: db as unknown as ClipServiceDeps["db"],
     storage: getStorage(),
     assertProjectOwned: ownsProject(userId),
@@ -94,6 +96,7 @@ export function learningService(userId: string): LearningServiceDeps {
 /** Voiceovers, scoped to the signed-in user. */
 export function voiceoverService(userId: string): VoiceoverServiceDeps {
   return {
+    loadSettings: () => getSettings(db, userId),
     db: db as unknown as VoiceoverServiceDeps["db"],
     storage: getStorage(),
     assertProjectOwned: ownsProject(userId),

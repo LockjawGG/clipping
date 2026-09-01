@@ -6,6 +6,7 @@ import { basename, dirname, join } from "node:path";
 
 import { executableExists } from "../providers/executable.ts";
 import { ProviderUnavailableError } from "../providers/types.ts";
+import { stripLoneSurrogates } from "../text.ts";
 import type { SynthesisResult, SynthesizeOptions, TtsProvider, TtsVoice } from "./types.ts";
 
 /**
@@ -113,7 +114,9 @@ export class PiperTtsProvider implements TtsProvider {
   ): Promise<SynthesisResult> {
     this.assertAvailable();
 
-    const clean = text.trim();
+    // Lone UTF-16 surrogates (seen in engine-emitted transcripts) crash the
+    // UTF-8 encode inside Piper; strip them rather than fail the narration.
+    const clean = stripLoneSurrogates(text).trim();
     if (!clean) throw new Error("nothing to synthesize");
 
     const available = await this.voices();
@@ -171,7 +174,19 @@ export class PiperTtsProvider implements TtsProvider {
 
   private run(args: string[], input: string, signal?: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.opts.binary, args, { stdio: ["pipe", "ignore", "pipe"] });
+      const child = spawn(this.opts.binary, args, {
+        stdio: ["pipe", "ignore", "pipe"],
+        env: {
+          ...process.env,
+          // The pip-installed piper is Python, and on Windows it decodes stdin
+          // with the console codepage (cp1252). Korean UTF-8 bytes then arrive
+          // as surrogate-escaped garbage and eSpeak dies re-encoding them --
+          // "surrogates not allowed" on byte 0x9D. Pin the pipe to UTF-8; the
+          // standalone C++ piper ignores both variables.
+          PYTHONUTF8: "1",
+          PYTHONIOENCODING: "utf-8",
+        },
+      });
       let stderr = "";
 
       const onAbort = () => child.kill("SIGKILL");

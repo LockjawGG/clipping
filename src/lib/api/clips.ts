@@ -240,6 +240,8 @@ export interface ClipDb {
 }
 
 export interface ClipServiceDeps {
+  /** The user's Settings-tab defaults; optional so existing callers and tests stand. */
+  loadSettings?: () => Promise<import("./settings.ts").UserSettings>;
   db: ClipDb;
   storage: StorageProvider;
   /** Throws 404 unless the project is owned by the signed-in user. */
@@ -493,6 +495,9 @@ export async function createClipFromRange(
     : null;
   const defaults = learnedDefaults(profile);
   const appliedDefaults: string[] = [];
+  // The Settings tab's starting points. The learned per-content-type profile
+  // still wins where it has an opinion — it is the more specific signal.
+  const prefs = deps.loadSettings ? await deps.loadSettings() : null;
 
   const clip = await deps.db.clip.create({
     data: {
@@ -507,18 +512,26 @@ export async function createClipFromRange(
       reason: input.reason ?? null,
       score: input.score ?? null,
       hashtags: input.hashtags ?? [],
-      ...(defaults.aspectRatio ? { aspectRatio: defaults.aspectRatio } : {}),
+      ...(prefs ? { censorAllowList: [...prefs.censorAllowList], censorDenyList: [...prefs.censorDenyList] } : {}),
+      ...(defaults.aspectRatio
+        ? { aspectRatio: defaults.aspectRatio }
+        : prefs
+          ? { aspectRatio: prefs.defaultAspectRatio }
+          : {}),
     },
   });
   if (defaults.aspectRatio) appliedDefaults.push("aspect ratio");
 
   // Captions are a separate row, created only when the profile is confident the
   // user wants them — a clip with no SubtitleConfig renders without captions.
-  if (defaults.captionsOn) {
+  if (defaults.captionsOn || (prefs && prefs.defaultCaptionPreset !== "CLASSIC")) {
     await deps.db.subtitleConfig.upsert({
       where: { clipId: clip.id },
       create: {
         clipId: clip.id,
+        ...(prefs && prefs.defaultCaptionPreset !== "CLASSIC"
+          ? { preset: prefs.defaultCaptionPreset }
+          : {}),
         ...(defaults.captionAnimation ? { animation: defaults.captionAnimation } : {}),
         ...(defaults.fontFamily ? { fontFamily: defaults.fontFamily } : {}),
         ...(defaults.fontSizePx ? { fontSizePx: defaults.fontSizePx } : {}),

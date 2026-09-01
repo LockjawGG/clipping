@@ -28,3 +28,6 @@ dist-desktop
 
 # bundled third-party binaries for the portable build (large, fetched not authored)
 vendor/
+
+# Local database backups (Settings > Backup)
+/backups/

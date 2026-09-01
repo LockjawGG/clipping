@@ -183,6 +183,9 @@ function bundledTools(bin) {
     // mishearing small made; on Korean it brought the portable build to parity
     // with the main machine's engine. ~3x slower decode, accepted knowingly.
     WHISPER_CPP_MODEL: bin("tools", "whisper", "ggml-medium.bin"),
+    // The Settings tab's backup button shells out to pg_dump; the bundled
+    // binaries are the only ones a fresh machine has.
+    PG_BIN_DIR: bin("pgsql", "bin"),
   };
   const out = {};
   for (const [k, v] of Object.entries(candidates)) {

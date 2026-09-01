@@ -32,6 +32,7 @@ model User {
   updatedAt    DateTime @updatedAt
 
   projects    Project[]
+  settings    UserSettings?
   assets      Asset[]
   textPresets TextPreset[]
   trainingExamples TrainingExample[]
@@ -58,6 +59,17 @@ model TextPreset {
 
   @@index([userId, kind])
   @@map("text_presets")
+}
+
+/// One row per user: the Settings tab. JSON rather than columns because these
+/// are preferences with defaults, not queried data — the shape lives in
+/// src/lib/api/settings.ts and unknown keys survive round-trips.
+model UserSettings {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  json   String @default("{}")
+
+  @@map("user_settings")
 }
 
 model Project {

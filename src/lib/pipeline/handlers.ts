@@ -498,8 +498,12 @@ export const transcribeHandler: JobHandler<PipelineDeps> = async ({ job, deps, s
   let lastPct = -1;
   let jobFraction = 0.2;
   let lastBeat = 0;
+  // Settings are defaults, not commands: an explicit language on the job (a
+  // translation pass names its source) still wins over the pinned one.
+  const prefs = await deps.settingsForVideo?.(job.videoId).catch(() => null);
   const result = await deps.transcription.transcribe(wav, {
-    language: payload.language,
+    language: payload.language ?? (prefs?.transcriptionLanguage || undefined),
+    quality: prefs?.transcriptionQuality,
     task: payload.task,
     ...(vocabulary.length ? { vocabulary } : {}),
     diarize: payload.diarize,

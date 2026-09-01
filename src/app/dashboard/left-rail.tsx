@@ -6,8 +6,9 @@ import { SignOutButton } from "./sign-out-button";
 import { ProjectRail, type ProjectSummary, type FavoriteClip } from "./project-rail";
 import { MediaLibrary, type AssetView } from "./media-library";
 import { TrainingRail } from "./training-rail";
+import { SettingsRail } from "./settings-rail";
 
-/** Left column: a Projects / Media / Training tab switch above the panels. */
+/** Left column: a Projects / Media / Training / Settings tab switch above the panels. */
 export function LeftRail({
   projects,
   activeProjectId,
@@ -22,7 +23,7 @@ export function LeftRail({
   /** Desktop runs as a single local user, where signing out means nothing. */
   showSignOut?: boolean;
 }) {
-  const [tab, setTab] = useState<"projects" | "media" | "training">("projects");
+  const [tab, setTab] = useState<"projects" | "media" | "training" | "settings">("projects");
 
   return (
     <div className="rail flex h-full min-h-0 flex-col px-0">
@@ -31,21 +32,31 @@ export function LeftRail({
         {showSignOut && <SignOutButton />}
       </div>
 
+      {/* Four tabs in a 280px rail: the tighter padding keeps them on one row. */}
       <div role="tablist" className="tabs mx-3 mb-1 self-start">
-        <button role="tab" aria-selected={tab === "projects"} className="tab" onClick={() => setTab("projects")}>
+        <button role="tab" aria-selected={tab === "projects"} className="tab px-2" onClick={() => setTab("projects")}>
           Projects
         </button>
-        <button role="tab" aria-selected={tab === "media"} className="tab" onClick={() => setTab("media")}>
+        <button role="tab" aria-selected={tab === "media"} className="tab px-2" onClick={() => setTab("media")}>
           Media
         </button>
         <button
           role="tab"
           aria-selected={tab === "training"}
-          className="tab"
+          className="tab px-2"
           onClick={() => setTab("training")}
           title="What the editor has learned from your finished edits"
         >
           Training
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === "settings"}
+          className="tab px-2"
+          onClick={() => setTab("settings")}
+          title="Defaults for new clips, narration, transcription, storage & backup"
+        >
+          Settings
         </button>
       </div>
 
@@ -54,6 +65,7 @@ export function LeftRail({
       )}
       {tab === "media" && <MediaLibrary assets={assets} />}
       {tab === "training" && <TrainingRail />}
+      {tab === "settings" && <SettingsRail />}
     </div>
   );
 }

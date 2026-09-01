@@ -1,3 +1,4 @@
+import { parseSettings } from "../api/settings.ts";
 import type { PrismaClient } from "@prisma/client";
 
 import { env } from "../env.ts";
@@ -269,14 +270,40 @@ export function prismaTranscriptRepo(client: PrismaClient): TranscriptRepo {
   };
 }
 
+/** The owning user's Settings-tab values for a video. */
+export function prismaSettingsForVideo(client: PrismaClient) {
+  return async (videoId: string) => {
+    const row = await client.video.findUnique({
+      where: { id: videoId },
+      select: { project: { select: { user: { select: { settings: { select: { json: true } } } } } } },
+    });
+    const s = parseSettings(row?.project.user.settings?.json);
+    return {
+      transcriptionQuality: s.transcriptionQuality,
+      transcriptionLanguage: s.transcriptionLanguage,
+    };
+  };
+}
+
 export function prismaClipRepo(client: PrismaClient): ClipRepo {
   return {
     async replaceSuggested(videoId, clips) {
+      // Suggested clips get the same Settings-tab censor starting point manual
+      // clips do — otherwise the words someone always allows would come back
+      // censored on every AI suggestion.
+      const owner = await client.video.findUnique({
+        where: { id: videoId },
+        select: { project: { select: { user: { select: { settings: { select: { json: true } } } } } } },
+      });
+      const prefs = parseSettings(owner?.project.user.settings?.json);
       return client.$transaction(async (tx) => {
         await tx.clip.deleteMany({ where: { videoId, origin: "AI_SUGGESTED" } });
         if (clips.length === 0) return 0;
         const res = await tx.clip.createMany({
           data: clips.map((c) => ({
+            censorAllowList: [...prefs.censorAllowList],
+            censorDenyList: [...prefs.censorDenyList],
+            aspectRatio: prefs.defaultAspectRatio,
             videoId,
             origin: "AI_SUGGESTED" as const,
             startMs: c.startMs,
@@ -759,6 +786,7 @@ export function buildPipelineDeps(): PipelineDeps {
     storage: getStorage(),
     source: new FsSourceCache({ storage: getStorage(), tempDir: env.TEMP_DIR }),
     transcription: getTranscription(),
+    settingsForVideo: prismaSettingsForVideo(db),
     analysis: getAnalysis(),
     videos: prismaVideoRepo(db),
     transcripts: prismaTranscriptRepo(db),
