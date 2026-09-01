@@ -12,6 +12,10 @@
  * "not instrumented" instead of a confident 0.
  */
 
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import {
   META_JSON_MAX,
   SUMMARY_MAX,
@@ -221,12 +225,67 @@ export async function emitTelemetry(db: TelemetryDb, event: TelemetryEventInput)
   try {
     const data = buildTelemetryRow(event);
     if (!data) return false;
+    // Jarvis first, so a display can show the event even when the local
+    // database write below fails; both paths are allowed to fail silently.
+    forwardToJarvis(data);
     await db.telemetryEvent.create({ data });
     return true;
   } catch (err) {
     warnOnce(err);
     return false;
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Jarvis forwarding                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Jarvis is a standalone display that lives outside this app entirely; when it
+ * is present on this machine, Clipper's events are relayed to it so they show
+ * up next to everything else. When it is not — every beta tester's machine —
+ * the key file below does not exist and this whole path is a cached no-op.
+ */
+const JARVIS_URL = process.env.JARVIS_URL ?? "http://127.0.0.1:4777";
+
+/** undefined = never looked up; null = looked up, not configured (cached for
+ *  the process lifetime — a key appearing mid-run needs a restart to notice). */
+let jarvisKey: string | null | undefined;
+
+function jarvisKeyOnce(): string | null {
+  if (jarvisKey !== undefined) return jarvisKey;
+  for (const path of [process.env.TELEMETRY_KEY_FILE, join(homedir(), "jarvis", ".telemetry-key")]) {
+    if (!path) continue;
+    try {
+      const key = readFileSync(path, "utf8").trim();
+      if (key) return (jarvisKey = key);
+    } catch {
+      // Missing file — try the next candidate.
+    }
+  }
+  return (jarvisKey = null);
+}
+
+/** Fire-and-forget: a dead or absent Jarvis must never slow the app down. */
+function forwardToJarvis(row: Record<string, unknown>): void {
+  const key = jarvisKeyOnce();
+  if (!key) return;
+  const payload: Record<string, unknown> = { ...row };
+  if (row.ts instanceof Date) payload.ts = row.ts.toISOString();
+  if (typeof row.metaJson === "string") {
+    delete payload.metaJson;
+    try {
+      payload.meta = JSON.parse(row.metaJson);
+    } catch {
+      // Unparseable meta just stays off the relay.
+    }
+  }
+  fetch(`${JARVIS_URL}/api/ingest`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-telemetry-key": key },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(1500),
+  }).catch(() => {});
 }
 
 /** Test seam: forget that we recently warned, so warning behaviour is testable. */
