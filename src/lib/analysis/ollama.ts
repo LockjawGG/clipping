@@ -6,6 +6,8 @@ import {
   type Segment,
 } from "../providers/types.ts";
 import { ollamaChat, ollamaStatus, pickModel, type OllamaOptions } from "../llm/ollama.ts";
+import { estimateTokensAvoided } from "../telemetry/emit.ts";
+import type { TelemetryEventInput } from "../telemetry/types.ts";
 import { ANALYSIS_SYSTEM_PROMPT, buildUserPrompt, parseClipArray } from "./prompt.ts";
 
 /**
@@ -19,6 +21,17 @@ import { ANALYSIS_SYSTEM_PROMPT, buildUserPrompt, parseClipArray } from "./promp
 export interface OllamaAnalysisOptions extends OllamaOptions {
   /** Preferred model; any installed model is used when this one is absent. */
   model?: string;
+  /**
+   * Called once per completed model call with a ready-made telemetry event.
+   *
+   * A callback rather than a database handle on purpose: this provider is
+   * constructed in tests and in the worker alike, and giving it Prisma would
+   * drag a connection pool into both. The factory in ./index.ts is the one
+   * place that knows about `db` and wires this through to `emitTelemetry`;
+   * everywhere else the provider stays exactly as measurable as before, which
+   * is to say silent.
+   */
+  onTelemetry?: (event: TelemetryEventInput) => void;
 }
 
 export class OllamaAnalysisProvider implements AnalysisProvider {
@@ -48,7 +61,7 @@ export class OllamaAnalysisProvider implements AnalysisProvider {
       );
     }
 
-    const raw = await ollamaChat({
+    const call = await ollamaChat({
       baseUrl: this.opts.baseUrl,
       model,
       system:
@@ -61,6 +74,33 @@ export class OllamaAnalysisProvider implements AnalysisProvider {
       signal: options.signal,
     });
 
+    // Reported before parsing: the call happened and cost what it cost even if
+    // the model then hands back unusable JSON, and a page that only showed
+    // successful turns would understate what the machine actually did.
+    this.opts.onTelemetry?.({
+      source: "clipper",
+      eventType: "llm.request.completed",
+      actor: `ollama:${model}`,
+      summary: "clip suggestions",
+      model,
+      inputTokens: call.inputTokens,
+      outputTokens: call.outputTokens,
+      latencyMs: call.latencyMs,
+      // Overhead 0: this ran entirely on the user's machine, so none of it
+      // passed through a top-tier model to begin with. Left undefined when
+      // the server reported no counts — an unknown saving, not a zero one.
+      estimatedTokensAvoided:
+        call.inputTokens === undefined && call.outputTokens === undefined
+          ? undefined
+          : estimateTokensAvoided({
+              workerInput: call.inputTokens,
+              workerOutput: call.outputTokens,
+              orchestratorOverhead: 0,
+            }),
+      meta: { segments: segments.length },
+    });
+
+    const raw = call.content;
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);

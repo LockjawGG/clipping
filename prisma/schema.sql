@@ -482,6 +482,27 @@ CREATE TABLE "jobs" (
     CONSTRAINT "jobs_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "telemetry_events" (
+    "id" TEXT NOT NULL,
+    "ts" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "source" TEXT NOT NULL,
+    "eventType" TEXT NOT NULL,
+    "actor" TEXT NOT NULL,
+    "targetActor" TEXT,
+    "taskId" TEXT,
+    "summary" TEXT NOT NULL,
+    "status" TEXT,
+    "inputTokens" INTEGER,
+    "outputTokens" INTEGER,
+    "estimatedTokensAvoided" INTEGER,
+    "latencyMs" INTEGER,
+    "model" TEXT,
+    "metaJson" TEXT,
+
+    CONSTRAINT "telemetry_events_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 
@@ -592,6 +613,18 @@ CREATE INDEX "jobs_status_runAfter_idx" ON "jobs"("status", "runAfter");
 
 -- CreateIndex
 CREATE INDEX "jobs_videoId_kind_idx" ON "jobs"("videoId", "kind");
+
+-- CreateIndex
+CREATE INDEX "telemetry_events_ts_idx" ON "telemetry_events"("ts");
+
+-- CreateIndex
+CREATE INDEX "telemetry_events_eventType_idx" ON "telemetry_events"("eventType");
+
+-- CreateIndex
+CREATE INDEX "telemetry_events_actor_idx" ON "telemetry_events"("actor");
+
+-- CreateIndex
+CREATE INDEX "telemetry_events_taskId_idx" ON "telemetry_events"("taskId");
 
 -- AddForeignKey
 ALTER TABLE "text_presets" ADD CONSTRAINT "text_presets_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;

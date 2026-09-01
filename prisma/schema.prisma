@@ -857,3 +857,47 @@ model Job {
   @@index([videoId, kind])
   @@map("jobs")
 }
+
+/// One recorded moment of AI activity, for the Agent Brain page.
+///
+/// Append-only and deliberately denormalised: rows arrive from three different
+/// producers (the Next server, the ingest worker process, and an out-of-process
+/// relay posting to /api/telemetry/ingest) and are only ever read back as a
+/// time-ordered tail, so there is nothing to join to and no row to update.
+///
+/// Every nullable column means "never measured" rather than "measured as zero"
+/// — the page renders those as "not instrumented", so writing a placeholder 0
+/// here would be a lie the UI could not detect.
+model TelemetryEvent {
+  id String   @id @default(cuid())
+  ts DateTime @default(now())
+  /// "clipper" (emitted in-process) | "session" (relayed in over ingest).
+  source String
+  /// See TELEMETRY_EVENT_TYPES in src/lib/telemetry/types.ts.
+  eventType String
+  /// Who acted: "ollama:llama3.2", "job:TRANSCRIBE", "opus", "sonnet", …
+  actor String
+  /// Who the work was handed to; set only on delegation events.
+  targetActor String?
+  /// Correlates a start with its finish — a Job id, a session task id.
+  taskId String?
+  /// One short human line, already run through sanitizeSummary.
+  summary String
+  status  String?
+
+  inputTokens  Int?
+  outputTokens Int?
+  /// ESTIMATED top-tier tokens avoided by delegating; see estimateTokensAvoided.
+  estimatedTokensAvoided Int?
+  latencyMs              Int?
+  model                  String?
+  /// Small flat JSON bag of extras. Kept tiny on purpose — this table is
+  /// polled once a second.
+  metaJson String?
+
+  @@index([ts])
+  @@index([eventType])
+  @@index([actor])
+  @@index([taskId])
+  @@map("telemetry_events")
+}

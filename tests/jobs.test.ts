@@ -397,3 +397,96 @@ test("onJobFailed fires once when a job runs out of retries, not on the interim 
   assert.equal(store.rows.get("j1")!.status, "FAILED");
   assert.deepEqual(failed, [{ id: "j1", message: "kaput" }]);
 });
+
+// --- onJobEvent: what the Agent Brain page is fed -------------------
+
+test("onJobEvent announces a start and a completion, with the handler's own latency", async () => {
+  const store = new MemoryStore();
+  store.add({ id: "j1", kind: "PROBE" });
+  const seen: Array<{ phase: string; status: string; latencyMs?: number }> = [];
+
+  // Injected clock: the reported latency must be the measured one, not a
+  // wall-clock reading that happens to be near zero in a fast test.
+  let t = 1_000;
+  const worker = new JobWorker({
+    store,
+    deps,
+    now: () => t,
+    handlers: {
+      PROBE: async () => {
+        t += 250;
+      },
+    },
+    onJobEvent: (e) => seen.push({ phase: e.phase, status: e.status, latencyMs: e.latencyMs }),
+  });
+
+  await worker.runOnce();
+  assert.deepEqual(seen, [
+    { phase: "started", status: "running", latencyMs: undefined },
+    { phase: "completed", status: "ok", latencyMs: 250 },
+  ]);
+});
+
+test("onJobEvent separates a retry from a job that is out of attempts", async () => {
+  const store = new MemoryStore();
+  store.add({ id: "j1", kind: "RENDER", maxAttempts: 2 });
+  const statuses: string[] = [];
+
+  const worker = new JobWorker({
+    store,
+    deps,
+    handlers: {
+      RENDER: async () => {
+        throw new Error("kaput");
+      },
+    },
+    backoff: { baseMs: 0, jitter: 0 },
+    onJobEvent: (e) => statuses.push(`${e.phase}:${e.status}`),
+  });
+
+  await worker.runOnce();
+  store.rows.get("j1")!.runAfter = new Date(0);
+  await worker.runOnce();
+
+  assert.deepEqual(statuses, [
+    "started:running",
+    "failed:retrying",
+    "started:running",
+    "failed:failed",
+  ]);
+});
+
+test("onJobEvent reports a missing handler without ever claiming the job started", async () => {
+  const store = new MemoryStore();
+  store.add({ id: "j1", kind: "VOICEOVER" });
+  const seen: string[] = [];
+  const worker = new JobWorker({
+    store,
+    deps,
+    handlers: {},
+    onJobEvent: (e) => seen.push(e.phase),
+  });
+
+  await worker.runOnce();
+  assert.deepEqual(seen, ["failed"]);
+});
+
+test("an observer that throws is reported, not allowed to fail the job", async () => {
+  const store = new MemoryStore();
+  store.add({ id: "j1", kind: "PROBE" });
+  const errors: unknown[] = [];
+
+  const worker = new JobWorker({
+    store,
+    deps,
+    handlers: { PROBE: async () => ({ ok: true }) },
+    onError: (_job, err) => errors.push(err),
+    onJobEvent: () => {
+      throw new Error("observer exploded");
+    },
+  });
+
+  await worker.runOnce();
+  assert.equal(store.rows.get("j1")!.status, "COMPLETED");
+  assert.equal(errors.length, 2);
+});

@@ -106,6 +106,18 @@ const schema = z.object({
   // "anthropic", a GPT id for "openai", ignored by "heuristic".
   ANALYSIS_MODEL: z.string().default("claude-opus-5"),
 
+  /**
+   * Path to a file holding the shared secret for POST /api/telemetry/ingest.
+   *
+   * Unset — the default — means ingest is off and the route answers 501. That
+   * is deliberate: the endpoint exists so an out-of-process orchestrator can
+   * relay what its agents are doing onto the Agent Brain page, and a
+   * write endpoint is not something an app should carry switched on by
+   * default. A file rather than the value itself, so the secret never lands in
+   * a process listing or a shell history.
+   */
+  TELEMETRY_KEY_FILE: z.string().optional(),
+
   FFMPEG_PATH: z.string().default("ffmpeg"),
   FFPROBE_PATH: z.string().default("ffprobe"),
   YTDLP_PATH: z.string().default("yt-dlp"),

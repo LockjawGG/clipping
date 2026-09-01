@@ -1,6 +1,26 @@
 import { type BackoffConfig, nextRunAfter } from "./backoff.ts";
 import type { JobContext, JobHandlerMap, JobRecord, JobStore } from "./types.ts";
 
+/**
+ * What the worker saw happen to one job, announced for anything that wants to
+ * record it.
+ *
+ * A plain value with no persistence in it on purpose: this engine has no
+ * `@prisma/client` import (see the note in types.ts) and must stay loadable by
+ * the strip-only test runner, so *writing* telemetry lives at the wiring site
+ * in pipeline/worker-entry.ts and this file only announces.
+ */
+export interface JobLifecycleEvent {
+  phase: "started" | "completed" | "failed";
+  job: JobRecord;
+  /** How long the handler ran, measured here. Absent on "started". */
+  latencyMs?: number;
+  /** "running" | "ok" | "failed" | "retrying" | "cancelled". */
+  status: string;
+  /** Failure detail, when there is one. */
+  message?: string;
+}
+
 export interface WorkerConfig<Deps> {
   store: JobStore;
   /** Passed to every handler via `ctx.deps`. */
@@ -26,6 +46,16 @@ export interface WorkerConfig<Deps> {
    * it stops showing as "processing" forever.
    */
   onJobFailed?: (job: JobRecord, message: string) => void | Promise<void>;
+  /**
+   * Called as a job starts and again as it ends. Purely observational: it is
+   * invoked synchronously, its return value is ignored, and anything it throws
+   * is routed to `onError` rather than failing the job being watched.
+   *
+   * Nothing is announced when a job is handed back during shutdown: it neither
+   * finished nor failed, and a consumer that sees only "started" is telling the
+   * truth about what was observed.
+   */
+  onJobEvent?: (event: JobLifecycleEvent) => void;
 }
 
 const sleep = (ms: number, signal?: AbortSignal) =>
@@ -51,9 +81,9 @@ const sleep = (ms: number, signal?: AbortSignal) =>
  */
 export class JobWorker<Deps> {
   private readonly cfg: Required<
-    Omit<WorkerConfig<Deps>, "backoff" | "onError" | "cleanup" | "onJobFailed">
+    Omit<WorkerConfig<Deps>, "backoff" | "onError" | "cleanup" | "onJobFailed" | "onJobEvent">
   > &
-    Pick<WorkerConfig<Deps>, "backoff" | "onError" | "cleanup" | "onJobFailed">;
+    Pick<WorkerConfig<Deps>, "backoff" | "onError" | "cleanup" | "onJobFailed" | "onJobEvent">;
   private controller = new AbortController();
   private running = false;
   private loopDone: Promise<void> = Promise.resolve();
@@ -73,6 +103,7 @@ export class JobWorker<Deps> {
       onError: config.onError,
       cleanup: config.cleanup,
       onJobFailed: config.onJobFailed,
+      onJobEvent: config.onJobEvent,
     };
   }
 
@@ -106,12 +137,23 @@ export class JobWorker<Deps> {
     return claimed.length;
   }
 
+  /** Tell the observer, and never let it break the job it is observing. */
+  private announce(event: JobLifecycleEvent): void {
+    try {
+      this.cfg.onJobEvent?.(event);
+    } catch (err) {
+      this.cfg.onError?.(event.job, err);
+    }
+  }
+
   private async process(job: JobRecord): Promise<void> {
     const { store, handlers, deps, backoff, onError, cleanup } = this.cfg;
     const handler = handlers[job.kind];
 
     if (!handler) {
-      await store.fail(job.id, `no handler registered for job kind ${job.kind}`);
+      const message = `no handler registered for job kind ${job.kind}`;
+      await store.fail(job.id, message);
+      this.announce({ phase: "failed", job, status: "failed", message });
       await cleanup?.(job).catch(() => {});
       return;
     }
@@ -146,14 +188,31 @@ export class JobWorker<Deps> {
       setProgress: (fraction) => store.setProgress(job.id, Math.max(0, Math.min(1, fraction))),
     };
 
+    // Handler wall-clock, from this worker's own clock seam, so a test can
+    // drive it deterministically and the reported latency is the real one.
+    const startedAt = this.cfg.now();
+    const ranFor = () => this.cfg.now() - startedAt;
+    this.announce({ phase: "started", job, status: "running" });
+
     try {
       const result = await handler(ctx);
-      if (cancelled) return; // user cancelled — leave the row CANCELLED
+      if (cancelled) {
+        // User cancelled — leave the row CANCELLED. Reported as an ending, not
+        // a success: the work did not produce what it was asked for.
+        this.announce({ phase: "failed", job, status: "cancelled", latencyMs: ranFor() });
+        return;
+      }
       await store.complete(job.id, result ?? {});
+      this.announce({ phase: "completed", job, status: "ok", latencyMs: ranFor() });
     } catch (err) {
-      if (cancelled) return; // cancelled: swallow the abort error, keep it CANCELLED
+      if (cancelled) {
+        // cancelled: swallow the abort error, keep it CANCELLED
+        this.announce({ phase: "failed", job, status: "cancelled", latencyMs: ranFor() });
+        return;
+      }
       if (this.controller.signal.aborted) {
-        // Shutting down — hand the job straight back, no attempt spent.
+        // Shutting down — hand the job straight back, no attempt spent, and
+        // announce nothing: it neither finished nor failed.
         await store.retry(job.id, new Date(this.cfg.now()));
         return;
       }
@@ -162,8 +221,12 @@ export class JobWorker<Deps> {
       if (job.attempts >= job.maxAttempts) {
         await store.fail(job.id, message);
         await this.cfg.onJobFailed?.(job, message);
+        this.announce({ phase: "failed", job, status: "failed", message, latencyMs: ranFor() });
       } else {
         await store.retry(job.id, nextRunAfter(job.attempts, backoff));
+        // Distinct status: an attempt that will be tried again is not the same
+        // news as a job that is out of retries.
+        this.announce({ phase: "failed", job, status: "retrying", message, latencyMs: ranFor() });
       }
     } finally {
       clearInterval(beat);
