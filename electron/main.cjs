@@ -200,6 +200,15 @@ function bundledTools(bin) {
   if (out.WHISPER_CPP_BINARY && out.WHISPER_CPP_MODEL) {
     out.TRANSCRIPTION_PROVIDER = "whisper-cpp";
   }
+  // GPU acceleration pack: a CUDA build of the same whisper-cli dropped into
+  // the data directory takes over transcription (~8x on long videos, output
+  // verified 99%+ identical - fp16 vs fp32 noise only). Machines without the
+  // pack, or without the GPU it needs, keep the bundled CPU build untouched.
+  const gpuWhisper = path.join(dataRoot(), "gpu-whisper", "whisper-cli.exe");
+  if (out.TRANSCRIPTION_PROVIDER === "whisper-cpp" && fs.existsSync(gpuWhisper)) {
+    out.WHISPER_CPP_BINARY = gpuWhisper;
+    logStartup(`transcription: using GPU acceleration pack at ${gpuWhisper}`);
+  }
   // A voice *id*, not a path — it cannot go through the exists() filter above,
   // which would silently drop it. Set it only when the file it names shipped.
   if (fs.existsSync(bin("voices", "en_US-lessac-high.onnx"))) {
