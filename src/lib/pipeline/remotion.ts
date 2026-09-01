@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rm } from "node:fs/promises";
+import { copyFile, lstat, mkdir, rm, symlink } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -46,10 +46,61 @@ export interface RemotionRendererOptions {
   concurrency?: number;
 }
 
+/**
+ * Remotion downloads chrome-headless-shell (~270 MB) into
+ * `<cwd>/node_modules/.remotion` — a location that is temporary in the
+ * portable build (fresh extraction dir every launch) and dropped from the
+ * package by electron-builder either way. Junctioning that path to a
+ * persistent per-user directory makes the download happen once ever, in both
+ * the dir and portable builds. Windows junctions need no elevation. Where
+ * `%APPDATA%` is not set (non-Windows dev, CI), Remotion's default location
+ * is left alone.
+ */
+const browserCacheDir = () => resolve(process.cwd(), "node_modules", ".remotion");
+const persistentBrowserDir = () =>
+  process.env.APPDATA ? join(process.env.APPDATA, "clipping", "remotion-browser") : null;
+
 export class RemotionCaptionRenderer implements CaptionRenderer {
   private readonly entryPoint: string;
   private readonly concurrency: number | undefined;
   private serveUrl: Promise<string> | undefined;
+  private browserReady: Promise<void> | undefined;
+
+  /**
+   * Point Remotion's browser cache at the persistent directory, then make
+   * sure the browser is actually there — downloading it if the machine is
+   * online, and failing with an error that names the requirement if not.
+   */
+  private async ensureBrowser(): Promise<void> {
+    const persistent = persistentBrowserDir();
+    if (persistent) {
+      // Creating the target first also heals a dangling junction left behind
+      // by a cleared %APPDATA%.
+      await mkdir(persistent, { recursive: true });
+      const cache = browserCacheDir();
+      const existing = await lstat(cache).catch(() => null);
+      if (!existing) {
+        // A dev machine with a real `.remotion` directory keeps it; only a
+        // missing path gets the junction. A race with a concurrent create is
+        // benign either way.
+        await symlink(persistent, cache, "junction").catch((err: NodeJS.ErrnoException) => {
+          if (err?.code !== "EEXIST") throw err;
+        });
+      }
+    }
+    const { ensureBrowser } = await import("@remotion/renderer");
+    try {
+      await ensureBrowser();
+    } catch (err) {
+      throw new Error(
+        `Remotion's headless browser is missing and could not be downloaded ` +
+          `(~270 MB, requires an internet connection on first render). ` +
+          `Retry once online, or place chrome-headless-shell under ` +
+          `${persistent ?? browserCacheDir()}. ` +
+          `Cause: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   constructor(opts: RemotionRendererOptions = {}) {
     this.entryPoint = opts.entryPoint ?? resolve(process.cwd(), "remotion", "index.ts");
@@ -76,6 +127,16 @@ export class RemotionCaptionRenderer implements CaptionRenderer {
 
   async renderCaptioned(input: CaptionRenderInput): Promise<void> {
     const { renderMedia, selectComposition } = await import("@remotion/renderer");
+    // Cached on success only: a failed download (offline machine) must be
+    // retryable once the machine is back online, not poisoned for the life
+    // of the worker process.
+    if (!this.browserReady) this.browserReady = this.ensureBrowser();
+    try {
+      await this.browserReady;
+    } catch (err) {
+      this.browserReady = undefined;
+      throw err;
+    }
     const serveUrl = await this.bundleOnce();
 
     // Stage overlay images inside the served bundle. Names are unique so
