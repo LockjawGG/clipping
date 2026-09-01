@@ -387,6 +387,8 @@ export interface PipelineDeps {
   settingsForVideo?: (videoId: string) => Promise<{
     transcriptionQuality: "accurate" | "fast";
     transcriptionLanguage: string;
+    /** The owner's "how I edit" instructions, injected into AI prompts. */
+    styleInstructions: string;
   }>;
   ffmpeg: Ffmpeg;
   storage: StorageProvider;

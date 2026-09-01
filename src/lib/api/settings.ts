@@ -39,6 +39,17 @@ const settingsSchema = z.object({
   /** Most videos one pasted playlist link may import. */
   playlistMax: z.number().int().min(1).max(500).catch(100),
 
+  /**
+   * "How I edit", in the user's own words — the yap-style instruction set.
+   * Injected into every AI prompt (clip suggestions and the assistant), so
+   * the model edits the way this user edits, not the way the average of the
+   * internet edits. Empty means no extra steering.
+   */
+  styleInstructions: z.string().max(4000).catch(""),
+
+  /** Preferred local assistant model; "" = whatever Ollama has installed. */
+  assistantModel: z.string().max(120).catch(""),
+
   /** Caption template new clips start from. */
   defaultCaptionPreset: z.enum(CAPTION_PRESET_IDS).catch("CLASSIC"),
 

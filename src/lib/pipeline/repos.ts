@@ -281,6 +281,7 @@ export function prismaSettingsForVideo(client: PrismaClient) {
     return {
       transcriptionQuality: s.transcriptionQuality,
       transcriptionLanguage: s.transcriptionLanguage,
+      styleInstructions: s.styleInstructions,
     };
   };
 }

@@ -27,6 +27,8 @@ type Settings = {
   playlistMax: number;
   defaultCaptionPreset: string;
   defaultAspectRatio: string;
+  styleInstructions: string;
+  assistantModel: string;
   /** Server-computed, read-only: does "fast" use the compact model here? */
   fastUsesSmallModel?: boolean;
 };
@@ -130,6 +132,7 @@ export function SettingsRail() {
   const [error, setError] = useState<string | null>(null);
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [assistant, setAssistant] = useState<{ available: boolean; models: string[] } | null>(null);
   const [storage, setStorage] = useState<{ totalBytes: number; orphanBytes: number; orphanCount: number } | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
@@ -139,6 +142,7 @@ export function SettingsRail() {
     void fetch("/api/settings").then((r) => (r.ok ? r.json() : null)).then(setS).catch(() => setError("could not load settings"));
     void fetch("/api/tts/voices").then((r) => (r.ok ? r.json() : null)).then((b) => setVoices(b?.voices ?? [])).catch(() => {});
     void fetch("/api/settings/storage").then((r) => (r.ok ? r.json() : null)).then(setStorage).catch(() => {});
+    void fetch("/api/assistant/status").then((r) => (r.ok ? r.json() : null)).then((b) => setAssistant(b ?? { available: false, models: [] })).catch(() => setAssistant({ available: false, models: [] }));
   }, []);
 
   // Saves are serialized: two quick changes are two PUTs, and firing them
@@ -298,6 +302,33 @@ export function SettingsRail() {
             ))}
           </select>
         </label>
+      </Section>
+
+      <Section title="Assistant" hint="A local model that plans edits with you - runs on this computer, fully private.">
+        {assistant === null ? (
+          <p className="text-xs text-muted">Checking for a local model…</p>
+        ) : assistant.available ? (
+          <>
+            <label className="flex items-center gap-2 text-xs">
+              Model
+              <select value={s.assistantModel} onChange={(e) => save({ assistantModel: e.target.value })}
+                className="field py-0.5 text-xs">
+                <option value="">Automatic</option>
+                {assistant.models.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </label>
+            <p className="text-xs text-muted">
+              Powers the Assistant panel in the editor and smarter clip suggestions.
+            </p>
+          </>
+        ) : (
+          <p className="text-xs text-muted">
+            Not set up yet. Install Ollama from ollama.com and pull a model - the Assistant panel
+            and smarter clip suggestions switch on by themselves.
+          </p>
+        )}
       </Section>
 
       <Section title="Importing">

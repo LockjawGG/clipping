@@ -87,8 +87,12 @@ const schema = z.object({
   DEEPGRAM_API_KEY: z.string().optional(),
 
   ANALYSIS_PROVIDER: z
-    .enum(["anthropic", "openai", "heuristic"])
+    .enum(["anthropic", "openai", "heuristic", "ollama"])
     .default("heuristic"),
+  /** Local LLM (Ollama) server origin; the assistant and "ollama" analysis use it. */
+  OLLAMA_BASE_URL: z.string().default("http://127.0.0.1:11434"),
+  /** Preferred local model; any installed model is used when this is absent. */
+  OLLAMA_MODEL: z.string().default("llama3.2"),
   ANTHROPIC_API_KEY: z.string().optional(),
   // Interpreted by whichever ANALYSIS_PROVIDER is active — a Claude id for
   // "anthropic", a GPT id for "openai", ignored by "heuristic".

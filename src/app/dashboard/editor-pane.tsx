@@ -1,6 +1,7 @@
 import { ClipEditor, type ClipData } from "./[videoId]/clip-editor";
 import { ClipComposer } from "./[videoId]/clip-composer";
 import { WorkerPanel } from "./[videoId]/worker-panel";
+import { AssistantPanel } from "./[videoId]/assistant-panel";
 import type { TranscriptRow, WordStyle } from "./[videoId]/editable-transcript";
 import type { PreviewWord } from "./[videoId]/clip-player";
 import type { OverlayView } from "./[videoId]/overlay-panel";
@@ -73,6 +74,8 @@ export function EditorPane({
           </span>
         ) : null}
       </header>
+
+      <AssistantPanel videoId={video.id} />
 
       <section className="flex flex-col gap-4">
         <div className="flex items-baseline justify-between">

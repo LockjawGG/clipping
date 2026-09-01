@@ -566,11 +566,16 @@ export const analyzeHandler: JobHandler<PipelineDeps> = async ({ job, deps, sign
   }
 
   const p = (job.payload ?? {}) as AnalyzePayload;
+  // The owner's "how I edit" instructions ride along as style guidance, so a
+  // model-backed provider edits the way this user edits. The heuristic scorer
+  // ignores style, which is fine: it has no opinions to steer.
+  const ownerPrefs = await deps.settingsForVideo?.(job.videoId).catch(() => null);
+  const style = [p.style, ownerPrefs?.styleInstructions].filter(Boolean).join("\n\n") || undefined;
   const options = {
     minClipMs: p.minClipMs ?? DEFAULT_SNAP_CONFIG.minClipMs,
     maxClipMs: p.maxClipMs ?? DEFAULT_SNAP_CONFIG.maxClipMs,
     maxClips: p.maxClips ?? 10,
-    style: p.style,
+    style,
     signal,
   };
 

@@ -144,6 +144,9 @@ function portableEnv(databaseUrl) {
     // One machine, one person, loopback only: a sign-in screen guards nothing
     // here and is pure friction. See the flag's note in env.ts.
     DESKTOP_SINGLE_USER: "1",
+    // Suggestions try a local Ollama model and fall back to the heuristic
+    // scorer per call, so installing Ollama upgrades the app in place.
+    ANALYSIS_PROVIDER: "ollama",
     ...bundledTools(bin),
   };
 }

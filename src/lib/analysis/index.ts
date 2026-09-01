@@ -3,6 +3,7 @@ import { env } from "../env.ts";
 import { HeuristicAnalysisProvider } from "./heuristic.ts";
 import { AnthropicAnalysisProvider } from "./anthropic.ts";
 import { OpenAiAnalysisProvider } from "./openai.ts";
+import { OllamaAnalysisProvider, OllamaWithFallbackProvider } from "./ollama.ts";
 
 export { HeuristicAnalysisProvider } from "./heuristic.ts";
 export { AnthropicAnalysisProvider } from "./anthropic.ts";
@@ -37,6 +38,15 @@ function build(): AnalysisProvider {
         apiKey: env.OPENAI_API_KEY,
         model: env.ANALYSIS_MODEL,
       });
+
+    case "ollama":
+      // Local model when its server is up, the no-LLM baseline when not: the
+      // desktop build ships with this so installing Ollama upgrades the
+      // suggestions in place and uninstalling it never breaks anything.
+      return new OllamaWithFallbackProvider(
+        new OllamaAnalysisProvider({ baseUrl: env.OLLAMA_BASE_URL, model: env.OLLAMA_MODEL }),
+        new HeuristicAnalysisProvider(),
+      );
 
     case "heuristic":
     default:

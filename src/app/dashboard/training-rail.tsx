@@ -50,6 +50,8 @@ export const TrainingRail = memo(function TrainingRail() {
   const [repo, setRepo] = useState<Repository | null>(null);
   const [busy, setBusy] = useState<"retrain" | "clear" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [style, setStyle] = useState<string | null>(null);
+  const [styleSaved, setStyleSaved] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -62,7 +64,27 @@ export const TrainingRail = memo(function TrainingRail() {
 
   useEffect(() => {
     void load();
+    void fetch("/api/settings")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => setStyle(s?.styleInstructions ?? ""))
+      .catch(() => setStyle(""));
   }, [load]);
+
+  /** Saved on blur: instructions are written in thought, not per keystroke. */
+  const saveStyle = async (text: string) => {
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ styleInstructions: text }),
+      });
+      if (!res.ok) throw new Error();
+      setStyleSaved(true);
+      setTimeout(() => setStyleSaved(false), 1600);
+    } catch {
+      setError("style rules didn't save - try again");
+    }
+  };
 
   const call = async (kind: "retrain" | "clear", req: () => Promise<Response>) => {
     setBusy(kind);
@@ -97,6 +119,36 @@ export const TrainingRail = memo(function TrainingRail() {
   return (
     <div className="flex flex-col gap-1">
       <div className="rail-heading">🧠 AI Training</div>
+
+      {/* The yap-style instruction set: rules the AI follows, in the user's
+          own words. Sits above the learned stats because it is the half the
+          user writes rather than the half the app infers. */}
+      {style !== null && (
+        <div className="flex flex-col gap-1 px-2.5 pb-3">
+          <div className="flex items-baseline justify-between">
+            <span className="text-xs font-medium">How I edit</span>
+            <span className={`text-xs text-accent transition-opacity ${styleSaved ? "opacity-100" : "opacity-0"}`}>
+              Saved ✓
+            </span>
+          </div>
+          <textarea
+            defaultValue={style}
+            onBlur={(e) => void saveStyle(e.target.value.slice(0, 4000))}
+            rows={5}
+            placeholder={[
+              "Your editing rules, in plain words. e.g.",
+              "- clips 20-40s, always end on a punchline",
+              "- bold captions, censor all profanity",
+              "- cut every pause longer than 2s",
+            ].join("\n")}
+            className="field resize-y text-xs leading-relaxed"
+          />
+          <p className="text-xs leading-relaxed text-muted">
+            The AI follows these rules when it suggests clips and when you talk to the assistant -
+            like handing your editor a style guide.
+          </p>
+        </div>
+      )}
 
       {total === 0 ? (
         <p className="px-2.5 pb-2 text-xs leading-relaxed text-muted">
