@@ -55,16 +55,41 @@ export interface OllamaChatRequest {
 }
 
 /**
+ * A completed chat call: the reply, plus what the call cost.
+ *
+ * The token counts are Ollama's own — `prompt_eval_count` and `eval_count` from
+ * the non-streamed response — so they are exact rather than estimated, and both
+ * are optional because an older server can omit either. Absent means "not
+ * reported", never zero: the Agent Brain page draws that distinction and would
+ * otherwise show a confident 0 for a call nobody counted.
+ */
+export interface OllamaChatResult {
+  content: string;
+  /** Prompt tokens, as counted by Ollama. */
+  inputTokens?: number;
+  /** Generated tokens, as counted by Ollama. */
+  outputTokens?: number;
+  /** Wall-clock duration of the whole call, measured here. */
+  latencyMs: number;
+}
+
+/** A count only counts if it is one; anything else is "not reported". */
+function countOf(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/**
  * One chat completion, non-streaming.
  *
  * Streaming is a UI nicety the first version does without: a reply that
  * arrives whole is far easier to validate, and edit proposals must be
  * validated before anyone sees an Approve button.
  */
-export async function ollamaChat(req: OllamaChatRequest): Promise<string> {
+export async function ollamaChat(req: OllamaChatRequest): Promise<OllamaChatResult> {
   const base = req.baseUrl ?? OLLAMA_DEFAULT_URL;
   const signals = [AbortSignal.timeout(req.timeoutMs ?? 120_000)];
   if (req.signal) signals.push(req.signal);
+  const startedAt = Date.now();
   const res = await fetch(`${base}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -80,8 +105,17 @@ export async function ollamaChat(req: OllamaChatRequest): Promise<string> {
     const detail = await res.text().catch(() => "");
     throw new Error(`ollama /api/chat ${res.status}: ${detail.slice(0, 300)}`);
   }
-  const body = (await res.json()) as { message?: { content?: string } };
-  return body.message?.content ?? "";
+  const body = (await res.json()) as {
+    message?: { content?: string };
+    prompt_eval_count?: number;
+    eval_count?: number;
+  };
+  return {
+    content: body.message?.content ?? "",
+    inputTokens: countOf(body.prompt_eval_count),
+    outputTokens: countOf(body.eval_count),
+    latencyMs: Date.now() - startedAt,
+  };
 }
 
 /**

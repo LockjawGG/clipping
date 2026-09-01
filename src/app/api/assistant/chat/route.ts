@@ -12,6 +12,8 @@ import {
 import { db } from "@/lib/db.ts";
 import { env } from "@/lib/env.ts";
 import { requireUserId } from "@/lib/auth/session.ts";
+import { emitTelemetry, estimateTokensAvoided } from "@/lib/telemetry/emit.ts";
+import type { TelemetryDb } from "@/lib/telemetry/types.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,7 +89,7 @@ export const POST = route(async (req: Request) => {
     styleInstructions: prefs.styleInstructions,
   });
 
-  const raw = await ollamaChat({
+  const call = await ollamaChat({
     baseUrl: env.OLLAMA_BASE_URL,
     model,
     system,
@@ -98,5 +100,31 @@ export const POST = route(async (req: Request) => {
     signal: req.signal,
   });
 
-  return Response.json({ model, ...parseAssistantReply(raw, durationMs) });
+  // Ollama's own token counts, so /brain can show what this turn really cost.
+  // Not awaited: telemetry must never sit between the model and the user.
+  void emitTelemetry(db as unknown as TelemetryDb, {
+    source: "clipper",
+    eventType: "llm.request.completed",
+    actor: `ollama:${model}`,
+    summary: "assistant chat turn",
+    model,
+    taskId: video.id,
+    inputTokens: call.inputTokens,
+    outputTokens: call.outputTokens,
+    latencyMs: call.latencyMs,
+    // Overhead 0 — the whole turn ran on this machine, so none of it would
+    // ever have reached a top-tier model. Left undefined when Ollama reported
+    // no counts: "unknown" and "zero" must not look the same on the page.
+    estimatedTokensAvoided:
+      call.inputTokens === undefined && call.outputTokens === undefined
+        ? undefined
+        : estimateTokensAvoided({
+            workerInput: call.inputTokens,
+            workerOutput: call.outputTokens,
+            orchestratorOverhead: 0,
+          }),
+    meta: { turns: input.messages.length },
+  });
+
+  return Response.json({ model, ...parseAssistantReply(call.content, durationMs) });
 });

@@ -280,3 +280,115 @@ test("review regressions: clamp cannot produce an empty clip; bare-array roots d
   const numberRoot = parseAssistantReply("42", 19_000);
   assert.deepEqual(numberRoot.proposals, []);
 });
+
+// --- token accounting: Ollama's own counts, not our guesses -----------
+
+/** A /api/chat mock that answers with whatever usage fields are given. */
+async function mockCountingOllama(usage: Record<string, number>) {
+  const server = http.createServer((req, res) => {
+    if (req.url === "/api/tags") {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ models: [{ name: "llama3.2:latest" }] }));
+      return;
+    }
+    let data = "";
+    req.on("data", (c) => (data += c));
+    req.on("end", () => {
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify({
+          message: { role: "assistant", content: JSON.stringify({ clips: [] }) },
+          ...usage,
+        }),
+      );
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address() as AddressInfo;
+  return { baseUrl: `http://127.0.0.1:${port}`, close: () => server.close() };
+}
+
+test("ollamaChat: surfaces Ollama's own token counts and a measured latency", async () => {
+  const mock = await mockCountingOllama({ prompt_eval_count: 812, eval_count: 96 });
+  try {
+    const out = await ollamaChat({
+      baseUrl: mock.baseUrl,
+      model: "llama3.2",
+      system: "s",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    assert.equal(out.inputTokens, 812);
+    assert.equal(out.outputTokens, 96);
+    assert.ok(out.latencyMs >= 0);
+    assert.ok(out.content.length > 0);
+  } finally {
+    mock.close();
+  }
+});
+
+test("ollamaChat: a server that reports no counts yields undefined, never zero", async () => {
+  const mock = await mockCountingOllama({});
+  try {
+    const out = await ollamaChat({
+      baseUrl: mock.baseUrl,
+      model: "llama3.2",
+      system: "s",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    assert.equal(out.inputTokens, undefined);
+    assert.equal(out.outputTokens, undefined);
+  } finally {
+    mock.close();
+  }
+});
+
+test("OllamaAnalysisProvider: reports the real counts, and the whole call as avoided", async () => {
+  const mock = await mockCountingOllama({ prompt_eval_count: 4000, eval_count: 500 });
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    const provider = new OllamaAnalysisProvider({
+      baseUrl: mock.baseUrl,
+      model: "llama3.2",
+      onTelemetry: (event) => events.push(event as unknown as Record<string, unknown>),
+    });
+    await provider.suggestClips([seg(0, 5000, "hello")], {
+      minClipMs: 5000,
+      maxClipMs: 60_000,
+      maxClips: 5,
+      style: "",
+    });
+  } finally {
+    mock.close();
+  }
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].eventType, "llm.request.completed");
+  assert.equal(events[0].actor, "ollama:llama3.2:latest");
+  assert.equal(events[0].summary, "clip suggestions");
+  assert.equal(events[0].inputTokens, 4000);
+  assert.equal(events[0].outputTokens, 500);
+  // Overhead 0: none of this reached a top-tier model, so the whole call counts.
+  assert.equal(events[0].estimatedTokensAvoided, 4500);
+});
+
+test("OllamaAnalysisProvider: an uncounted call reports no saving rather than zero", async () => {
+  const mock = await mockCountingOllama({});
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    const provider = new OllamaAnalysisProvider({
+      baseUrl: mock.baseUrl,
+      model: "llama3.2",
+      onTelemetry: (event) => events.push(event as unknown as Record<string, unknown>),
+    });
+    await provider.suggestClips([seg(0, 5000, "hello")], {
+      minClipMs: 5000,
+      maxClipMs: 60_000,
+      maxClips: 5,
+      style: "",
+    });
+  } finally {
+    mock.close();
+  }
+  assert.equal(events.length, 1);
+  assert.equal(events[0].estimatedTokensAvoided, undefined);
+});

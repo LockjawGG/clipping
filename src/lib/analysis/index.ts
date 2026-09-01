@@ -1,5 +1,8 @@
 import { ProviderUnavailableError, type AnalysisProvider } from "../providers/types.ts";
 import { env } from "../env.ts";
+import { db } from "../db.ts";
+import { emitTelemetry } from "../telemetry/emit.ts";
+import type { TelemetryDb } from "../telemetry/types.ts";
 import { HeuristicAnalysisProvider } from "./heuristic.ts";
 import { AnthropicAnalysisProvider } from "./anthropic.ts";
 import { OpenAiAnalysisProvider } from "./openai.ts";
@@ -44,7 +47,15 @@ function build(): AnalysisProvider {
       // desktop build ships with this so installing Ollama upgrades the
       // suggestions in place and uninstalling it never breaks anything.
       return new OllamaWithFallbackProvider(
-        new OllamaAnalysisProvider({ baseUrl: env.OLLAMA_BASE_URL, model: env.OLLAMA_MODEL }),
+        new OllamaAnalysisProvider({
+          baseUrl: env.OLLAMA_BASE_URL,
+          model: env.OLLAMA_MODEL,
+          // This module is server-only, so it is the right place to close over
+          // the shared Prisma client — the provider itself stays free of it.
+          // Not awaited: recording that a suggestion ran must never delay or
+          // fail the suggestion.
+          onTelemetry: (event) => void emitTelemetry(db as unknown as TelemetryDb, event),
+        }),
         new HeuristicAnalysisProvider(),
       );
 
