@@ -303,6 +303,8 @@ export function prismaClipRepo(client: PrismaClient): ClipRepo {
           data: clips.map((c) => ({
             censorAllowList: [...prefs.censorAllowList],
             censorDenyList: [...prefs.censorDenyList],
+            // Seeded words must actually bleep - censorEnabled gates detection.
+            ...(prefs.censorDenyList.length > 0 ? { censorEnabled: true } : {}),
             aspectRatio: prefs.defaultAspectRatio,
             videoId,
             origin: "AI_SUGGESTED" as const,

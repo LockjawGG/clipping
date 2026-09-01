@@ -397,6 +397,33 @@ test("createManualClip snaps the window to sentence boundaries and marks it USER
   assert.equal(out.endMs, 45_000 + 400);
 });
 
+test("createManualClip: a seeded always-censor list also switches censoring on", async () => {
+  const { deps, created } = makeDeps();
+  deps.loadSettings = async () =>
+    ({
+      censorAllowList: [],
+      censorDenyList: ["elephants"],
+      defaultCaptionPreset: "CLASSIC",
+      defaultAspectRatio: "VERTICAL_9_16",
+    }) as never;
+  await createManualClip(deps, "vidA", { startMs: 25_000, endMs: 40_000 });
+  assert.deepEqual(created[0].censorDenyList, ["elephants"]);
+  // Words that never bleep are not "always censor": the master switch comes on.
+  assert.equal(created[0].censorEnabled, true);
+
+  // An empty list must NOT flip the switch.
+  const second = makeDeps();
+  second.deps.loadSettings = async () =>
+    ({
+      censorAllowList: [],
+      censorDenyList: [],
+      defaultCaptionPreset: "CLASSIC",
+      defaultAspectRatio: "VERTICAL_9_16",
+    }) as never;
+  await createManualClip(second.deps, "vidA", { startMs: 25_000, endMs: 40_000 });
+  assert.equal(second.created[0].censorEnabled, undefined);
+});
+
 test("createManualClip rejects an inverted range and non-owned videos", async () => {
   const { deps } = makeDeps();
   await assert.rejects(

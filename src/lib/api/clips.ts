@@ -513,6 +513,10 @@ export async function createClipFromRange(
       score: input.score ?? null,
       hashtags: input.hashtags ?? [],
       ...(prefs ? { censorAllowList: [...prefs.censorAllowList], censorDenyList: [...prefs.censorDenyList] } : {}),
+      // A non-empty "always censor" list only matters if censoring runs -
+      // censorEnabled gates the whole detection pass, so seeding words
+      // without flipping it would seed words that never bleep.
+      ...(prefs && prefs.censorDenyList.length > 0 ? { censorEnabled: true } : {}),
       ...(defaults.aspectRatio
         ? { aspectRatio: defaults.aspectRatio }
         : prefs
