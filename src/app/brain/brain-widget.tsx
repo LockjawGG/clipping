@@ -72,7 +72,7 @@ export function BrainWidget({ className = "", href = "/brain" }: BrainWidgetProp
     <>
       <div className="flex items-center justify-between">
         <span className="text-[0.65rem] font-semibold uppercase tracking-widest text-muted">
-          Agent Brain
+          Jarvis
         </span>
         <span className="font-mono text-[0.65rem] text-muted">last 30 min</span>
       </div>

@@ -4,7 +4,7 @@ import { currentUserId } from "@/lib/auth/session.ts";
 
 import { BrainClient } from "./brain-client";
 
-export const metadata = { title: "Agent Brain · Clipper" };
+export const metadata = { title: "Jarvis" };
 export const dynamic = "force-dynamic";
 
 /**

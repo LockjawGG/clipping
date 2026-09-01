@@ -95,6 +95,8 @@ export function TopBar(props: TopBarProps) {
 
   return (
     <header className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b border-border bg-surface px-5 py-3">
+      <span className="font-mono text-sm font-semibold tracking-[0.3em] text-text">JARVIS</span>
+
       <div className="flex items-center gap-2">
         <span className={`h-2 w-2 rounded-full ${connection.dot}`} aria-hidden />
         <span className={`font-mono text-xs font-semibold tracking-widest ${connection.tone}`}>
