@@ -48,9 +48,12 @@ const replySchema = z.object({
  * beats an error because the fourth was malformed.
  */
 export function parseAssistantReply(raw: string, videoDurationMs: number): AssistantReply {
+  // Small models love to wrap JSON in markdown fences even when told not to
+  // (and even with format=json off the happy path). Strip them before parsing.
+  const unfenced = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(unfenced);
   } catch {
     // A model that ignored the JSON instruction still said *something*.
     return { reply: raw.trim().slice(0, 4000), proposals: [] };

@@ -220,3 +220,35 @@ test("ollamaChat: surfaces server errors with detail", async () => {
     server.close();
   }
 });
+
+test("parseAssistantReply survives the small-model failure zoo", () => {
+  // Fixture scenarios drafted by the local model (scripts/dev-local-llm.mjs),
+  // reviewed and corrected by hand — it helpfully demonstrated its own point
+  // by wrapping the output in the exact fences it was told to avoid.
+  const dur = 30_000;
+
+  // Valid JSON inside markdown fences: parsed, not treated as prose.
+  const fenced = parseAssistantReply(
+    '```json\n{"reply": "fenced but fine", "proposals": []}\n```',
+    dur,
+  );
+  assert.equal(fenced.reply, "fenced but fine");
+
+  // Trailing comma = invalid JSON: falls back to showing the raw text.
+  const trailing = parseAssistantReply('{"reply": "x", "proposals": [],}', dur);
+  assert.ok(trailing.reply.length > 0);
+  assert.deepEqual(trailing.proposals, []);
+
+  // proposals as an object, reply as a number, extra unknown keys: lenient.
+  const objProposals = parseAssistantReply('{"reply": "ok", "proposals": {"a": 1}}', dur);
+  assert.equal(objProposals.reply, "ok");
+  assert.deepEqual(objProposals.proposals, []);
+  const numReply = parseAssistantReply('{"reply": 42, "proposals": []}', dur);
+  assert.equal(numReply.reply, "");
+  const extraKey = parseAssistantReply('{"reply": "ok", "proposals": [], "mood": "smug"}', dur);
+  assert.equal(extraKey.reply, "ok");
+
+  // Empty string: empty reply, no proposals, no crash.
+  const empty = parseAssistantReply("", dur);
+  assert.deepEqual(empty, { reply: "", proposals: [] });
+});
