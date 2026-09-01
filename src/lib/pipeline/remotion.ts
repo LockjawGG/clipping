@@ -114,7 +114,9 @@ export class RemotionCaptionRenderer implements CaptionRenderer {
       imageOverlays: staged.map(({ overlay: o, name }) => ({
         // A bare name; the composition resolves it with `staticFile()`.
         src: name,
+        id: o.id,
         animated: o.animated,
+        zIndex: o.zIndex,
         x: o.x,
         y: o.y,
         scale: o.scale,

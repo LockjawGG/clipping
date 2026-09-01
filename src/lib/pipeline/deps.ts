@@ -173,9 +173,14 @@ export interface RenderCensorConfig {
 
 /** One image/GIF overlay on a clip. Times are clip-relative ms; null = clip edge. */
 export interface RenderOverlay {
+  /** The overlay row's own id — the tiebreak key for cross-kind z-ordering
+   *  (see `src/lib/captions/overlay-order.ts`). */
+  id: string;
   storageKey: string;
   /** True for animated GIFs, so the compositor loops the source. */
   animated: boolean;
+  /** Stacking order, shared across text and image overlays on the clip. */
+  zIndex: number;
   x: number;
   y: number;
   scale: number;
@@ -200,7 +205,12 @@ export interface RenderImageLayer extends Omit<RenderOverlay, "storageKey"> {
 
 /** One freestanding text element. Position is a normalised 0..1 centre point. */
 export interface RenderTextOverlay {
+  /** The overlay row's own id — the tiebreak key for cross-kind z-ordering
+   *  (see `src/lib/captions/overlay-order.ts`). */
+  id: string;
   text: string;
+  /** Stacking order, shared across text and image overlays on the clip. */
+  zIndex: number;
   x: number;
   y: number;
   scale: number;

@@ -12,6 +12,7 @@ import {
 import { parseWordRules, applyWordRules, wordEffectCss } from "@/lib/captions/word-rules.ts";
 import { captionWordAnim, captionCueAnim, NEUTRAL_CAPTION_CSS } from "@/lib/captions/anim-dom.ts";
 import { sampleElementAnim, parseElementAnim } from "@/lib/captions/element-anim.ts";
+import { orderOverlayLayers } from "@/lib/captions/overlay-order.ts";
 import type { FocusKeyframe } from "@/lib/focus/keyframes.ts";
 import { FocusWindowOverlay } from "./focus-window";
 import { remotionPreset } from "@/lib/captions/presets.ts";
@@ -712,16 +713,24 @@ export const ClipPlayer = memo(function ClipPlayer({
       : placementTransform;
 
   // Overlays are burned into the rendered file; in source mode preview them as
-  // positioned elements that appear only within their clip-relative time window.
+  // positioned elements that appear only within their clip-relative time
+  // window. Sorted by zIndex (shared with the Remotion render path via
+  // `orderOverlayLayers`) so a text layer and an image layer interleave the
+  // same way here as they do in the export — relying on `overlays`' own
+  // array order would drift from that the moment a reorder is in flight
+  // (the optimistic update patches zIndex in place without re-sorting the
+  // array; see `reorderOverlayLocal` in clip-editor.tsx).
   const activeOverlays =
     mode === "source"
-      ? overlays.filter((o) => {
-          if (o.hidden) return false;
-          if (o.kind !== "TEXT" && !o.url) return false;
-          const s = o.startMs ?? 0;
-          const e = o.endMs ?? spanMs;
-          return posMs >= s && posMs <= e;
-        })
+      ? orderOverlayLayers(
+          overlays.filter((o) => {
+            if (o.hidden) return false;
+            if (o.kind !== "TEXT" && !o.url) return false;
+            const s = o.startMs ?? 0;
+            const e = o.endMs ?? spanMs;
+            return posMs >= s && posMs <= e;
+          }),
+        )
       : [];
 
   return (

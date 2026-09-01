@@ -323,8 +323,8 @@ test("clip overlays trigger a composite pass with clip-relative seconds", async 
     const { deps, spy } = makeDeps(
       target({
         overlays: [
-          { storageKey: "assets/image/a.png", animated: false, x: 0.5, y: 0.2, scale: 1, rotation: 0, opacity: 0.8, startMs: 2000, endMs: 6000, animationJson: null },
-          { storageKey: "assets/gif/b.gif", animated: true, x: 0.1, y: 0.9, scale: 0.5, rotation: 0, opacity: 1, startMs: null, endMs: null, animationJson: null },
+          { id: "ov1", zIndex: 1, storageKey: "assets/image/a.png", animated: false, x: 0.5, y: 0.2, scale: 1, rotation: 0, opacity: 0.8, startMs: 2000, endMs: 6000, animationJson: null },
+          { id: "ov2", zIndex: 2, storageKey: "assets/gif/b.gif", animated: true, x: 0.1, y: 0.9, scale: 0.5, rotation: 0, opacity: 1, startMs: null, endMs: null, animationJson: null },
         ],
       }),
       { tempDir: dir } as Partial<PipelineDeps>,
@@ -356,9 +356,9 @@ test("a layer with motion is composited by Remotion, static ones stay on ffmpeg"
       target({
         overlays: [
           // static -> the cheap ffmpeg overlay filter
-          { storageKey: "assets/image/a.png", animated: false, x: 0.5, y: 0.2, scale: 1, rotation: 0, opacity: 1, startMs: null, endMs: null, animationJson: null },
+          { id: "ov1", zIndex: 1, storageKey: "assets/image/a.png", animated: false, x: 0.5, y: 0.2, scale: 1, rotation: 0, opacity: 1, startMs: null, endMs: null, animationJson: null },
           // animated -> promoted, because `overlay` has no per-frame scale
-          { storageKey: "assets/image/b.png", animated: false, x: 0.3, y: 0.7, scale: 1, rotation: 15, opacity: 1, startMs: 0, endMs: 4000, animationJson: '{"loop":"orbit"}' },
+          { id: "ov2", zIndex: 2, storageKey: "assets/image/b.png", animated: false, x: 0.3, y: 0.7, scale: 1, rotation: 15, opacity: 1, startMs: 0, endMs: 4000, animationJson: '{"loop":"orbit"}' },
         ],
       }),
       { tempDir: dir } as Partial<PipelineDeps>,
@@ -865,6 +865,8 @@ test("a text overlay drives the Remotion composite pass even with no captions", 
       aspectRatio: "LANDSCAPE_16_9", // no reframe, no captions
       textOverlays: [
         {
+          id: "t1",
+          zIndex: 1,
           text: "BREAKING",
           x: 0.5,
           y: 0.2,
@@ -1495,9 +1497,9 @@ test("overlay windows move back with the cut so they stay on their moment", asyn
       removedWordIds: ["c2"],
       overlays: [
         // Pinned to 5s-7s into the clip, which is after the 900ms that goes.
-        { storageKey: "assets/image/a.png", animated: false, x: 0.5, y: 0.2, scale: 1, rotation: 0, opacity: 1, startMs: 5_000, endMs: 7_000, animationJson: null },
+        { id: "ov1", zIndex: 1, storageKey: "assets/image/a.png", animated: false, x: 0.5, y: 0.2, scale: 1, rotation: 0, opacity: 1, startMs: 5_000, endMs: 7_000, animationJson: null },
         // No window at all: nothing to move.
-        { storageKey: "assets/gif/b.gif", animated: true, x: 0.1, y: 0.9, scale: 0.5, rotation: 0, opacity: 1, startMs: null, endMs: null, animationJson: null },
+        { id: "ov2", zIndex: 2, storageKey: "assets/gif/b.gif", animated: true, x: 0.1, y: 0.9, scale: 0.5, rotation: 0, opacity: 1, startMs: null, endMs: null, animationJson: null },
       ],
     }),
     withTranscript(CENSOR_WORDS),

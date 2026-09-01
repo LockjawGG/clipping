@@ -398,8 +398,10 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
               overlays: {
                 orderBy: { zIndex: "asc" },
                 select: {
+                  id: true,
                   kind: true,
                   content: true,
+                  zIndex: true,
                   rotation: true,
                   styleJson: true,
                   animationJson: true,
@@ -482,8 +484,10 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
         overlays: render.clip.overlays
           .filter((o) => !o.hidden && o.asset && (o.asset.kind === "IMAGE" || o.asset.kind === "GIF"))
           .map((o) => ({
+            id: o.id,
             storageKey: o.asset!.storageKey,
             animated: o.asset!.kind === "GIF",
+            zIndex: o.zIndex,
             x: o.x,
             y: o.y,
             scale: o.scale,
@@ -496,7 +500,9 @@ export function prismaRenderRepo(client: PrismaClient): RenderRepo {
         textOverlays: render.clip.overlays
           .filter((o) => !o.hidden && o.kind === "TEXT")
           .map((o) => ({
+            id: o.id,
             text: o.content,
+            zIndex: o.zIndex,
             x: o.x,
             y: o.y,
             scale: o.scale,
