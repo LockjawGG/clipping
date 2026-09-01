@@ -638,6 +638,7 @@ export function ClipEditor({
       ref: p.ref,
       startMs: p.startMs,
       playedMs: p.playedMs,
+      duckEndMs: p.duckEndMs,
       tempo: p.tempo,
       url: byRef.get(p.ref) ?? "",
     }));

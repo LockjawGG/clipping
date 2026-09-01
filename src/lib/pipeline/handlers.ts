@@ -982,7 +982,7 @@ export const renderHandler: JobHandler<PipelineDeps> = async ({ job, deps, signa
               const local = scratchPath(work, `voline-${i}.wav`);
               await mkdir(dirname(local), { recursive: true });
               await deps.storage.getToFile(p.audioKey, local);
-              return { path: local, startMs: p.startMs, tempo: p.tempo, playedMs: p.playedMs };
+              return { path: local, startMs: p.startMs, tempo: p.tempo, playedMs: p.playedMs, duckEndMs: p.duckEndMs };
             }),
           );
           await deps.ffmpeg.mixVoiceover(

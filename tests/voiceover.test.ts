@@ -469,3 +469,28 @@ test("a line recorded before censor keys existed is redone once", () => {
   // Callers that do not care about censoring are unaffected.
   assert.deepEqual(staleLines([legacy], text), []);
 });
+
+test("the duck window covers the whole anchored sentence, not just the narration", () => {
+  // Observed live ("Me at the zoo"): a 9.1s narration anchored to a 17s
+  // sentence left ~8s of the original voice playing at full volume after the
+  // narration stopped. The narration replaces that speech, so the duck window
+  // runs to the anchor's end.
+  const placed = placeLines([line("a", 9105)], [anchor("a", 0, 17_000)]);
+  assert.equal(placed[0].playedMs, 9105);
+  assert.equal(placed[0].duckEndMs, 17_000);
+
+  // A narration longer than its anchor ducks to its own end instead.
+  const over = placeLines([line("b", 3000)], [anchor("b", 0, 2000)], { maxTempo: 1 });
+  assert.equal(over[0].duckEndMs, 3000);
+});
+
+test("the export's duck span uses duckEndMs when it outruns the narration", () => {
+  const args = buildVoiceoverMixArgs({
+    inputPath: "/tmp/in.mp4",
+    outputPath: "/tmp/out.mp4",
+    lines: [{ path: "/tmp/l0.wav", startMs: 1_000, tempo: 1, playedMs: 2_000, duckEndMs: 9_000 }],
+    duckDb: -6,
+  });
+  const fc = args[args.indexOf("-filter_complex") + 1];
+  assert.ok(fc.includes("between(t,1,9)"), `duck span should end at 9s in: ${fc}`);
+});

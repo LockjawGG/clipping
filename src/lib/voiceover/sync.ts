@@ -51,6 +51,13 @@ export interface PlacedLine extends VoiceLine {
   overflowMs: number;
   /** Length after the tempo change. */
   playedMs: number;
+  /**
+   * Where the duck window ends. The narration replaces the anchored speech, so
+   * the bed is silenced across the whole anchor even when the narration is
+   * shorter - otherwise the tail of the original sentence plays at full volume
+   * the moment the narration stops, and you hear both takes of the same words.
+   */
+  duckEndMs: number;
 }
 
 export interface PlacementOptions {
@@ -117,6 +124,7 @@ export function placeLines(
       tempo: Math.round(tempo * 1000) / 1000,
       playedMs,
       overflowMs: Math.max(0, playedMs - window),
+      duckEndMs: Math.max(anchor.endMs, anchor.startMs + playedMs),
     });
   }
   return out;

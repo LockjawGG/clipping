@@ -818,6 +818,12 @@ export interface VoiceoverLinePlacement {
   tempo: number;
   /** Length after the tempo change, for the duck window. */
   playedMs: number;
+  /**
+   * Duck window end; defaults to `startMs + playedMs`. The placement passes
+   * the anchored speech's end here, so a narration shorter than the sentence
+   * it replaces still silences the whole sentence.
+   */
+  duckEndMs?: number;
 }
 
 export interface VoiceoverMixArgs {
@@ -876,7 +882,7 @@ export function buildVoiceoverMixArgs({
   const spans = lines
     .map((l) => {
       const a = fgNum(Math.max(0, l.startMs) / 1000, 0, 1e6);
-      const b = fgNum(Math.max(0, l.startMs + l.playedMs) / 1000, 0, 1e6);
+      const b = fgNum(Math.max(0, l.duckEndMs ?? l.startMs + l.playedMs) / 1000, 0, 1e6);
       return `between(t,${a},${b})`;
     })
     .join("+");

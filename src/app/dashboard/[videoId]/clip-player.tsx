@@ -80,7 +80,15 @@ interface Props {
    */
   voiceover?: {
     duckDb: number;
-    lines: ReadonlyArray<{ ref: string; startMs: number; playedMs: number; tempo: number; url: string }>;
+    lines: ReadonlyArray<{
+      ref: string;
+      startMs: number;
+      playedMs: number;
+      /** Duck window end - the anchored speech's end when that runs past the line. */
+      duckEndMs?: number;
+      tempo: number;
+      url: string;
+    }>;
   } | null;
   /**
    * Stretches the render replaces with a bleep, clip-relative. The preview
@@ -401,14 +409,20 @@ export const ClipPlayer = memo(function ClipPlayer({
         return false;
       }
       const active = lines.find((l) => posMs >= l.startMs && posMs < l.startMs + l.playedMs) ?? null;
+      // Ducking outlives playback: the narration replaces the anchored speech,
+      // so the bed stays silenced to the anchor's end even after the (shorter)
+      // narration audio has finished - same window the render uses.
+      const covered = lines.some(
+        (l) => posMs >= l.startMs && posMs < (l.duckEndMs ?? l.startMs + l.playedMs),
+      );
 
       if (activeVo.current && activeVo.current !== active?.ref) {
         voRefs.current.get(activeVo.current)?.pause();
         activeVo.current = null;
       }
-      if (!active) return false;
+      if (!active) return covered;
       const el = voRefs.current.get(active.ref);
-      if (!el) return;
+      if (!el) return covered;
       // Tempo compresses the line, so a millisecond of the clip is `tempo`
       // milliseconds of the audio file.
       const want = ((posMs - active.startMs) * active.tempo) / 1000;
@@ -417,7 +431,7 @@ export const ClipPlayer = memo(function ClipPlayer({
       if (running && el.paused) void el.play().catch(() => {});
       if (!running && !el.paused) el.pause();
       activeVo.current = active.ref;
-      return true;
+      return true; // an active line is always inside its own duck window
     },
     [voiceover, mode],
   );
