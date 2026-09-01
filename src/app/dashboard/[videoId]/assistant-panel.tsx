@@ -23,7 +23,7 @@ interface Proposal {
   word?: string;
   reason: string;
   /** UI state, not model output. */
-  resolved?: "approved" | "denied";
+  resolved?: "pending" | "approved" | "denied";
 }
 
 interface Turn {
@@ -46,6 +46,17 @@ export function AssistantPanel({ videoId }: { videoId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  // Approvals are serialized: two censor-word approvals in quick succession
+  // are read-modify-writes over the same settings list, and racing them
+  // silently loses one. A queue also swallows double-clicks.
+  const approveQueue = useRef(Promise.resolve());
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!open || status !== null) return;
@@ -78,20 +89,22 @@ export function AssistantPanel({ videoId }: { videoId: string }) {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? "the assistant did not answer");
+      if (!alive.current) return;
       setTurns((cur) => [
         ...cur,
         { role: "assistant", content: body.reply || "(no reply)", proposals: body.proposals ?? [] },
       ]);
     } catch (e) {
+      if (!alive.current) return;
       setError(e instanceof Error ? e.message : "the assistant did not answer");
       setTurns((cur) => cur.slice(0, -1)); // put the failed question back in the box
       setDraft(text);
     } finally {
-      setBusy(false);
+      if (alive.current) setBusy(false);
     }
   };
 
-  const resolve = (turnIdx: number, propIdx: number, resolved: "approved" | "denied") => {
+  const resolve = (turnIdx: number, propIdx: number, resolved: Proposal["resolved"]) => {
     setTurns((cur) =>
       cur.map((t, i) =>
         i === turnIdx
@@ -101,7 +114,12 @@ export function AssistantPanel({ videoId }: { videoId: string }) {
     );
   };
 
-  const approve = async (turnIdx: number, propIdx: number, p: Proposal) => {
+  const approve = (turnIdx: number, propIdx: number, p: Proposal) => {
+    resolve(turnIdx, propIdx, "pending");
+    approveQueue.current = approveQueue.current.then(() => doApprove(turnIdx, propIdx, p));
+  };
+
+  const doApprove = async (turnIdx: number, propIdx: number, p: Proposal) => {
     try {
       if (p.action === "create_clip") {
         const res = await fetch(`/api/videos/${videoId}/clips`, {
@@ -123,8 +141,10 @@ export function AssistantPanel({ videoId }: { videoId: string }) {
           if (!res.ok) throw new Error();
         }
       }
-      resolve(turnIdx, propIdx, "approved");
+      if (alive.current) resolve(turnIdx, propIdx, "approved");
     } catch {
+      if (!alive.current) return;
+      resolve(turnIdx, propIdx, undefined); // back to actionable
       setError("that approval didn't go through — try again");
     }
   };
@@ -187,12 +207,16 @@ export function AssistantPanel({ videoId }: { videoId: string }) {
                       <span className="text-muted">{p.reason}</span>
                       {p.resolved ? (
                         <span className={p.resolved === "approved" ? "text-accent" : "text-muted"}>
-                          {p.resolved === "approved" ? "✓ approved" : "dismissed"}
+                          {p.resolved === "approved"
+                            ? "✓ approved"
+                            : p.resolved === "pending"
+                              ? "applying…"
+                              : "dismissed"}
                         </span>
                       ) : (
                         <span className="flex gap-2">
                           <button type="button" className="btn btn-sm bg-accent text-accent-fg"
-                            onClick={() => void approve(ti, pi, p)}>
+                            onClick={() => approve(ti, pi, p)}>
                             Approve
                           </button>
                           <button type="button" className="btn btn-ghost btn-sm"

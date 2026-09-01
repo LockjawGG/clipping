@@ -58,7 +58,12 @@ export function parseAssistantReply(raw: string, videoDurationMs: number): Assis
     // A model that ignored the JSON instruction still said *something*.
     return { reply: raw.trim().slice(0, 4000), proposals: [] };
   }
-  const base = replySchema.parse(parsed);
+  // A bare array is a model that skipped the wrapper; anything else
+  // non-object degrades to prose rather than throwing out of the route.
+  if (Array.isArray(parsed)) parsed = { reply: "", proposals: parsed };
+  const checked = replySchema.safeParse(parsed);
+  if (!checked.success) return { reply: raw.trim().slice(0, 4000), proposals: [] };
+  const base = checked.data;
   const proposals: AssistantProposal[] = [];
   for (const p of base.proposals) {
     const hit = proposalSchema.safeParse(p);
@@ -66,8 +71,10 @@ export function parseAssistantReply(raw: string, videoDurationMs: number): Assis
     if (hit.data.action === "create_clip") {
       if (hit.data.endMs <= hit.data.startMs) continue;
       if (hit.data.startMs > videoDurationMs) continue;
-      // Clamp the end rather than dropping the idea over a rounding overrun.
+      // Clamp the end rather than dropping the idea over a rounding overrun -
+      // then re-check, because clamping can itself produce an empty range.
       hit.data.endMs = Math.min(hit.data.endMs, videoDurationMs);
+      if (hit.data.endMs <= hit.data.startMs) continue;
     }
     if (hit.data.action === "add_censor_word") {
       hit.data.word = hit.data.word.trim().toLowerCase();

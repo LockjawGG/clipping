@@ -65,7 +65,7 @@ export const POST = route(async (req: Request) => {
     db.transcriptSegment.findMany({
       where: { transcript: { videoId: video.id, translatedTo: "" } },
       orderBy: { index: "asc" },
-      select: { startMs: true, text: true },
+      select: { startMs: true, endMs: true, text: true },
     }),
     db.clip.findMany({
       where: { videoId: video.id },
@@ -74,7 +74,9 @@ export const POST = route(async (req: Request) => {
     }),
   ]);
 
-  const durationMs = video.durationMs ?? (segments.at(-1)?.startMs ?? 0) + 1000;
+  // Fallback duration from the last segment's END - its start undercounts by
+  // a whole segment and made valid end-of-video proposals look out of range.
+  const durationMs = video.durationMs ?? (segments.at(-1)?.endMs ?? 0) + 1000;
   const system = assistantSystemPrompt({
     videoTitle: video.originalFilename ?? "Untitled video",
     durationMs,
@@ -91,6 +93,9 @@ export const POST = route(async (req: Request) => {
     system,
     messages: input.messages,
     format: "json",
+    // A closed tab must cancel the generation: Ollama runs one generation at a
+    // time, so an abandoned turn would queue the user's next question behind it.
+    signal: req.signal,
   });
 
   return Response.json({ model, ...parseAssistantReply(raw, durationMs) });

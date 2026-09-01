@@ -252,3 +252,31 @@ test("parseAssistantReply survives the small-model failure zoo", () => {
   const empty = parseAssistantReply("", dur);
   assert.deepEqual(empty, { reply: "", proposals: [] });
 });
+
+test("review regressions: clamp cannot produce an empty clip; bare-array roots degrade", () => {
+  // Sonnet-review finding 1: a clip starting at the video's end used to clamp
+  // into a zero-length proposal that could never be approved.
+  const stuck = parseAssistantReply(
+    JSON.stringify({
+      reply: "outro",
+      proposals: [
+        { action: "create_clip", startMs: 19_000, endMs: 25_000, title: "End", reason: "outro" },
+      ],
+    }),
+    19_000,
+  );
+  assert.deepEqual(stuck.proposals, []);
+
+  // Finding 2: valid JSON with a non-object root used to throw out of the route.
+  const bareArray = parseAssistantReply(
+    JSON.stringify([
+      { action: "add_censor_word", word: "Dang", reason: "style rule" },
+    ]),
+    19_000,
+  );
+  assert.equal(bareArray.proposals.length, 1);
+  const nullRoot = parseAssistantReply("null", 19_000);
+  assert.deepEqual(nullRoot.proposals, []);
+  const numberRoot = parseAssistantReply("42", 19_000);
+  assert.deepEqual(numberRoot.proposals, []);
+});
