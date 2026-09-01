@@ -27,6 +27,8 @@ type Settings = {
   playlistMax: number;
   defaultCaptionPreset: string;
   defaultAspectRatio: string;
+  /** Server-computed, read-only: does "fast" use the compact model here? */
+  fastUsesSmallModel?: boolean;
 };
 
 type Voice = { id: string; label: string; language: string };
@@ -229,7 +231,9 @@ export function SettingsRail() {
         <p className="text-xs text-muted">
           {s.transcriptionQuality === "accurate"
             ? "The most careful reading of unclear speech. Takes the longest."
-            : "About 25% quicker — same engine, a lighter search. Punctuation may be a touch rougher."}
+            : s.fastUsesSmallModel
+              ? "About 3× quicker — a compact model. Rougher on accents and background music."
+              : "About 25% quicker — same engine, a lighter search. Punctuation may be a touch rougher."}
         </p>
         <label className="mt-1 flex items-center gap-2 text-xs">
           Language

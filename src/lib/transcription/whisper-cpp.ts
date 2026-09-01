@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -54,6 +55,22 @@ interface CppSegment {
 interface CppJson {
   transcription?: CppSegment[];
   result?: { language?: string };
+}
+
+/**
+ * The model quality "fast" should use, when it can be better than a greedy
+ * pass: the small sibling of the configured model, if that file is installed.
+ * The zip build ships it (a real ~3x speedup); the single-exe build cannot
+ * (the installer format tops out at 2GB with one model), so there this
+ * returns null and fast falls back to a beam-1 pass on the configured model.
+ */
+export function fastWhisperCppModel(
+  configured: string,
+  exists: (p: string) => boolean,
+): string | null {
+  const sibling = configured.replace(/medium|large(?:-v\d+)?/i, "small");
+  if (sibling === configured) return null;
+  return exists(sibling) ? sibling : null;
 }
 
 /** Special markers whisper.cpp emits inline, e.g. `[_BEG_]`. Not text. */
@@ -148,8 +165,14 @@ export class WhisperCppProvider implements TranscriptionProvider {
     const outBase = path.join(work, "out");
     try {
 
+      const quality = options.quality ?? "accurate";
+      // Fast prefers the small sibling model when installed; without it, the
+      // same model decoded greedily. Accurate is always the configured model.
+      const fastModel = quality === "fast" ? fastWhisperCppModel(this.opts.model, existsSync) : null;
+      const model = fastModel ?? this.opts.model;
+      const beam = fastModel ? (this.opts.beamSize ?? 5) : beamSizeFor(quality, this.opts.beamSize ?? 5);
       const args = [
-        "-m", this.opts.model,
+        "-m", model,
         "-f", audioPath,
         // Detect rather than assume English — see the note at the top.
         "-l", options.language ?? "auto",
@@ -157,8 +180,7 @@ export class WhisperCppProvider implements TranscriptionProvider {
         "--suppress-nst",
         "-ojf",
         "-of", outBase,
-        // Quality "fast" is a greedy pass over the same model - see beamSizeFor.
-        "-bs", String(beamSizeFor(options.quality ?? "accurate", this.opts.beamSize ?? 5)),
+        "-bs", String(beam),
         "--no-prints",
       ];
       if (options.task === "translate") args.push("-tr");
@@ -166,7 +188,8 @@ export class WhisperCppProvider implements TranscriptionProvider {
 
       await this.run(args, options);
       const json = JSON.parse(await fs.readFile(`${outBase}.json`, "utf8")) as CppJson;
-      return parseWhisperCppJson(json, path.basename(this.opts.model));
+      // Report the model actually used, so a fast run is auditable later.
+      return parseWhisperCppJson(json, path.basename(model));
     } finally {
       await fs.rm(work, { recursive: true, force: true }).catch(() => {});
     }

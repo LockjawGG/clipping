@@ -14,6 +14,7 @@ import {
 } from "../src/lib/transcription/whisper-local.ts";
 import {
   parseWhisperCppJson,
+  fastWhisperCppModel,
   wordsFromTokens,
 } from "../src/lib/transcription/whisper-cpp.ts";
 import { parseVerboseJson } from "../src/lib/transcription/openai.ts";
@@ -365,4 +366,20 @@ test("lone surrogates are stripped from parsed transcripts (they crash TTS)", ()
     "medium",
   );
   assert.equal(ok.segments[0].text, "hi 😀");
+});
+
+test("fastWhisperCppModel: small sibling when installed, else null", () => {
+  const have = (p: string) => p === "C:/t/whisper/ggml-small.bin";
+  // Installed: fast swaps the file.
+  assert.equal(
+    fastWhisperCppModel("C:/t/whisper/ggml-medium.bin", have),
+    "C:/t/whisper/ggml-small.bin",
+  );
+  // Not installed (the single-exe build): no swap, caller falls back to beam 1.
+  assert.equal(fastWhisperCppModel("C:/t/whisper/ggml-medium.bin", () => false), null);
+  // Already small, or unrecognized name: nothing to derive.
+  assert.equal(fastWhisperCppModel("C:/t/whisper/ggml-small.bin", have), null);
+  assert.equal(fastWhisperCppModel("C:/t/whisper/ggml-tiny.bin", () => true), null);
+  // large-v3 also has a small sibling.
+  assert.equal(fastWhisperCppModel("D:/m/ggml-large-v3.bin", (p: string) => p === "D:/m/ggml-small.bin"), "D:/m/ggml-small.bin");
 });
