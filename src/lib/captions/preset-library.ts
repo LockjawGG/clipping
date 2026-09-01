@@ -32,9 +32,60 @@ export const CAPTION_TEMPLATE_CATEGORIES: {
   { id: "cinematic", label: "Cinematic", blurb: "Lower-third calm — let-spaced, understated." },
 ];
 
+/**
+ * Packs answer "what am I making?" — orthogonal to `category`, which answers
+ * "what does this look like?". A pack pulls templates from several categories
+ * by design; every template belongs to exactly one pack.
+ */
+export type CaptionTemplatePack =
+  | "podcast"
+  | "shorts"
+  | "gaming"
+  | "film"
+  | "lifestyle"
+  | "hype";
+
+export const CAPTION_TEMPLATE_PACKS: {
+  id: CaptionTemplatePack;
+  label: string;
+  blurb: string;
+}[] = [
+  {
+    id: "podcast",
+    label: "Podcast & Interview",
+    blurb: "Calm, legible captions that sit quietly under talking heads.",
+  },
+  {
+    id: "shorts",
+    label: "Shorts & Reels",
+    blurb: "Word-by-word energy built for vertical feeds.",
+  },
+  {
+    id: "gaming",
+    label: "Gaming & Streaming",
+    blurb: "Glow and alert colours that stay readable over busy gameplay.",
+  },
+  {
+    id: "film",
+    label: "Film & Trailer",
+    blurb: "Restrained, wide-set type with a cinema-title feel.",
+  },
+  {
+    id: "lifestyle",
+    label: "Beauty & Lifestyle",
+    blurb: "Soft gradients and light, airy type.",
+  },
+  {
+    id: "hype",
+    label: "Hype & Promo",
+    blurb: "Loud metallic and high-impact type for drops and offers.",
+  },
+];
+
 export interface CaptionTemplate {
   id: string;
   category: CaptionTemplateCategory;
+  pack: CaptionTemplatePack;
   name: string;
   /** Fields to write onto the clip's caption config. Anything omitted is left as-is. */
   style: Partial<TextStyle>;
@@ -52,6 +103,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "clean-inter",
     category: "clean",
+    pack: "podcast",
     name: "Inter",
     animation: "NONE",
     style: {
@@ -67,6 +119,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "clean-caption-box",
     category: "clean",
+    pack: "podcast",
     name: "Caption Box",
     animation: "NONE",
     style: {
@@ -82,6 +135,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "clean-glass",
     category: "clean",
+    pack: "lifestyle",
     name: "Frosted",
     animation: "FADE",
     style: {
@@ -97,6 +151,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "clean-serif",
     category: "clean",
+    pack: "podcast",
     name: "Editorial",
     animation: "NONE",
     style: {
@@ -112,6 +167,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "clean-mono",
     category: "clean",
+    pack: "podcast",
     name: "Monospace",
     animation: "NONE",
     style: {
@@ -130,6 +186,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "bold-impact",
     category: "bold",
+    pack: "hype",
     name: "Impact",
     animation: "NONE",
     style: {
@@ -146,6 +203,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "bold-yellow",
     category: "bold",
+    pack: "hype",
     name: "Hard Yellow",
     animation: "NONE",
     style: {
@@ -163,6 +221,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "bold-long-shadow",
     category: "bold",
+    pack: "shorts",
     name: "Long Shadow",
     animation: "SLIDE_UP",
     style: {
@@ -179,6 +238,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "bold-emboss",
     category: "bold",
+    pack: "hype",
     name: "Emboss",
     animation: "POP",
     style: {
@@ -194,6 +254,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "bold-block",
     category: "bold",
+    pack: "shorts",
     name: "Block Fill",
     animation: "WORD_BY_WORD",
     style: {
@@ -213,6 +274,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "viral-pop-yellow",
     category: "viral",
+    pack: "shorts",
     name: "Pop Yellow",
     animation: "POP",
     style: {
@@ -231,6 +293,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "viral-highlight-box",
     category: "viral",
+    pack: "shorts",
     name: "Highlight Box",
     animation: "WORD_BY_WORD",
     style: {
@@ -248,6 +311,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "viral-karaoke",
     category: "viral",
+    pack: "gaming",
     name: "Karaoke",
     animation: "KARAOKE",
     style: {
@@ -266,6 +330,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "viral-bounce",
     category: "viral",
+    pack: "shorts",
     name: "Bounce",
     animation: "BOUNCE",
     style: {
@@ -283,6 +348,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "viral-emphasis",
     category: "viral",
+    pack: "shorts",
     name: "AI Emphasis",
     animation: "WORD_BY_WORD",
     style: {
@@ -303,6 +369,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "viral-typewriter",
     category: "viral",
+    pack: "shorts",
     name: "Typewriter",
     animation: "TYPEWRITER",
     style: {
@@ -320,6 +387,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "neon-cyan",
     category: "neon",
+    pack: "gaming",
     name: "Cyan Tube",
     animation: "FADE",
     style: {
@@ -339,6 +407,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "neon-pink",
     category: "neon",
+    pack: "gaming",
     name: "Pink Tube",
     animation: "FADE",
     style: {
@@ -358,6 +427,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "neon-glow-soft",
     category: "neon",
+    pack: "lifestyle",
     name: "Soft Glow",
     animation: "SCALE",
     style: {
@@ -373,6 +443,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "neon-amber",
     category: "neon",
+    pack: "gaming",
     name: "Amber Glow",
     animation: "WORD_BY_WORD",
     style: {
@@ -391,6 +462,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "gradient-sunset",
     category: "gradient",
+    pack: "lifestyle",
     name: "Sunset",
     animation: "SLIDE_UP",
     style: {
@@ -407,6 +479,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "gradient-ocean",
     category: "gradient",
+    pack: "lifestyle",
     name: "Ocean",
     animation: "SLIDE_UP",
     style: {
@@ -423,6 +496,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "gradient-gold",
     category: "gradient",
+    pack: "hype",
     name: "Gold",
     animation: "POP",
     style: {
@@ -444,6 +518,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "gradient-silver",
     category: "gradient",
+    pack: "film",
     name: "Silver",
     animation: "POP",
     style: {
@@ -464,6 +539,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "gradient-candy",
     category: "gradient",
+    pack: "hype",
     name: "Candy",
     animation: "BOUNCE",
     style: {
@@ -482,6 +558,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "cine-lower-third",
     category: "cinematic",
+    pack: "podcast",
     name: "Lower Third",
     animation: "FADE",
     style: {
@@ -499,6 +576,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "cine-quiet",
     category: "cinematic",
+    pack: "film",
     name: "Quiet",
     animation: "FADE",
     style: {
@@ -515,6 +593,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "cine-doc",
     category: "cinematic",
+    pack: "podcast",
     name: "Documentary",
     animation: "NONE",
     style: {
@@ -531,6 +610,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "cine-spaced-caps",
     category: "cinematic",
+    pack: "film",
     name: "Spaced Caps",
     animation: "SLIDE_UP",
     style: {
@@ -550,6 +630,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "clean-rounded",
     category: "clean",
+    pack: "lifestyle",
     name: "Rounded",
     animation: "FADE",
     style: {
@@ -565,6 +646,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "clean-shadow-only",
     category: "clean",
+    pack: "podcast",
     name: "Shadow Only",
     animation: "NONE",
     style: {
@@ -580,6 +662,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "clean-tight-caps",
     category: "clean",
+    pack: "gaming",
     name: "Tight Caps",
     animation: "NONE",
     style: {
@@ -597,6 +680,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "clean-newsroom",
     category: "clean",
+    pack: "podcast",
     name: "Newsroom",
     animation: "NONE",
     style: {
@@ -614,6 +698,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "bold-outline",
     category: "bold",
+    pack: "film",
     name: "Outline",
     animation: "POP",
     style: {
@@ -630,6 +715,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "bold-two-tone",
     category: "bold",
+    pack: "shorts",
     name: "Two Tone",
     animation: "WORD_BY_WORD",
     style: {
@@ -648,6 +734,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "bold-sports",
     category: "bold",
+    pack: "gaming",
     name: "Sports",
     animation: "SCALE",
     style: {
@@ -666,6 +753,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "bold-stacked",
     category: "bold",
+    pack: "shorts",
     name: "Stacked",
     animation: "SLIDE_UP",
     style: {
@@ -685,6 +773,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "viral-red-alert",
     category: "viral",
+    pack: "gaming",
     name: "Red Alert",
     animation: "POP",
     style: {
@@ -705,6 +794,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "viral-beast",
     category: "viral",
+    pack: "hype",
     name: "Big Yellow",
     animation: "BOUNCE",
     style: {
@@ -723,6 +813,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "viral-bubble",
     category: "viral",
+    pack: "shorts",
     name: "Bubble",
     animation: "POP",
     style: {
@@ -740,6 +831,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "viral-split",
     category: "viral",
+    pack: "shorts",
     name: "Split Color",
     animation: "WORD_BY_WORD",
     style: {
@@ -760,6 +852,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "neon-green",
     category: "neon",
+    pack: "gaming",
     name: "Green Tube",
     animation: "FADE",
     style: {
@@ -779,6 +872,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "neon-white",
     category: "neon",
+    pack: "lifestyle",
     name: "White Glow",
     animation: "SCALE",
     style: {
@@ -794,6 +888,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "neon-violet",
     category: "neon",
+    pack: "lifestyle",
     name: "Violet Haze",
     animation: "WORD_BY_WORD",
     style: {
@@ -810,6 +905,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "neon-retro",
     category: "neon",
+    pack: "film",
     name: "Retro",
     animation: "SLIDE_UP",
     style: {
@@ -828,6 +924,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "gradient-fire",
     category: "gradient",
+    pack: "hype",
     name: "Fire",
     animation: "POP",
     style: {
@@ -844,6 +941,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "gradient-ice",
     category: "gradient",
+    pack: "gaming",
     name: "Ice",
     animation: "SLIDE_UP",
     style: {
@@ -861,6 +959,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "gradient-rainbow",
     category: "gradient",
+    pack: "hype",
     name: "Rainbow",
     animation: "BOUNCE",
     style: {
@@ -881,6 +980,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "gradient-pastel",
     category: "gradient",
+    pack: "lifestyle",
     name: "Pastel",
     animation: "FADE",
     style: {
@@ -898,6 +998,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "cine-trailer",
     category: "cinematic",
+    pack: "film",
     name: "Trailer",
     animation: "FADE",
     style: {
@@ -915,6 +1016,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "cine-broadcast",
     category: "cinematic",
+    pack: "podcast",
     name: "Broadcast",
     animation: "SLIDE_UP",
     style: {
@@ -931,6 +1033,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "cine-noir",
     category: "cinematic",
+    pack: "film",
     name: "Noir",
     animation: "FADE",
     style: {
@@ -947,6 +1050,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
   {
     id: "cine-whisper",
     category: "cinematic",
+    pack: "film",
     name: "Whisper",
     animation: "TYPEWRITER",
     style: {
@@ -964,6 +1068,10 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
 
 export function templatesByCategory(category: CaptionTemplateCategory): CaptionTemplate[] {
   return CAPTION_TEMPLATES.filter((t) => t.category === category);
+}
+
+export function templatesByPack(pack: CaptionTemplatePack): CaptionTemplate[] {
+  return CAPTION_TEMPLATES.filter((t) => t.pack === pack);
 }
 
 export function findTemplate(id: string): CaptionTemplate | undefined {

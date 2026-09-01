@@ -6,12 +6,23 @@ import type { CSSProperties } from "react";
 import {
   CAPTION_TEMPLATES,
   CAPTION_TEMPLATE_CATEGORIES,
+  CAPTION_TEMPLATE_PACKS,
   type CaptionTemplate,
   type CaptionTemplateCategory,
+  type CaptionTemplatePack,
 } from "@/lib/captions/preset-library.ts";
 import { resolveTextStyle, textStyleToCss } from "@/lib/captions/text-style.ts";
 
-type BrowserCategory = CaptionTemplateCategory | "mine";
+/** Two orthogonal ways to browse the same 53 templates: by look, or by what
+ *  the user is making. Only one strip is ever shown — the axis toggle picks
+ *  which dimension it filters by. "mine" is a third, axis-independent tab. */
+type BrowserAxis = "category" | "pack";
+type BrowserFilter =
+  | { axis: "category"; id: CaptionTemplateCategory }
+  | { axis: "pack"; id: CaptionTemplatePack }
+  | { axis: "mine" };
+
+const PACK_LABEL_BY_ID = new Map(CAPTION_TEMPLATE_PACKS.map((p) => [p.id, p.label.toLowerCase()]));
 
 /** Fields that live in the scalar SubtitleConfig columns (vs the styleJson blob). */
 export const SCALAR_STYLE_KEYS = [
@@ -190,6 +201,11 @@ const MyTemplates = memo(function MyTemplates({
       return {
         id: r.id,
         category: "clean",
+        // Inert filler, like `category` above: saved styles are their own
+        // "Mine" tab and are never matched against the pack or category
+        // filters, which only ever run over CAPTION_TEMPLATES. Neither field
+        // is read when rendering a card.
+        pack: CAPTION_TEMPLATE_PACKS[0].id,
         name: r.name,
         style,
         animation: r.animation,
@@ -248,24 +264,58 @@ export const TemplateBrowser = memo(function TemplateBrowser({
   savedTick = 0,
   onApply,
 }: Props) {
-  const [category, setCategory] = useState<BrowserCategory>("clean");
+  // Remember the last-browsed category and pack independently, so toggling
+  // the axis back and forth doesn't lose the user's place in either.
+  const [lastCategory, setLastCategory] = useState<CaptionTemplateCategory>("clean");
+  const [lastPack, setLastPack] = useState<CaptionTemplatePack>(CAPTION_TEMPLATE_PACKS[0].id);
+  // Which dimension the chip strip is showing. Tracked separately from
+  // `filter` because "Mine" is axis-independent: selecting it must not clear
+  // the toggle or swap the strip out from under the user, so that stepping
+  // into saved styles and back leaves them where they were.
+  const [axis, setAxis] = useState<BrowserAxis>("category");
+  const [filter, setFilter] = useState<BrowserFilter>({ axis: "category", id: "clean" });
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
 
   const list = useMemo(() => {
     if (q) {
       return CAPTION_TEMPLATES.filter(
-        (t) => t.name.toLowerCase().includes(q) || t.category.includes(q),
+        (t) =>
+          t.name.toLowerCase().includes(q) ||
+          t.category.includes(q) ||
+          t.pack.includes(q) ||
+          PACK_LABEL_BY_ID.get(t.pack)?.includes(q),
       );
     }
-    return category === "mine" ? [] : CAPTION_TEMPLATES.filter((t) => t.category === category);
-  }, [q, category]);
+    if (filter.axis === "mine") return [];
+    if (filter.axis === "category") {
+      return CAPTION_TEMPLATES.filter((t) => t.category === filter.id);
+    }
+    return CAPTION_TEMPLATES.filter((t) => t.pack === filter.id);
+  }, [q, filter]);
 
   const blurb = q
     ? `${list.length} match${list.length === 1 ? "" : "es"}`
-    : category === "mine"
+    : filter.axis === "mine"
       ? "Your saved styles"
-      : CAPTION_TEMPLATE_CATEGORIES.find((c) => c.id === category)?.blurb;
+      : filter.axis === "category"
+        ? CAPTION_TEMPLATE_CATEGORIES.find((c) => c.id === filter.id)?.blurb
+        : CAPTION_TEMPLATE_PACKS.find((p) => p.id === filter.id)?.blurb;
+
+  const switchAxis = (next: BrowserAxis) => {
+    setAxis(next);
+    setFilter(next === "category" ? { axis: next, id: lastCategory } : { axis: next, id: lastPack });
+  };
+  const pickCategory = (id: CaptionTemplateCategory) => {
+    setAxis("category");
+    setLastCategory(id);
+    setFilter({ axis: "category", id });
+  };
+  const pickPack = (id: CaptionTemplatePack) => {
+    setAxis("pack");
+    setLastPack(id);
+    setFilter({ axis: "pack", id });
+  };
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3" aria-disabled={disabled}>
@@ -283,30 +333,63 @@ export const TemplateBrowser = memo(function TemplateBrowser({
       </div>
 
       {!q && (
-        <div className="seg flex-wrap self-start" role="tablist" aria-label="Template category">
-          {CAPTION_TEMPLATE_CATEGORIES.map((c) => (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="seg shrink-0" role="tablist" aria-label="Browse by">
             <button
-              key={c.id}
               type="button"
               role="tab"
-              aria-selected={category === c.id}
-              onClick={() => setCategory(c.id)}
+              aria-selected={axis === "category"}
+              onClick={() => switchAxis("category")}
             >
-              {c.label}
+              Look
             </button>
-          ))}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={category === "mine"}
-            onClick={() => setCategory("mine")}
-          >
-            Mine
-          </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={axis === "pack"}
+              onClick={() => switchAxis("pack")}
+            >
+              Pack
+            </button>
+          </div>
+
+          <div className="seg flex-wrap" role="tablist" aria-label="Template filter">
+            {axis === "pack"
+              ? CAPTION_TEMPLATE_PACKS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={filter.axis === "pack" && filter.id === p.id}
+                    onClick={() => pickPack(p.id)}
+                  >
+                    {p.label}
+                  </button>
+                ))
+              : CAPTION_TEMPLATE_CATEGORIES.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={filter.axis === "category" && filter.id === c.id}
+                    onClick={() => pickCategory(c.id)}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={filter.axis === "mine"}
+              onClick={() => setFilter({ axis: "mine" })}
+            >
+              Mine
+            </button>
+          </div>
         </div>
       )}
 
-      {!q && category === "mine" ? (
+      {!q && filter.axis === "mine" ? (
         <MyTemplates
           disabled={disabled}
           activeId={activeId}
