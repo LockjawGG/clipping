@@ -34,6 +34,14 @@ import type { Segment, TranscribeOptions, TranscriptResult, Word } from "../prov
 export interface WhisperCppOptions {
   /** Path to `whisper-cli.exe`. */
   binary: string;
+  /**
+   * Optional GPU build of the same executable, tried ahead of `binary`.
+   *
+   * Preferred, never required: it is a pack the user drops in, so a driver
+   * update or a half-deleted directory can break it at any time. A failure of
+   * it falls back to `binary` rather than failing the job.
+   */
+  gpuBinary?: string;
   /** Path to a ggml model file. */
   model: string;
   tempDir: string;
@@ -72,6 +80,49 @@ export function fastWhisperCppModel(
   if (sibling === configured) return null;
   return exists(sibling) ? sibling : null;
 }
+
+/**
+ * Which binary leads a run, and what a failure of it may retry on.
+ *
+ * `fallback` is non-null only when the GPU build leads, so a CPU failure can
+ * never be retried on the same CPU binary — that would double the wait before
+ * reporting the same error. A GPU path already known broken is skipped
+ * outright, and a `gpuBinary` equal to `binary` is not a second engine.
+ */
+export function planWhisperCppRun(opts: {
+  binary: string;
+  gpuBinary?: string;
+  gpuBroken?: boolean;
+}): { binary: string; fallback: string | null } {
+  const { binary, gpuBinary, gpuBroken } = opts;
+  if (!gpuBinary || gpuBroken || gpuBinary === binary) return { binary, fallback: null };
+  return { binary: gpuBinary, fallback: binary };
+}
+
+/**
+ * Did a run fail because the caller cancelled it, rather than because the
+ * engine is broken?
+ *
+ * An abort must not fall back: the retry would burn a full decode nobody is
+ * waiting for, and demoting the GPU path over a user pressing cancel would
+ * cost every later job in the process. An aborted child rejects with an
+ * AbortError, but a signal landing mid-decode can also surface as a nonzero
+ * exit, so the signal itself is the more reliable witness of the two.
+ */
+export function isAbortFailure(err: unknown, signal?: { aborted: boolean }): boolean {
+  if (signal?.aborted) return true;
+  const e = err as { name?: string; code?: string } | null | undefined;
+  return e?.name === "AbortError" || e?.code === "ABORT_ERR";
+}
+
+/**
+ * GPU binaries that have failed once in this process.
+ *
+ * Keyed by path, so a repaired pack installed elsewhere is not tarred with the
+ * old one's failure. Never cleared: a build that cannot run will not start
+ * working mid-process, and every re-check costs a full decode before failing.
+ */
+const brokenGpuBinaries = new Set<string>();
 
 /** Special markers whisper.cpp emits inline, e.g. `[_BEG_]`. Not text. */
 function isSpecial(text: string): boolean {
@@ -186,21 +237,48 @@ export class WhisperCppProvider implements TranscriptionProvider {
       if (options.task === "translate") args.push("-tr");
       if (options.vocabulary?.length) args.push("--prompt", options.vocabulary.join(", "));
 
-      await this.run(args, options);
-      const json = JSON.parse(await fs.readFile(`${outBase}.json`, "utf8")) as CppJson;
-      // Report the model actually used, so a fast run is auditable later.
-      return parseWhisperCppJson(json, path.basename(model));
+      const gpuBinary = this.opts.gpuBinary;
+      const plan = planWhisperCppRun({
+        binary: this.opts.binary,
+        gpuBinary,
+        gpuBroken: gpuBinary ? brokenGpuBinaries.has(gpuBinary) : false,
+      });
+      try {
+        return await this.runAndParse(plan.binary, args, options, outBase, model);
+      } catch (err) {
+        if (plan.fallback === null || isAbortFailure(err, options.signal)) throw err;
+        // One failure is enough to stop preferring it: the same build fails the
+        // same way for every later job, each time after a full wasted decode.
+        if (gpuBinary) brokenGpuBinaries.add(gpuBinary);
+        // A crashed run can leave a truncated out.json behind. Drop it, so the
+        // CPU pass is read from its own output and not the GPU's wreckage.
+        await fs.rm(`${outBase}.json`, { force: true }).catch(() => {});
+        return await this.runAndParse(plan.fallback, args, options, outBase, model);
+      }
     } finally {
       await fs.rm(work, { recursive: true, force: true }).catch(() => {});
     }
   }
 
-  private run(args: string[], options: TranscribeOptions): Promise<void> {
+  private async runAndParse(
+    binary: string,
+    args: string[],
+    options: TranscribeOptions,
+    outBase: string,
+    model: string,
+  ): Promise<TranscriptResult> {
+    await this.run(binary, args, options);
+    const json = JSON.parse(await fs.readFile(`${outBase}.json`, "utf8")) as CppJson;
+    // Report the model actually used, so a fast run is auditable later.
+    return parseWhisperCppJson(json, path.basename(model));
+  }
+
+  private run(binary: string, args: string[], options: TranscribeOptions): Promise<void> {
     return new Promise((resolve, reject) => {
       // Leave a few cores for this process so the job heartbeat keeps firing,
       // matching what the other local engines reserve.
       const cores = Math.max(1, (os.availableParallelism?.() ?? os.cpus().length) - 3);
-      const child = spawn(this.opts.binary, [...args, "-t", String(cores)], {
+      const child = spawn(binary, [...args, "-t", String(cores)], {
         signal: options.signal,
         windowsHide: true,
       });
@@ -220,7 +298,12 @@ export class WhisperCppProvider implements TranscriptionProvider {
           reject(
             new ProviderUnavailableError(
               "transcription:whisper-cpp",
-              `whisper-cli not found at "${this.opts.binary}" — set WHISPER_CPP_BINARY`,
+              // Name the variable that actually points at the missing file:
+              // sending someone to WHISPER_CPP_BINARY over a broken GPU pack
+              // is a wrong turn. Only reachable when the run is not retried.
+              `whisper-cli not found at "${binary}" — set ${
+                binary === this.opts.gpuBinary ? "WHISPER_CPP_GPU_BINARY" : "WHISPER_CPP_BINARY"
+              }`,
             ),
           );
           return;

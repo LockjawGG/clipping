@@ -57,6 +57,14 @@ const schema = z.object({
   WHISPER_BINARY: z.string().default("whisper"),
   /** whisper.cpp: one executable and one model file, for machines without Python. */
   WHISPER_CPP_BINARY: z.string().default("whisper-cli"),
+  /**
+   * A GPU build of the same whisper-cli, tried ahead of WHISPER_CPP_BINARY.
+   *
+   * No default: unset means CPU only, which is what a machine without the
+   * acceleration pack must keep getting. The GPU path is preferred, never
+   * required — the provider falls back to WHISPER_CPP_BINARY when it fails.
+   */
+  WHISPER_CPP_GPU_BINARY: z.string().optional(),
   WHISPER_CPP_MODEL: z.string().default(""),
   // Python used to run scripts/translate.py (Argos Translate, fully offline).
   PYTHON_BIN: z.string().default("python"),

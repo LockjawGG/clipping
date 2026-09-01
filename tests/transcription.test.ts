@@ -15,6 +15,8 @@ import {
 import {
   parseWhisperCppJson,
   fastWhisperCppModel,
+  isAbortFailure,
+  planWhisperCppRun,
   wordsFromTokens,
 } from "../src/lib/transcription/whisper-cpp.ts";
 import { parseVerboseJson } from "../src/lib/transcription/openai.ts";
@@ -382,4 +384,78 @@ test("fastWhisperCppModel: small sibling when installed, else null", () => {
   assert.equal(fastWhisperCppModel("C:/t/whisper/ggml-tiny.bin", () => true), null);
   // large-v3 also has a small sibling.
   assert.equal(fastWhisperCppModel("D:/m/ggml-large-v3.bin", (p: string) => p === "D:/m/ggml-small.bin"), "D:/m/ggml-small.bin");
+});
+
+// --- whisper.cpp GPU pack fallback -------------------------------------
+
+test("planWhisperCppRun: no GPU binary leaves the CPU run exactly as it was", () => {
+  // The machine without an acceleration pack. No fallback to reason about,
+  // and nothing about the run changes.
+  assert.deepEqual(planWhisperCppRun({ binary: "cpu.exe" }), {
+    binary: "cpu.exe",
+    fallback: null,
+  });
+  assert.deepEqual(planWhisperCppRun({ binary: "cpu.exe", gpuBinary: undefined }), {
+    binary: "cpu.exe",
+    fallback: null,
+  });
+  // Empty string is unset, not a binary at the working directory.
+  assert.deepEqual(planWhisperCppRun({ binary: "cpu.exe", gpuBinary: "" }), {
+    binary: "cpu.exe",
+    fallback: null,
+  });
+});
+
+test("planWhisperCppRun: the pack leads and the bundled CPU build catches it", () => {
+  assert.deepEqual(planWhisperCppRun({ binary: "cpu.exe", gpuBinary: "gpu.exe" }), {
+    binary: "gpu.exe",
+    fallback: "cpu.exe",
+  });
+});
+
+test("planWhisperCppRun: a pack that already failed is skipped for the rest of the process", () => {
+  // Demoted, so the CPU build leads — and with nothing left to fall back to,
+  // a CPU failure is reported rather than retried on the same binary.
+  assert.deepEqual(
+    planWhisperCppRun({ binary: "cpu.exe", gpuBinary: "gpu.exe", gpuBroken: true }),
+    { binary: "cpu.exe", fallback: null },
+  );
+});
+
+test("planWhisperCppRun: the same path twice is one engine, not a fallback", () => {
+  // Misconfiguration rather than acceleration: retrying it would just run the
+  // identical failing command a second time.
+  assert.deepEqual(planWhisperCppRun({ binary: "same.exe", gpuBinary: "same.exe" }), {
+    binary: "same.exe",
+    fallback: null,
+  });
+});
+
+test("isAbortFailure: a cancelled job is not a broken GPU", () => {
+  // The signal is the reliable witness: an abort landing mid-decode can
+  // surface as a plain nonzero exit rather than an AbortError.
+  const aborted = { aborted: true };
+  assert.equal(isAbortFailure(new Error("whisper-cli exited 3221225477"), aborted), true);
+  // The child's own rejection shape, with no signal to hand.
+  const e = new Error("aborted");
+  e.name = "AbortError";
+  assert.equal(isAbortFailure(e), true);
+  assert.equal(isAbortFailure(Object.assign(new Error("aborted"), { code: "ABORT_ERR" })), true);
+});
+
+test("isAbortFailure: real engine failures fall back", () => {
+  const live = { aborted: false };
+  // A pack broken by a driver update: crash exit code.
+  assert.equal(isAbortFailure(new Error("whisper-cli exited 1: vulkan device lost"), live), false);
+  // A half-deleted pack: the exe is gone.
+  assert.equal(isAbortFailure(Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }), live), false);
+  // A run that exited 0 but wrote nothing parseable.
+  assert.equal(isAbortFailure(new SyntaxError("Unexpected end of JSON input"), live), false);
+  // No signal passed at all, and nothing abort-shaped about the error.
+  assert.equal(isAbortFailure(new Error("boom")), false);
+  // Defensive: a throw of something that is not an Error must not crash the
+  // decision and must not be mistaken for an abort.
+  assert.equal(isAbortFailure(null, live), false);
+  assert.equal(isAbortFailure(undefined), false);
+  assert.equal(isAbortFailure("exited 1", live), false);
 });

@@ -42,6 +42,9 @@ function build(): TranscriptionProvider {
     case "whisper-cpp":
       return new WhisperCppProvider({
         binary: env.WHISPER_CPP_BINARY,
+        // Unset on machines without the acceleration pack, which then run
+        // exactly as before.
+        gpuBinary: env.WHISPER_CPP_GPU_BINARY,
         model: env.WHISPER_CPP_MODEL,
         tempDir: env.TEMP_DIR,
         beamSize: env.WHISPER_BEAM_SIZE,

@@ -201,13 +201,22 @@ function bundledTools(bin) {
     out.TRANSCRIPTION_PROVIDER = "whisper-cpp";
   }
   // GPU acceleration pack: a CUDA build of the same whisper-cli dropped into
-  // the data directory takes over transcription (~8x on long videos, output
-  // verified 99%+ identical - fp16 vs fp32 noise only). Machines without the
-  // pack, or without the GPU it needs, keep the bundled CPU build untouched.
+  // the data directory (~8x on long videos, output verified 99%+ identical -
+  // fp16 vs fp32 noise only). Machines without the pack, or without the GPU it
+  // needs, keep the bundled CPU build untouched.
+  //
+  // It is handed over as the *preferred* engine rather than as
+  // WHISPER_CPP_BINARY, leaving the bundled CPU build in place underneath it.
+  // The pack is user-installed and unversioned, so a driver update or a
+  // half-deleted directory can break it long after it was working; overriding
+  // the only binary would turn that into a hard failure on every transcription,
+  // where preferring it degrades to CPU instead.
   const gpuWhisper = path.join(dataRoot(), "gpu-whisper", "whisper-cli.exe");
   if (out.TRANSCRIPTION_PROVIDER === "whisper-cpp" && fs.existsSync(gpuWhisper)) {
-    out.WHISPER_CPP_BINARY = gpuWhisper;
-    logStartup(`transcription: using GPU acceleration pack at ${gpuWhisper}`);
+    out.WHISPER_CPP_GPU_BINARY = gpuWhisper;
+    logStartup(
+      `transcription: GPU acceleration pack at ${gpuWhisper} preferred, bundled CPU build as fallback`,
+    );
   }
   // A voice *id*, not a path — it cannot go through the exists() filter above,
   // which would silently drop it. Set it only when the file it names shipped.
