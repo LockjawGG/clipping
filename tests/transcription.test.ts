@@ -459,3 +459,32 @@ test("isAbortFailure: real engine failures fall back", () => {
   assert.equal(isAbortFailure(undefined), false);
   assert.equal(isAbortFailure("exited 1", live), false);
 });
+
+test("glued whisper.cpp markers are stripped from words and segments", () => {
+  // Observed live in rendered captions: "world.[_TT_443]" - the timestamp
+  // marker arrives glued to the word in one token, so the whole-token special
+  // filter never fires.
+  const r = parseWhisperCppJson(
+    {
+      result: { language: "en" },
+      transcription: [
+        {
+          offsets: { from: 0, to: 2000 },
+          text: "the world.[_TT_443] Truth be told",
+          tokens: [
+            { text: " the", offsets: { from: 0, to: 200 }, p: 0.9 },
+            { text: " world.[_TT_443]", offsets: { from: 200, to: 800 }, p: 0.9 },
+            { text: "[_TT_443]", offsets: { from: 800, to: 800 }, p: 0.9 },
+            { text: " Truth", offsets: { from: 900, to: 1300 }, p: 0.9 },
+          ],
+        },
+      ],
+    } as never,
+    "ggml-medium.bin",
+  );
+  assert.equal(r.segments[0].text, "the world. Truth be told");
+  assert.deepEqual(
+    r.segments[0].words.map((w) => w.text),
+    ["the", "world.", "Truth"],
+  );
+});

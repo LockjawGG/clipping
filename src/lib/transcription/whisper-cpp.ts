@@ -124,9 +124,23 @@ export function isAbortFailure(err: unknown, signal?: { aborted: boolean }): boo
  */
 const brokenGpuBinaries = new Set<string>();
 
-/** Special markers whisper.cpp emits inline, e.g. `[_BEG_]`. Not text. */
+/**
+ * Special markers whisper.cpp emits inline. Not text. `[_BEG_]` ends with an
+ * underscore but timestamp markers do not (`[_TT_443]`), so the match is on
+ * the `[_` opener alone - requiring the closing underscore let every
+ * timestamp token straight through.
+ */
 function isSpecial(text: string): boolean {
-  return /^\[_.*_\]$/.test(text.trim());
+  return /^\[_[^\]]*\]$/.test(text.trim());
+}
+
+/**
+ * Markers glued to real words - "world.[_TT_443]" arrives as ONE token, so the
+ * whole-token check above never sees it and the marker rode into captions.
+ * Applied to assembled text, not per token, like the surrogate scrub.
+ */
+export function stripSpecialMarkers(text: string): string {
+  return text.replace(/\[_[^\]]*\]/g, "");
 }
 
 /**
@@ -182,13 +196,15 @@ export function parseWhisperCppJson(raw: CppJson, model: string): TranscriptResu
     // Sanitize after assembly, not per token: a character split across two
     // tokens joins back into a valid pair here, and only what stays unpaired
     // is junk that would crash downstream UTF-8 encoders (Piper).
-    const words = wordsFromTokens(s.tokens ?? []).map((w) => ({
-      ...w,
-      text: stripLoneSurrogates(w.text),
-    }));
+    const words = wordsFromTokens(s.tokens ?? [])
+      .map((w) => ({
+        ...w,
+        text: stripSpecialMarkers(stripLoneSurrogates(w.text)).trim(),
+      }))
+      .filter((w) => w.text.length > 0);
     const startMs = s.offsets?.from ?? words[0]?.startMs ?? 0;
     const endMs = Math.max(startMs, s.offsets?.to ?? words[words.length - 1]?.endMs ?? startMs);
-    const text = stripLoneSurrogates(s.text ?? words.map((w) => w.text).join(" ")).trim();
+    const text = stripSpecialMarkers(stripLoneSurrogates(s.text ?? words.map((w) => w.text).join(" "))).trim();
     return { text, startMs, endMs, words };
   });
 
