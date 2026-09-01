@@ -307,6 +307,8 @@ model CaptionWordStyle {
 enum ClipOrigin {
   AI_SUGGESTED
   USER_CREATED
+  // The always-present clip spanning the whole source video.
+  FULL_VIDEO
 }
 
 enum AspectRatio {

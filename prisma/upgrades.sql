@@ -10,3 +10,6 @@ DO $$ BEGIN
   ALTER TABLE "user_settings" ADD CONSTRAINT "user_settings_userId_fkey"
     FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- 1.01: the pinned full-video clip gets its own origin.
+ALTER TYPE "ClipOrigin" ADD VALUE IF NOT EXISTS 'FULL_VIDEO';

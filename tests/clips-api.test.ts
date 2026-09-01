@@ -6,6 +6,7 @@ import type { ClipDb, ClipServiceDeps } from "../src/lib/api/clips.ts";
 import {
   createClipFromRange,
   createManualClip,
+  ensureFullClip,
   deleteCaptionConfig,
   deleteClip,
   listVideoClips,
@@ -382,6 +383,48 @@ test("an accepted highlight carries its title and metadata onto the clip", async
   assert.equal(created[0].hook, "wait for it");
   assert.equal(created[0].score, 0.82);
   assert.deepEqual(created[0].hashtags, ["#a"]);
+});
+
+test("ensureFullClip creates one unsnapped clip spanning the whole video, once", async () => {
+  const { deps, created } = makeDeps();
+  deps.loadSettings = async () =>
+    ({
+      censorAllowList: [],
+      censorDenyList: ["damn"],
+      defaultCaptionPreset: "CLASSIC",
+      defaultAspectRatio: "SQUARE_1_1",
+    }) as never;
+  await ensureFullClip(deps, "vidA");
+  assert.equal(created.length, 1);
+  assert.equal(created[0].origin, "FULL_VIDEO");
+  // The entire raw content: first to last millisecond, no sentence snapping.
+  assert.equal(created[0].startMs, 0);
+  assert.equal(created[0].endMs, 120_000);
+  assert.equal(created[0].title, "Full video");
+  // Seeded like any other new clip - preselected, per the Settings tab.
+  assert.deepEqual(created[0].censorDenyList, ["damn"]);
+  assert.equal(created[0].censorEnabled, true);
+  assert.equal(created[0].aspectRatio, "SQUARE_1_1");
+});
+
+test("ensureFullClip is idempotent and refuses videos the user does not own", async () => {
+  const { deps, created } = makeDeps();
+  // findMany already reports a FULL_VIDEO clip? It reports clip1 AI_SUGGESTED,
+  // so the first call creates. Simulate the second load by making findMany
+  // include the full clip.
+  const origFindMany = deps.db.clip.findMany.bind(deps.db.clip);
+  await ensureFullClip(deps, "vidA");
+  deps.db.clip.findMany = async (args) => [
+    ...(await origFindMany(args)),
+    ...(args.where.videoId === "vidA" ? [{ origin: "FULL_VIDEO" } as never] : []),
+  ];
+  await ensureFullClip(deps, "vidA");
+  assert.equal(created.length, 1, "second load must not create another");
+
+  await assert.rejects(
+    () => ensureFullClip(deps, "vidZ"),
+    (e: unknown) => e instanceof ApiError && e.status === 404,
+  );
 });
 
 test("createManualClip snaps the window to sentence boundaries and marks it USER_CREATED", async () => {

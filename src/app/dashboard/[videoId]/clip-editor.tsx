@@ -1434,6 +1434,7 @@ export function ClipEditor({
         >
           {collapsed ? "▸" : "▾"}
         </button>
+        {draft.origin !== "FULL_VIDEO" && (
         <button
           type="button"
           onClick={() => {
@@ -1454,6 +1455,7 @@ export function ClipEditor({
         >
           {busy === "delete" ? "…" : "✕"}
         </button>
+        )}
         <RailThumb
           url={clip.thumbnailUrl}
           className={`rounded-lg ${collapsed ? "h-9 w-16" : "h-16 w-28"}`}
@@ -1468,8 +1470,8 @@ export function ClipEditor({
             {s(Math.max(0, clip.endMs - clip.startMs))}s
           </span>
         )}
-        <span className="chip shrink-0">
-          {draft.origin === "USER_CREATED" ? "manual" : "AI"}
+        <span className={`chip shrink-0 ${draft.origin === "FULL_VIDEO" ? "bg-accent/15 text-accent" : ""}`}>
+          {draft.origin === "FULL_VIDEO" ? "full video" : draft.origin === "USER_CREATED" ? "manual" : "AI"}
           {draft.score !== null ? ` · ${draft.score.toFixed(2)}` : ""}
         </span>
 

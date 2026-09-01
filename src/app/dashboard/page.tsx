@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db.ts";
 import { currentUserId, getOrCreateProject } from "@/lib/auth/session.ts";
 import { clipService, projectService } from "@/lib/api/service.ts";
-import { listVideoClips } from "@/lib/api/clips.ts";
+import { ensureFullClip, listVideoClips } from "@/lib/api/clips.ts";
 import { listProjects } from "@/lib/api/projects.ts";
 import { listAssets } from "@/lib/api/assets.ts";
 import { listClipOverlaysBulk } from "@/lib/api/overlays.ts";
@@ -146,6 +146,9 @@ export default async function DashboardPage({
       const selectedTranscript = availableTranscripts.some((t) => t.translatedTo === wantTranscript)
         ? (wantTranscript as string)
         : "";
+      // The pinned full-video clip appears the first time the editor opens -
+      // here rather than at ingest so libraries that predate it get one too.
+      await ensureFullClip(clipService(userId), video.id).catch(() => {});
       const [clips, segments, sourceUrl] = await Promise.all([
         listVideoClips(clipService(userId), video.id),
         db.transcriptSegment.findMany({

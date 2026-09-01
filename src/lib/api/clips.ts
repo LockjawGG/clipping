@@ -563,6 +563,51 @@ export async function createManualClip(deps: ClipServiceDeps, videoId: string, i
   return { id: created.id, startMs: created.startMs, endMs: created.endMs };
 }
 
+/**
+ * The pinned clip that spans the whole source video.
+ *
+ * It exists so the raw content is immediately editable with every clip
+ * feature - captions, censoring, narration, export - without first drawing a
+ * window. Created once per video the first time its editor loads (which also
+ * covers libraries that predate the feature), seeded from the Settings tab
+ * exactly like a manual clip, and never snapped: "the entire raw content"
+ * means from the first millisecond to the last.
+ */
+export async function ensureFullClip(deps: ClipServiceDeps, videoId: string): Promise<void> {
+  const video = await deps.db.video.findUnique({ where: { id: videoId } });
+  await assertOwnsProject(deps, video?.projectId);
+  if (!video?.durationMs || video.durationMs <= 0) return; // not ingested yet
+
+  const existing = await deps.db.clip.findMany({ where: { videoId } });
+  if (existing.some((c) => c.origin === "FULL_VIDEO")) return;
+
+  const prefs = deps.loadSettings ? await deps.loadSettings() : null;
+  const clip = await deps.db.clip.create({
+    data: {
+      videoId,
+      origin: "FULL_VIDEO",
+      startMs: 0,
+      endMs: video.durationMs,
+      title: "Full video",
+      ...(prefs
+        ? {
+            censorAllowList: [...prefs.censorAllowList],
+            censorDenyList: [...prefs.censorDenyList],
+            ...(prefs.censorDenyList.length > 0 ? { censorEnabled: true } : {}),
+            aspectRatio: prefs.defaultAspectRatio,
+          }
+        : {}),
+    },
+  });
+  if (prefs && prefs.defaultCaptionPreset !== "CLASSIC") {
+    await deps.db.subtitleConfig.upsert({
+      where: { clipId: clip.id },
+      create: { clipId: clip.id, preset: prefs.defaultCaptionPreset },
+      update: {},
+    });
+  }
+}
+
 export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
   const video = await deps.db.video.findUnique({ where: { id: videoId } });
   await assertOwnsProject(deps, video?.projectId);
@@ -609,7 +654,10 @@ export async function listVideoClips(deps: ClipServiceDeps, videoId: string) {
     },
   });
   return Promise.all(
-    clips.map(async (c) => {
+    // The full-video clip is pinned first; everything else keeps time order.
+    [...clips]
+      .sort((a, b) => Number(b.origin === "FULL_VIDEO") - Number(a.origin === "FULL_VIDEO"))
+      .map(async (c) => {
       const latest = c.renders[0];
       const [downloadUrl, thumbnailUrl] = await Promise.all([
         latest?.status === "COMPLETED" && latest.outputKey
