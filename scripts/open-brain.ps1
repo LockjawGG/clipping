@@ -15,11 +15,31 @@ $ports += Get-NetTCPConnection -State Listen |
   ForEach-Object LocalPort
 $ports = $ports | Select-Object -Unique | Where-Object { $_ -ge 1024 }
 
+# Jarvis opens as its own app window, not a browser tab: Chrome/Edge --app mode
+# gives a chromeless window with its own taskbar entry, same live page inside.
+function Open-AppWindow($url) {
+  $browsers = @(
+    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+    "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe",
+    "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+    "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+  )
+  foreach ($exe in $browsers) {
+    if (Test-Path $exe) {
+      Start-Process $exe -ArgumentList "--app=$url", "--window-size=1280,800"
+      return $true
+    }
+  }
+  Start-Process $url   # last resort: default browser tab
+  return $true
+}
+
 foreach ($port in $ports) {
   try {
     $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://127.0.0.1:$port/api/settings"
     if ($r.StatusCode -eq 200 -and $r.Content -like '*censorAllowList*') {
-      Start-Process "http://127.0.0.1:$port/brain?monitor=1"
+      Open-AppWindow "http://127.0.0.1:$port/brain" | Out-Null
       exit 0
     }
   } catch {}
