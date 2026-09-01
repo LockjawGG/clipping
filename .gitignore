@@ -31,3 +31,6 @@ vendor/
 
 # Local database backups (Settings > Backup)
 /backups/
+
+# Agent Brain ingest secret
+.telemetry-key
