@@ -55,10 +55,23 @@ export interface RemotionRendererOptions {
  * the dir and portable builds. Windows junctions need no elevation. Where
  * `%APPDATA%` is not set (non-Windows dev, CI), Remotion's default location
  * is left alone.
+ *
+ * The directory is per-install, not per-product. It used to be a literal
+ * `%APPDATA%\clipping`, which meant a beta build reached into the production
+ * app's data directory to write ~270 MB — the one place isolation must hold.
+ * The packaged shell hands over its own `userData` in `CLIPPER_USER_DATA`; a
+ * beta checkout falls back to the beta's roaming folder. Production behaviour is
+ * unchanged: neither variable set means `%APPDATA%\clipping`, as before. The
+ * cost is that the beta downloads its own copy of the browser once.
  */
 const browserCacheDir = () => resolve(process.cwd(), "node_modules", ".remotion");
-const persistentBrowserDir = () =>
-  process.env.APPDATA ? join(process.env.APPDATA, "clipping", "remotion-browser") : null;
+const persistentBrowserDir = () => {
+  const userData = process.env.CLIPPER_USER_DATA;
+  if (userData) return join(userData, "remotion-browser");
+  if (!process.env.APPDATA) return null;
+  const dir = process.env.CLIPPER_BETA === "1" ? "clipper-102-beta" : "clipping";
+  return join(process.env.APPDATA, dir, "remotion-browser");
+};
 
 export class RemotionCaptionRenderer implements CaptionRenderer {
   private readonly entryPoint: string;

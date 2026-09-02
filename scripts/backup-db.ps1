@@ -24,7 +24,8 @@
 param(
   [string]$OutDir = "$env:USERPROFILE\clipper-db-backups",
   [int]$KeepCount = 14,
-  [string]$PgBin = "C:\Program Files\PostgreSQL\18\bin"
+  # The bundled binaries when the app set PG_BIN_DIR, otherwise a local install.
+  [string]$PgBin = $(if ($env:PG_BIN_DIR) { $env:PG_BIN_DIR } else { "C:\Program Files\PostgreSQL\18\bin" })
 )
 
 $ErrorActionPreference = "Stop"
@@ -40,12 +41,20 @@ if (-not $line) { throw "No DATABASE_URL in $envFile" }
 
 $url = ($line.Line -replace '^[A-Z_]+=', '').Trim().Trim('"').Trim("'")
 
+# Dumps are named after the database they came from, not after the product.
+# Two checkouts share this backup folder -- production (`clipper`) and the 1.02
+# beta (`clipper_beta`) -- and the prune below deletes by prefix. Without the
+# database in the name, running the beta's backup would quietly delete the
+# production dumps, which is the exact thing backups exist to prevent.
+$dbName = ($url -split '\?')[0].TrimEnd('/').Split('/')[-1]
+if (-not $dbName) { throw "Could not read a database name out of DATABASE_URL" }
+
 $pgDump = Join-Path $PgBin "pg_dump.exe"
 if (-not (Test-Path $pgDump)) { throw "pg_dump not found at $pgDump" }
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$target = Join-Path $OutDir "clipper-$stamp.dump"
+$target = Join-Path $OutDir "$dbName-$stamp.dump"
 
 & $pgDump --no-owner --no-privileges --format=custom --file=$target $url
 if ($LASTEXITCODE -ne 0) { throw "pg_dump failed with exit code $LASTEXITCODE" }
@@ -55,7 +64,7 @@ Write-Output "backup written: $target ($size MB)"
 
 # Prune only after the new dump succeeded, so a failing run never leaves you
 # with fewer backups than you started with.
-Get-ChildItem -Path $OutDir -Filter "clipper-*.dump" |
+Get-ChildItem -Path $OutDir -Filter "$dbName-*.dump" |
   Sort-Object LastWriteTime -Descending |
   Select-Object -Skip $KeepCount |
   ForEach-Object { Write-Output "pruning old backup: $($_.Name)"; Remove-Item $_.FullName -Force }

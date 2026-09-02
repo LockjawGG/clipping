@@ -2,8 +2,9 @@ import { redirect } from "next/navigation";
 
 import { AuthForm } from "@/components/auth-form";
 import { env } from "@/lib/env.ts";
+import { APP_IDENTITY } from "@/lib/app-identity.ts";
 
-export const metadata = { title: "Sign in · Clipper" };
+export const metadata = { title: `Sign in · ${APP_IDENTITY.label}` };
 
 export default function LoginPage() {
   // Desktop mode has no accounts, so these pages have nothing to do. Reaching

@@ -1,6 +1,7 @@
 {
-  "name": "clipping",
-  "version": "0.1.0",
+  "name": "clipper-102-beta",
+  "version": "1.2.0-beta.1",
+  "productName": "Clipper 1.02 beta",
   "private": true,
   "main": "electron/main.cjs",
   "type": "module",
@@ -8,11 +9,13 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "next dev --turbopack",
-    "dev:webpack": "next dev",
+    "dev": "next dev --turbopack -p 3100",
+    "dev:beta": "next dev --turbopack -p 3100",
+    "dev:webpack": "next dev -p 3100",
     "build": "prisma generate && next build",
-    "start": "next start",
+    "start": "next start -p 3100",
     "worker": "node --experimental-strip-types scripts/worker.ts",
+    "worker:beta": "node --experimental-strip-types scripts/worker.ts",
     "desktop": "electron .",
     "desktop:pack": "npm run build && electron-builder --dir",
     "desktop:dist": "npm run build && electron-builder",

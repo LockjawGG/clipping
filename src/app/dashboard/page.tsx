@@ -23,8 +23,9 @@ import { LeftRail } from "./left-rail";
 import { env } from "@/lib/env.ts";
 import { ContentRail } from "./content-rail";
 import { EditorPane } from "./editor-pane";
+import { APP_IDENTITY } from "@/lib/app-identity.ts";
 
-export const metadata = { title: "Workspace · Clipper" };
+export const metadata = { title: `Workspace · ${APP_IDENTITY.label}` };
 export const dynamic = "force-dynamic";
 
 function EmptyState({ hasVideos }: { hasVideos: boolean }) {

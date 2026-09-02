@@ -17,9 +17,49 @@ const { createServer } = require("node:net");
 const path = require("node:path");
 const fs = require("node:fs");
 const { EmbeddedPostgres } = require("./postgres.cjs");
+const { assertBetaIsolation, betaRoots, EMBEDDED_PG_MARKER } = require("./beta-guard.cjs");
+const { APP_IDENTITY } = require("./identity.cjs");
 
 /** The project root — where package.json, .next and node_modules live. */
 const ROOT = path.join(__dirname, "..");
+
+/**
+ * The beta's own name, and the directory that name buys us.
+ *
+ * Electron derives `userData` from the app name, which comes from package.json —
+ * so in principle renaming the package is enough. In practice this build runs
+ * beside a production Clipper whose data directory is one wrong string away, and
+ * the failure is silent and unrecoverable. So the name is set explicitly, the
+ * path is set explicitly rather than inferred, and the result is asserted below
+ * before anything opens a database. Three belts for one pair of trousers,
+ * because the alternative is somebody's library.
+ */
+const APP_DIR_NAME = "clipper-102-beta";
+
+app.setName(APP_DIR_NAME);
+app.setPath("userData", path.join(app.getPath("appData"), APP_DIR_NAME));
+
+/**
+ * One copy at a time.
+ *
+ * Each launch starts a Next server, a worker and (packaged) a PostgreSQL
+ * cluster against a single data directory. A second launch would start a second
+ * cluster on the same `pgdata`, which is how a database gets corrupted. The
+ * lock has to be taken before `whenReady` so the loser exits without having
+ * built anything.
+ */
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    }
+  });
+}
 
 /**
  * True when running from the packaged app rather than a checkout.
@@ -138,6 +178,18 @@ function portableEnv(databaseUrl) {
     LOCAL_STORAGE_DIR: path.join(root, "storage"),
     TEMP_DIR: path.join(root, "tmp"),
     STORAGE_PROVIDER: "local",
+    // The children run the same isolation check this process just ran, and
+    // these three are what tell them which build they are. CLIPPER_USER_DATA
+    // is also what keeps the Remotion browser cache out of production's
+    // %APPDATA% (see src/lib/pipeline/remotion.ts).
+    CLIPPER_BETA: "1",
+    CLIPPER_PACKAGED: "1",
+    CLIPPER_USER_DATA: root,
+    // The database below is the cluster this app just started, under `root`.
+    // It is named "clipper" because that is what postgres.cjs names every
+    // cluster it creates; isolation here comes from the pgdata path, not the
+    // database name, so the guard's name rule is waived by this marker.
+    [EMBEDDED_PG_MARKER]: "1",
     // Auth needs a stable secret across launches or every restart signs you
     // out. Generated once and kept beside the data it protects.
     NEXTAUTH_SECRET: authSecret(),
@@ -355,7 +407,7 @@ function createWindow(port) {
     minHeight: 640,
     backgroundColor: "#e3e5e8",
     show: false,
-    title: "Clipper",
+    title: APP_IDENTITY.label,
     webPreferences: {
       // The page is our own server on loopback, but it is still web content:
       // no Node in the renderer, and context isolation on.
@@ -368,6 +420,15 @@ function createWindow(port) {
   win.on("closed", () => {
     win = null;
   });
+
+  // The page sets its own <title>, which overwrites the one above the moment it
+  // loads. Setting it again afterwards is what actually keeps "1.02 beta" in the
+  // taskbar — the single cheapest way for a tester to tell the two builds apart.
+  win.webContents.on("page-title-updated", (e) => {
+    e.preventDefault();
+    win?.setTitle(APP_IDENTITY.label);
+  });
+  win.webContents.once("did-finish-load", () => win?.setTitle(APP_IDENTITY.label));
 
   // Anything that is not our own server opens in the real browser, not in a
   // frameless window the user cannot navigate out of.
@@ -420,7 +481,36 @@ function buildMenu() {
   );
 }
 
+/**
+ * Prove the data directory is the beta's own before anything opens it.
+ *
+ * `app.setPath` above is the mechanism; this is the check that it worked. An
+ * Electron version that resolved the name differently, a packaging flag, or a
+ * future edit that moves the setPath call after a `getPath` — any of them
+ * silently lands the app back in production's folder. Comparing the basename is
+ * cheap and it is the exact thing that must be true.
+ */
+function assertDataDirectory() {
+  const dir = app.getPath("userData");
+  const base = path.basename(dir);
+  if (base.toLowerCase() !== APP_DIR_NAME) {
+    dialog.showErrorBox(
+      `${APP_IDENTITY.label} is not isolated`,
+      `This beta build must keep its data in a directory named "${APP_DIR_NAME}", but it resolved to:
+
+${dir}
+
+Refusing to start rather than risk writing into the production Clipper's data.`,
+    );
+    app.quit();
+    return false;
+  }
+  return true;
+}
+
 app.whenReady().then(async () => {
+  if (!gotTheLock) return;
+  if (!assertDataDirectory()) return;
   buildMenu();
   try {
     if (PACKAGED) {
@@ -440,6 +530,23 @@ app.whenReady().then(async () => {
       }
     }
 
+    // Exactly the environment the server and the worker are about to be given
+    // (see nodeChild), checked before either of them exists. They each run the
+    // same assertion again on their own startup; this one runs while there is
+    // still a UI to show the failure in.
+    const childEnv = { ...fileEnv, ...portable, ...process.env, ...(PACKAGED ? portable : {}) };
+    assertBetaIsolation({
+      env: childEnv,
+      ...betaRoots({
+        checkoutRoot: ROOT,
+        userData: dataRoot(),
+        appData: app.getPath("appData"),
+      }),
+      cwd: ROOT,
+      packaged: PACKAGED,
+    });
+    logStartup(`beta isolation ok: userData=${dataRoot()}`);
+
     serverPort = await freePort();
     startServer(serverPort);
     startWorker();
@@ -452,7 +559,7 @@ app.whenReady().then(async () => {
     const message = String(err?.stack ?? err?.message ?? err);
     logStartup(`FAILED: ${message}`);
     dialog.showErrorBox(
-      "Clipper could not start",
+      `${APP_IDENTITY.label} could not start`,
       `${err?.message ?? err}
 
 Details were written to:

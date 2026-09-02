@@ -3,12 +3,26 @@
  *
  *   npm run worker
  */
+import { assertBetaIsolation, betaRoots } from "../src/lib/beta-guard.ts";
 import { db } from "../src/lib/db.ts";
 import { env } from "../src/lib/env.ts";
 import { enqueueJob } from "../src/lib/jobs/prisma-store.ts";
 import { createPipelineWorker } from "../src/lib/pipeline/worker-entry.ts";
 import { type LiveSweepDb, startLiveSweep } from "../src/lib/pipeline/live-sweep.ts";
 import { startTempSweep } from "../src/lib/pipeline/temp-sweep.ts";
+
+// Before the queue is touched. The worker is the process that actually writes
+// media and sweeps directories, so a beta pointed at production storage does
+// damage here first. A no-op outside the beta; see src/lib/beta-guard.ts.
+assertBetaIsolation({
+  env: process.env,
+  ...betaRoots({
+    checkoutRoot: process.cwd(),
+    appData: process.env.APPDATA,
+    userData: process.env.CLIPPER_USER_DATA,
+  }),
+  packaged: process.env.CLIPPER_PACKAGED === "1",
+});
 
 const worker = createPipelineWorker();
 worker.start();

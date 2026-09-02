@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { assertBetaIsolation, betaRoots } from "./beta-guard.ts";
+
 /**
  * Runtime configuration, parsed once from `process.env`.
  *
@@ -140,8 +142,21 @@ export type Env = z.infer<typeof schema>;
 
 let cached: Env | undefined;
 
+/** The project root, or null in a runtime that has no filesystem to speak of. */
+function checkoutRoot(): string | null {
+  if (process.env.NEXT_RUNTIME === "edge") return null;
+  try {
+    return process.cwd();
+  } catch {
+    return null;
+  }
+}
+
 function load(): Env {
   if (process.env.SKIP_ENV_VALIDATION) {
+    // `next build` sets this: it never connects to anything, and it runs in the
+    // production checkout too. Validating there would be checking a config the
+    // build does not use.
     return process.env as unknown as Env;
   }
   const parsed = schema.safeParse(process.env);
@@ -150,6 +165,29 @@ function load(): Env {
       .map((i) => `  ${i.path.join(".")}: ${i.message}`)
       .join("\n");
     throw new Error(`Invalid environment configuration:\n${issues}`);
+  }
+  // Shape first, then destination. A perfectly valid configuration pointed at
+  // the production database is the failure mode that matters on this machine,
+  // and it is only detectable once the values have parsed. A no-op unless
+  // CLIPPER_BETA=1, so the production checkout is unaffected.
+  //
+  // Skipped in the Edge runtime, which the auth middleware runs in: there is no
+  // `process.cwd()` there (calling it is a hard error), so the roots cannot be
+  // derived — and there is nothing to protect either, since Edge code cannot
+  // open a database connection or write a file. Every process that *can* do
+  // damage — the Node server, the worker, the Electron shell — still checks.
+  const root = checkoutRoot();
+  if (root) {
+    assertBetaIsolation({
+      env: process.env,
+      ...betaRoots({
+        checkoutRoot: root,
+        appData: process.env.APPDATA,
+        userData: process.env.CLIPPER_USER_DATA,
+      }),
+      cwd: root,
+      packaged: process.env.CLIPPER_PACKAGED === "1",
+    });
   }
   return parsed.data;
 }

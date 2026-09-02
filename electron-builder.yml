@@ -4,8 +4,14 @@
 # its own worker, both of which are ordinary Node programs reading the project
 # the way they always have. So the package is the project — source included —
 # rather than a compiled artifact.
-appId: com.clipper.desktop
-productName: Clipper
+#
+# This is the 1.02 beta channel. A different appId and a different productName
+# are what let it install and run beside a production Clipper instead of on top
+# of one — the appId keys the installer's registry entry and the single-instance
+# identity, the productName names the executable and (via app.setName in
+# electron/main.cjs) the %APPDATA% directory the app writes to.
+appId: com.clipper.desktop.beta
+productName: Clipper 1.02 beta
 copyright: ""
 
 directories:

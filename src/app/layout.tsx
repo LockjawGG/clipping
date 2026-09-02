@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { APP_IDENTITY } from "@/lib/app-identity.ts";
 import { ThemeToggle } from "./theme-toggle";
 
 const sans = Inter({ subsets: ["latin"], variable: "--font-sans", display: "swap" });
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "Clipper",
+  title: APP_IDENTITY.label,
   description: "Turn long videos into short vertical clips with burned-in captions.",
 };
 

@@ -2,6 +2,8 @@
 
 import { useState, type ReactNode } from "react";
 
+import { APP_CHANNEL_BADGE, APP_IDENTITY } from "@/lib/app-identity.ts";
+
 /**
  * Three-pane workspace: project rail | editor | content rail.
  * Desktop shows all three; below ~1100px the rails become slide-over drawers.
@@ -24,7 +26,10 @@ export function WorkspaceShell({
         <button className="btn btn-ghost btn-sm" onClick={() => setOpen("left")}>
           ☰ Projects
         </button>
-        <span className="text-sm font-semibold">Clipper</span>
+        <span className="flex items-baseline gap-1.5">
+          <span className="text-sm font-semibold">{APP_IDENTITY.name}</span>
+          {APP_IDENTITY.isBeta && <span className="chip">{APP_CHANNEL_BADGE}</span>}
+        </span>
         <button className="btn btn-ghost btn-sm" onClick={() => setOpen("right")}>
           Content ☰
         </button>

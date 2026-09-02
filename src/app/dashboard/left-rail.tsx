@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { APP_CHANNEL_BADGE, APP_IDENTITY } from "@/lib/app-identity.ts";
+
 import { SignOutButton } from "./sign-out-button";
 import { ProjectRail, type ProjectSummary, type FavoriteClip } from "./project-rail";
 import { MediaLibrary, type AssetView } from "./media-library";
@@ -28,7 +30,13 @@ export function LeftRail({
   return (
     <div className="rail flex h-full min-h-0 flex-col px-0">
       <div className="flex items-center justify-between px-4 pb-2 pt-4">
-        <span className="text-sm font-semibold">Clipper</span>
+        {/* The wordmark carries the channel: this build runs beside a
+            production Clipper, and "which one am I in" has to be answerable
+            without opening a menu. */}
+        <span className="flex items-baseline gap-1.5">
+          <span className="text-sm font-semibold">{APP_IDENTITY.name}</span>
+          {APP_IDENTITY.isBeta && <span className="chip">{APP_CHANNEL_BADGE}</span>}
+        </span>
         {showSignOut && <SignOutButton />}
       </div>
 
